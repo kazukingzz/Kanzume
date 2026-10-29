@@ -1,4 +1,4 @@
-import { randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -16,7 +16,10 @@ interface StateFile {
   // ハッシュにしないのは、管理画面でいつでも再表示してコピーできるようにするため
   deployToken: string;
   credentials: StoredCredential[];
+  sessions?: string[];
 }
+
+const hashSession = (id: string) => createHash("sha256").update(id).digest("hex");
 
 function newToken(): string {
   return `kz_${randomBytes(24).toString("base64url")}`;
@@ -108,6 +111,23 @@ export class AdminState {
 
   async addCredential(credential: StoredCredential): Promise<void> {
     this.#state.credentials.push(credential);
+    await this.#save();
+  }
+
+  async createSession(): Promise<string> {
+    const id = randomBytes(32).toString("base64url");
+    (this.#state.sessions ??= []).push(hashSession(id));
+    await this.#save();
+    return id;
+  }
+
+  hasSession(id: string | null): boolean {
+    return !!id && (this.#state.sessions ?? []).includes(hashSession(id));
+  }
+
+  async removeSession(id: string | null): Promise<void> {
+    if (!id || !this.hasSession(id)) return;
+    this.#state.sessions = this.#state.sessions!.filter((s) => s !== hashSession(id));
     await this.#save();
   }
 

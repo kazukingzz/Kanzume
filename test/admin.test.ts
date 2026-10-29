@@ -78,3 +78,22 @@ test("チーム ID や管理 API はログインしないと見えない", async
   assert.equal(noOrigin.status, 403);
   assert.deepEqual(await (await fetch(`${base}/_admin/kanzume/api/state`)).json(), { registered: false, authenticated: false });
 });
+
+test("ログインのセッションは期限なしで、サーバーを再起動しても残り、ログアウトで消える", async (t) => {
+  const dataDir = tmpDir(t);
+  const before = new AdminState(dataDir);
+  await before.init();
+  const id = await before.createSession();
+  const cookie = `kanzume_session=${id}`;
+
+  const second = await start(t, dataDir);
+  const state = await fetch(`${second.base}/_admin/kanzume/api/state`, { headers: { cookie } });
+  assert.deepEqual(await state.json(), { registered: false, authenticated: true });
+  assert.match(state.headers.get("set-cookie") ?? "", /Max-Age=34560000/);
+  assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 200);
+
+  const logout = await fetch(`${second.base}/_admin/kanzume/api/logout`, { method: "POST", headers: { cookie, origin: second.base } });
+  assert.equal(logout.status, 200);
+  assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 401);
+  assert.equal(second.state.hasSession(id), false);
+});

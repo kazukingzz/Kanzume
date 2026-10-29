@@ -17,7 +17,7 @@ import type { Observability } from "../observability/events.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Store } from "../store.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
-import { Sessions, SESSION_COOKIE, readCookie } from "./session.ts";
+import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
 import { safeEqual, type AdminState } from "./state.ts";
 
 export const ADMIN_PATH = "/_admin/kanzume";
@@ -42,17 +42,17 @@ interface Deps {
 }
 
 export function createAdminHandler({ config, state, store, runtime, history, observability, deployer, github }: Deps) {
-  const sessions = new Sessions();
+  const challenges = new Challenges();
   let githubDeploying = false;
 
   const sessionCookie = (origin: string, value: string, maxAge: number) =>
     `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
 
-  const login = (res: ServerResponse, origin: string) => {
-    sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, sessions.create(), 7 * 24 * 60 * 60) });
+  const login = async (res: ServerResponse, origin: string) => {
+    sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(), SESSION_COOKIE_MAX_AGE) });
   };
 
-  const consume = (challenge: string) => sessions.consumeChallenge(challenge);
+  const consume = (challenge: string) => challenges.consume(challenge);
 
   const allowedToRegister = (authenticated: boolean, body: Record<string, unknown> | null): string | null => {
     if (authenticated) return null;
@@ -86,11 +86,13 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
 
     if (method !== "GET" && req.headers.origin !== origin) return sendJson(res, 403, { error: "Origin が一致しません" });
 
-    const authenticated = sessions.valid(readCookie(req, SESSION_COOKIE));
+    const sessionId = readCookie(req, SESSION_COOKIE);
+    const authenticated = state.hasSession(sessionId);
     const route = `${method} ${sub}`;
 
     if (route === "GET /api/state") {
-      return sendJson(res, 200, { registered: state.credentials.length > 0, authenticated });
+      const renew: Record<string, string> = authenticated ? { "set-cookie": sessionCookie(origin, sessionId!, SESSION_COOKIE_MAX_AGE) } : {};
+      return sendJson(res, 200, { registered: state.credentials.length > 0, authenticated }, renew);
     }
 
     if (route === "POST /api/register/options") {
@@ -107,7 +109,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         excludeCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
       });
-      sessions.addChallenge(options.challenge);
+      challenges.add(options.challenge);
       return sendJson(res, 200, options);
     }
 
@@ -145,7 +147,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         userVerification: "preferred",
       });
-      sessions.addChallenge(options.challenge);
+      challenges.add(options.challenge);
       return sendJson(res, 200, options);
     }
 
@@ -177,7 +179,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
     }
 
     if (route === "POST /api/logout") {
-      sessions.destroy(readCookie(req, SESSION_COOKIE));
+      await state.removeSession(sessionId);
       return sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, "", 0) });
     }
 
