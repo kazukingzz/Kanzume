@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Kanzume">
+  <style>
+    .body { fill: #c2410c; }
+    .band { fill: #7c2d12; }
+    .lid { fill: #fb923c; }
+    .rim { fill: none; stroke: #7c2d12; stroke-width: 2.5; }
+    .tab { fill: none; stroke: #fff7ed; stroke-width: 2.5; stroke-linecap: round; }
+    @media (prefers-color-scheme: dark) {
+      .body { fill: #f97316; }
+      .band { fill: #9a3412; }
+      .lid { fill: #fdba74; }
+      .rim { stroke: #9a3412; }
+      .tab { stroke: #431407; }
+    }
+  </style>
+  <path class="body" d="M10 17v31c0 5.5 9.85 10 22 10s22-4.5 22-10V17z"/>
+  <path class="band" d="M10 29c0 5.5 9.85 10 22 10s22-4.5 22-10v9c0 5.5-9.85 10-22 10s-22-4.5-22-10z"/>
+  <ellipse class="lid" cx="32" cy="17" rx="22" ry="10"/>
+  <ellipse class="rim" cx="32" cy="17" rx="17" ry="6.5"/>
+  <path class="tab" d="M27 17.5c0-2.2 2.2-3.5 5-3.5s5 1.3 5 3.5-2.2 3.5-5 3.5-5-1.3-5-3.5zM37 17.5h6"/>
+</svg>

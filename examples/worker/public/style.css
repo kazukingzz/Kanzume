@@ -58,7 +58,8 @@ p code, li code, td code { background: var(--code); padding: 1px 5px; border-rad
 
 .nav { position: sticky; top: 0; z-index: 1; background: var(--bg); border-bottom: 1px solid var(--line); }
 .nav-inner { display: flex; align-items: center; justify-content: space-between; height: 56px; }
-.logo { font-weight: 700; font-size: 18px; color: var(--text); text-decoration: none; }
+.logo { display: block; }
+.logo img { display: block; width: 36px; height: 36px; }
 .nav-links { display: flex; align-items: center; gap: 20px; font-size: 14px; }
 .nav-links a:not(.button) { color: var(--muted); text-decoration: none; }
 .nav-links a:not(.button):hover { color: var(--text); }
