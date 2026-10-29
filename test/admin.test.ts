@@ -123,3 +123,10 @@ test("認証なしで出せるログイン用の challenge では、新しいパ
   assert.equal(legit.status, 400);
   assert.doesNotMatch(((await legit.json()) as { error: string }).error, /challenge/i);
 });
+
+test("壊れた Cookie があっても管理 API は 500 にならない", async (t) => {
+  const { base } = await start(t);
+  const res = await fetch(`${base}/_admin/kanzume/api/state`, { headers: { cookie: "kanzume_session=%E0" } });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { registered: false, authenticated: false });
+});

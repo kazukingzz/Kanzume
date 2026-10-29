@@ -8,7 +8,12 @@ const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 export function readCookie(req: IncomingMessage, name: string): string | null {
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const eq = part.indexOf("=");
-    if (eq !== -1 && part.slice(0, eq).trim() === name) return decodeURIComponent(part.slice(eq + 1).trim());
+    if (eq === -1 || part.slice(0, eq).trim() !== name) continue;
+    try {
+      return decodeURIComponent(part.slice(eq + 1).trim());
+    } catch {
+      continue;
+    }
   }
   return null;
 }
