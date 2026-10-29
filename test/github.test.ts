@@ -87,6 +87,10 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   const b64 = await worker.fetch(new Request("http://x/api/base64", { method: "POST", body: "abc" }));
   assert.equal(await b64.response!.text(), "YWJj");
   assert.ok(fs.existsSync(path.join(release.dir, "assets", "index.html")));
+  await worker.fetch(new Request("http://x/api/files/x.html", { method: "PUT", headers: { "content-type": "text/html" }, body: "<script>alert(1)</script>" }));
+  const file = (await worker.fetch(new Request("http://x/api/files/x.html"))).response!;
+  assert.equal(file.headers.get("content-disposition"), "attachment");
+  assert.equal(file.headers.get("x-content-type-options"), "nosniff");
 
   const [d] = app.history.list();
   assert.equal(d.status, "success");

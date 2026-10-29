@@ -25,7 +25,7 @@ export default {
       const key = decodeURIComponent(url.pathname.slice("/api/files/".length));
       if (request.method === "PUT") {
         const object = await env.BUCKET.put(key, request.body, {
-          httpMetadata: request.headers,
+          httpMetadata: { contentType: request.headers.get("content-type") ?? "application/octet-stream" },
         });
         return Response.json({ key: object.key, size: object.size, etag: object.etag });
       }
@@ -34,6 +34,9 @@ export default {
       const headers = new Headers();
       object.writeHttpMetadata(headers);
       headers.set("etag", object.httpEtag);
+      // 保存した content-type のまま表示させないのは、誰でもアップロードできる HTML がサイトと同じオリジンで動いてしまうため
+      headers.set("content-disposition", "attachment");
+      headers.set("x-content-type-options", "nosniff");
       return new Response(object.body, { headers });
     }
 
