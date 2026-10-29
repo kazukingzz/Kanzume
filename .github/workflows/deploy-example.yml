@@ -1,0 +1,39 @@
+name: Deploy example to Kanzume
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - examples/worker/**
+      - action/**
+      - .github/workflows/deploy-example.yml
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-example
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # fork や未設定のリポジトリで毎回失敗しないよう、KANZUME_URL を登録したときだけ動かす
+    if: vars.KANZUME_URL != ''
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: examples/worker/package-lock.json
+
+      - id: kanzume
+        uses: ./action
+        with:
+          url: ${{ vars.KANZUME_URL }}
+          token: ${{ secrets.KANZUME_TOKEN }}
+          working-directory: examples/worker
+
+      - run: echo "デプロイしました：${{ steps.kanzume.outputs.url }}"
