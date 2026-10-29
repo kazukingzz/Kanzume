@@ -27,6 +27,7 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/": { file: "index.html", type: "text/html; charset=utf-8" },
   "/admin.js": { file: "admin.js", type: "text/javascript; charset=utf-8" },
   "/admin.css": { file: "admin.css", type: "text/css; charset=utf-8" },
+  "/logo.svg": { file: "logo.svg", type: "image/svg+xml" },
 };
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 
@@ -69,10 +70,12 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
 
     const asset = STATIC[sub];
     if (method === "GET" && asset) {
+      // ロゴに CSP を付けないのは、SVG 内の <style>（ダークモード用の配色）が style-src で止められてしまうため
+      const csp = asset.type === "image/svg+xml" ? {} : { "content-security-policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'" };
       res.writeHead(200, {
         "content-type": asset.type,
         "cache-control": "no-store",
-        "content-security-policy": "default-src 'self'; img-src 'self' data:; frame-ancestors 'none'",
+        ...csp,
         "x-content-type-options": "nosniff",
         "referrer-policy": "no-referrer",
       });

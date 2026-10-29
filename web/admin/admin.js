@@ -243,7 +243,7 @@ function route() {
   const tab = TABS[parseHash()] ? parseHash() : "deployments";
   state.tab = tab;
   for (const a of $("nav").querySelectorAll("a")) a.classList.toggle("current", a.dataset.tab === tab);
-  $("topbar-title").textContent = state.site?.release ? `Kanzume · ${state.site.release.name}` : "Kanzume";
+  $("topbar-title").textContent = state.site?.release?.name ?? "";
   const main = $("main");
   main.className = "main" + (tab === "code" && state.site?.release ? " fill" : "");
   main.scrollTop = 0;

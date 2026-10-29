@@ -5,13 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Kanzume 管理画面</title>
+<link rel="icon" href="/_admin/kanzume/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/_admin/kanzume/admin.css">
 <script type="module" src="/_admin/kanzume/admin.js"></script>
 </head>
 <body>
 <div id="auth" class="auth">
   <div class="auth-card">
-    <h1 class="brand">Kanzume</h1>
+    <div class="auth-brand">
+      <img class="logo" src="/_admin/kanzume/logo.svg" alt="" width="48" height="48">
+      <h1 class="brand">Kanzume</h1>
+    </div>
     <div id="auth-loading"><p class="muted">読み込み中…</p></div>
     <div id="setup" hidden>
       <h2>パスキーを登録</h2>
@@ -50,6 +54,7 @@
     <button class="icon-button" id="menu-open" aria-label="メニューを開く">
       <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
     </button>
+    <img class="logo logo-sm" src="/_admin/kanzume/logo.svg" alt="Kanzume" width="28" height="28">
     <span class="topbar-title" id="topbar-title"></span>
   </header>
 
@@ -57,7 +62,7 @@
 
   <aside class="sidebar" id="sidebar">
     <div class="sidebar-head">
-      <span class="brand">Kanzume</span>
+      <img class="logo" src="/_admin/kanzume/logo.svg" alt="Kanzume" width="40" height="40">
       <a class="site-link" id="site-link" target="_blank" rel="noopener" hidden></a>
     </div>
     <nav class="nav" id="nav">
