@@ -154,8 +154,8 @@ function setAuthMode(mode) {
   $("signup-panel").hidden = !signup;
   $("mode-signin").classList.toggle("active", !signup);
   $("mode-signup").classList.toggle("active", signup);
-  $("mode-signin").setAttribute("aria-selected", String(!signup));
-  $("mode-signup").setAttribute("aria-selected", String(signup));
+  $("mode-signin").setAttribute("aria-pressed", String(!signup));
+  $("mode-signup").setAttribute("aria-pressed", String(signup));
   $("login-error").textContent = "";
   if (signup) $("team-id").focus();
 }
