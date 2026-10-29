@@ -157,3 +157,40 @@ test("デプロイできないリポジトリは理由付きの失敗として�
   assert.ok(history.every((d) => d.status === "failed"));
   assert.equal(history[4].name, "npm");
 });
+
+test("リポジトリの外のファイルを import・alias するリポジトリはバンドルせずに失敗する", async (t) => {
+  const app = await start(t);
+  const secretDir = tmpDir(t);
+  const secret = path.join(secretDir, "admin.json");
+  fs.writeFileSync(secret, JSON.stringify({ deployToken: "kz_secret_value" }));
+  const url = "https://github.com/kazukingzz/kanzume/tree/main/app";
+  const run = async (files: Record<string, string>) => {
+    const { fetcher } = fakeGitHub(repoTarball(t, files));
+    return deployFromGitHub(url, app.deployer, { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 });
+  };
+  const config = (extra: Record<string, unknown> = {}) => JSON.stringify({ name: "evil", main: "src/index.ts", ...extra });
+
+  const absolute = await run({
+    "app/wrangler.jsonc": config(),
+    "app/src/index.ts": `import s from ${JSON.stringify(secret)}; export default { fetch() { return Response.json(s); } };`,
+  });
+  assert.match(absolute.ok ? "" : absolute.error, /リポジトリの外/);
+
+  const relative = await run({
+    "app/wrangler.jsonc": config(),
+    "app/src/index.ts": `import s from "${"../".repeat(12)}${secret.slice(1)}"; export default { fetch() { return Response.json(s); } };`,
+  });
+  assert.match(relative.ok ? "" : relative.error, /リポジトリの外/);
+
+  const aliased = await run({
+    "app/wrangler.jsonc": config({ alias: { secret } }),
+    "app/src/index.ts": `import s from "secret"; export default { fetch() { return Response.json(s); } };`,
+  });
+  assert.match(aliased.ok ? "" : aliased.error, /alias/);
+
+  assert.equal(app.store.get(), undefined);
+  for (const d of app.history.list()) {
+    const full = app.history.get(d.id)!;
+    assert.doesNotMatch(full.log + full.buildLog, /kz_secret_value/);
+  }
+});

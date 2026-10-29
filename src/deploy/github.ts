@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
+import type { Plugin } from "esbuild";
 import type { UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer, type DeployResult } from "./deployer.ts";
 import type { DeploySource } from "./history.ts";
@@ -115,6 +116,33 @@ async function collect(root: string, rel = ""): Promise<string[]> {
   return out;
 }
 
+function inside(root: string, p: string): boolean {
+  return p === root || p.startsWith(root + path.sep);
+}
+
+// esbuild の既定の解決に任せないのは、信頼できないリポジトリが /data などサーバー上のファイルを
+// import してバンドルに埋め込めてしまうため
+function confine(root: string): Plugin {
+  return {
+    name: "kanzume-confine",
+    setup(build) {
+      build.onResolve({ filter: /.*/ }, async (args) => {
+        if (args.pluginData === "confined") return undefined;
+        const result = await build.resolve(args.path, {
+          kind: args.kind,
+          importer: args.importer,
+          resolveDir: args.resolveDir,
+          pluginData: "confined",
+        });
+        if (result.errors.length || result.external || result.namespace !== "file") return result;
+        const real = await fs.realpath(result.path).catch(() => result.path);
+        if (!inside(root, real)) return { errors: [{ text: `リポジトリの外のファイルは import できません: ${args.path}` }] };
+        return result;
+      });
+    },
+  };
+}
+
 function hint(message: string): string {
   if (/Could not resolve "(?!\.)/.test(message)) return `${message}\nnpm パッケージを使うリポジトリは GitHub Actions でデプロイしてください`;
   return message;
@@ -128,7 +156,7 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
   const buildLog: string[] = [];
   let source: DeploySource = {};
   let name: string | null = null;
-  const work = await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-github-"));
+  const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-github-")));
 
   try {
     const repo = parseGitHubUrl(input);
@@ -175,7 +203,13 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
     if (typeof config.main === "string") {
       const { build: esbuild } = await import("esbuild");
       const entry = path.resolve(work, config.main);
-      if (!entry.startsWith(work + path.sep)) throw new GitHubError("main のパスが不正です");
+      if (!inside(work, entry)) throw new GitHubError("main のパスが不正です");
+      const alias = (config.alias ?? {}) as Record<string, unknown>;
+      for (const [from, to] of Object.entries(alias)) {
+        if (typeof to !== "string" || path.isAbsolute(to) || to.split(/[\\/]/).includes("..")) {
+          throw new GitHubError(`alias の ${from} にリポジトリの外は指定できません`);
+        }
+      }
       const base = path.basename(config.main).replace(/\.[^.]+$/, "");
       buildLog.push(`$ esbuild ${config.main} --bundle --format=cjs（Kanzume 内でバンドル）`);
       try {
@@ -190,7 +224,8 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
           external: ["cloudflare:*"],
           loader: { ".txt": "text", ".html": "text", ".sql": "text", ".bin": "binary" },
           define: (config.define as Record<string, string>) ?? {},
-          alias: (config.alias as Record<string, string>) ?? {},
+          alias: alias as Record<string, string>,
+          plugins: [confine(work)],
           write: false,
           metafile: true,
           logLevel: "silent",
@@ -200,8 +235,9 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
         out.push({ path: `worker/${base}.cjs`, data: Buffer.from(result.outputFiles[0].contents) });
         sources = [];
         for (const p of Object.keys(result.metafile.inputs)) {
-          if (p.split("/").includes("node_modules")) continue;
-          sources.push({ path: p, content: await fs.readFile(path.join(work, p), "utf8") });
+          const file = path.resolve(work, p);
+          if (p.split("/").includes("node_modules") || !inside(work, file)) continue;
+          sources.push({ path: p, content: await fs.readFile(file, "utf8") });
         }
         buildLog.push(`バンドルしました: worker/${base}.cjs（${(out[1].data.length / 1024).toFixed(1)} KiB、ソース ${sources.length} ファイル）`);
       } catch (err) {
@@ -217,7 +253,7 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
     const assets = config.assets as { directory?: string } | undefined;
     if (assets?.directory) {
       const assetsRoot = path.resolve(work, assets.directory);
-      if (assetsRoot !== work && !assetsRoot.startsWith(work + path.sep)) throw new GitHubError("assets.directory のパスが不正です");
+      if (!inside(work, assetsRoot)) throw new GitHubError("assets.directory のパスが不正です");
       const exists = await fs.stat(assetsRoot).then((s) => s.isDirectory()).catch(() => false);
       if (!exists) throw new GitHubError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
       const list = (await collect(assetsRoot)).filter((p) => path.basename(p) !== ".assetsignore");
