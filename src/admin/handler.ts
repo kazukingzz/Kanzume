@@ -103,21 +103,22 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         userName: `Kanzume（${rpID}）`,
         userDisplayName: "Kanzume メンバー",
         userID: randomBytes(16),
+        challenge: challenges.create("register"),
         attestationType: "none",
         excludeCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
       });
-      challenges.add(options.challenge, "register");
       return sendJson(res, 200, options);
     }
 
     if (route === "POST /api/register/verify") {
       const body = await readJson(req, 256 * 1024);
+      let challenge = "";
       let result;
       try {
         result = await verifyRegistrationResponse({
           response: body?.response as never,
-          expectedChallenge: (c: string) => challenges.consume(c, "register"),
+          expectedChallenge: (c: string) => ((challenge = c), challenges.check(c, "register")),
           expectedOrigin: origin,
           expectedRPID: rpID,
           requireUserVerification: false,
@@ -126,6 +127,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         return sendJson(res, 400, { error: (err as Error).message });
       }
       if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      challenges.markUsed(challenge);
       const { credential } = result.registrationInfo;
       await state.addCredential({
         id: credential.id,
@@ -141,10 +143,10 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       if (state.credentials.length === 0) return sendJson(res, 400, { error: "パスキーが未登録です" });
       const options = await generateAuthenticationOptions({
         rpID,
+        challenge: challenges.create("login"),
         allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         userVerification: "preferred",
       });
-      challenges.add(options.challenge, "login");
       return sendJson(res, 200, options);
     }
 
@@ -153,11 +155,12 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       const response = body?.response as { id?: string } | undefined;
       const stored = state.credentials.find((c) => c.id === response?.id);
       if (!stored) return sendJson(res, 400, { error: "登録されていないパスキーです" });
+      let challenge = "";
       let result;
       try {
         result = await verifyAuthenticationResponse({
           response: response as never,
-          expectedChallenge: (c: string) => challenges.consume(c, "login"),
+          expectedChallenge: (c: string) => ((challenge = c), challenges.check(c, "login")),
           expectedOrigin: origin,
           expectedRPID: rpID,
           credential: {
@@ -172,6 +175,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         return sendJson(res, 400, { error: (err as Error).message });
       }
       if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      challenges.markUsed(challenge);
       await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
       return login(res, origin);
     }

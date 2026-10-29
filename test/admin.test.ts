@@ -3,6 +3,7 @@ import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
+import { Challenges } from "../src/admin/session.ts";
 import { AdminState, normalizeTeamId } from "../src/admin/state.ts";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
@@ -198,4 +199,29 @@ test("壊れた Cookie があっても管理 API は 500 にならない", async
   const res = await fetch(`${base}/_admin/kanzume/api/state`, { headers: { cookie: "kanzume_session=%E0" } });
   assert.equal(res.status, 200);
   assert.deepEqual(await res.json(), { registered: false, authenticated: false });
+});
+
+const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");
+
+test("challenge はいくら発行されても溜まらず、正規ユーザーの challenge が追い出されない", () => {
+  const challenges = new Challenges();
+  const mine = b64(challenges.create("register"));
+  for (let i = 0; i < 5000; i++) challenges.create("login");
+  assert.equal(challenges.check(mine, "register"), true);
+});
+
+test("challenge は署名・用途・期限・使用済みを確かめる", () => {
+  const challenges = new Challenges();
+  const now = Date.now();
+  const c = b64(challenges.create("login", now));
+  assert.equal(challenges.check(c, "login", now), true);
+  assert.equal(challenges.check(c, "register", now), false, "用途が違えば受け付けない");
+  assert.equal(challenges.check(c, "login", now + 6 * 60_000), false, "5 分を過ぎたら受け付けない");
+  assert.equal(new Challenges().check(c, "login", now), false, "別の鍵で署名したものは受け付けない");
+  const tampered = Buffer.from(c, "base64url");
+  tampered[0] ^= 1;
+  assert.equal(challenges.check(tampered.toString("base64url"), "login", now), false, "書き換えたら受け付けない");
+  assert.equal(challenges.check("short", "login", now), false);
+  challenges.markUsed(c, now);
+  assert.equal(challenges.check(c, "login", now), false, "一度使ったものは受け付けない");
 });
