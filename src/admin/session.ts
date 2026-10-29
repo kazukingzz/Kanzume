@@ -13,18 +13,21 @@ export function readCookie(req: IncomingMessage, name: string): string | null {
   return null;
 }
 
-export class Challenges {
-  #challenges = new Map<string, number>();
+export type ChallengePurpose = "register" | "login";
 
-  add(challenge: string): void {
+export class Challenges {
+  #challenges = new Map<string, { purpose: ChallengePurpose; expires: number }>();
+
+  add(challenge: string, purpose: ChallengePurpose): void {
     const now = Date.now();
-    for (const [c, expires] of this.#challenges) if (expires < now) this.#challenges.delete(c);
-    this.#challenges.set(challenge, now + CHALLENGE_TTL_MS);
+    for (const [c, { expires }] of this.#challenges) if (expires < now) this.#challenges.delete(c);
+    this.#challenges.set(challenge, { purpose, expires: now + CHALLENGE_TTL_MS });
   }
 
-  consume(challenge: string): boolean {
-    const expires = this.#challenges.get(challenge);
+  // 用途を見ないと、認証なしで出せるログイン用の challenge で新しいパスキーを登録できてしまう
+  consume(challenge: string, purpose: ChallengePurpose): boolean {
+    const entry = this.#challenges.get(challenge);
     this.#challenges.delete(challenge);
-    return !!expires && expires >= Date.now();
+    return !!entry && entry.purpose === purpose && entry.expires >= Date.now();
   }
 }

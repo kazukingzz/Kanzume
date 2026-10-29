@@ -97,3 +97,29 @@ test("ログインのセッションは期限なしで、サーバーを再起�
   assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 401);
   assert.equal(second.state.hasSession(id), false);
 });
+
+test("認証なしで出せるログイン用の challenge では、新しいパスキーを登録できない", async (t) => {
+  const { post, state, base } = await start(t);
+  await state.addCredential(fakeCredential);
+  const fakeRegistration = (challenge: string) => ({
+    id: "attacker",
+    rawId: "attacker",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: {
+      clientDataJSON: Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: base })).toString("base64url"),
+      attestationObject: Buffer.from("x").toString("base64url"),
+    },
+  });
+
+  const { challenge: loginChallenge } = (await (await post("/login/options", {})).json()) as { challenge: string };
+  const attack = await post("/register/verify", { response: fakeRegistration(loginChallenge) });
+  assert.equal(attack.status, 400);
+  assert.match(((await attack.json()) as { error: string }).error, /challenge/i);
+  assert.equal(state.credentials.length, 1);
+
+  const { challenge: registerChallenge } = (await (await post("/register/options", { teamId: state.teamId })).json()) as { challenge: string };
+  const legit = await post("/register/verify", { response: fakeRegistration(registerChallenge) });
+  assert.equal(legit.status, 400);
+  assert.doesNotMatch(((await legit.json()) as { error: string }).error, /challenge/i);
+});

@@ -52,7 +52,6 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
     sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(), SESSION_COOKIE_MAX_AGE) });
   };
 
-  const consume = (challenge: string) => challenges.consume(challenge);
 
   const allowedToRegister = (authenticated: boolean, body: Record<string, unknown> | null): string | null => {
     if (authenticated) return null;
@@ -109,7 +108,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         excludeCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
       });
-      challenges.add(options.challenge);
+      challenges.add(options.challenge, "register");
       return sendJson(res, 200, options);
     }
 
@@ -118,7 +117,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       try {
         const result = await verifyRegistrationResponse({
           response: body?.response as never,
-          expectedChallenge: consume,
+          expectedChallenge: (c: string) => challenges.consume(c, "register"),
           expectedOrigin: origin,
           expectedRPID: rpID,
           requireUserVerification: false,
@@ -145,7 +144,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
         userVerification: "preferred",
       });
-      challenges.add(options.challenge);
+      challenges.add(options.challenge, "login");
       return sendJson(res, 200, options);
     }
 
@@ -157,7 +156,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       try {
         const result = await verifyAuthenticationResponse({
           response: response as never,
-          expectedChallenge: consume,
+          expectedChallenge: (c: string) => challenges.consume(c, "login"),
           expectedOrigin: origin,
           expectedRPID: rpID,
           credential: {
