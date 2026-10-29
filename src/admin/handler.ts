@@ -139,9 +139,7 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
     }
 
     if (route === "POST /api/login/options") {
-      const body = await readJson(req);
       if (state.credentials.length === 0) return sendJson(res, 400, { error: "パスキーが未登録です" });
-      if (!state.checkTeamId(String(body?.teamId ?? ""))) return sendJson(res, 403, { error: "チーム ID が違います" });
       const options = await generateAuthenticationOptions({
         rpID,
         allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),

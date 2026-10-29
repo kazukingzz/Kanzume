@@ -24,15 +24,21 @@
       <div class="error" id="setup-error"></div>
     </div>
     <div id="login" hidden>
-      <h2>ログイン</h2>
-      <p class="muted">管理画面に表示されているチーム ID を入力してください。初めてのデバイスでは「パスキーを登録」を選びます。</p>
-      <div class="field">
-        <label for="team-id">チーム ID</label>
-        <input id="team-id" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
+      <div class="segmented auth-mode" role="tablist">
+        <button id="mode-signin" role="tab" class="active" aria-selected="true">サインイン</button>
+        <button id="mode-signup" role="tab" aria-selected="false">サインアップ</button>
       </div>
-      <div class="row wrap">
-        <button class="primary" id="signin">パスキーでログイン</button>
-        <button id="join">パスキーを登録</button>
+      <div id="signin-panel">
+        <p class="muted">登録済みのパスキーでサインインします。</p>
+        <button class="primary" id="signin">パスキーでサインイン</button>
+      </div>
+      <div id="signup-panel" hidden>
+        <p class="muted">管理画面の設定に表示されているチーム ID を入力して、このデバイスのパスキーを登録します。</p>
+        <div class="field">
+          <label for="team-id">チーム ID</label>
+          <input id="team-id" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
+        </div>
+        <button class="primary" id="join">パスキーを登録</button>
       </div>
       <div class="error" id="login-error"></div>
     </div>

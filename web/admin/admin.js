@@ -133,6 +133,7 @@ function showAuth(view) {
   $("app").hidden = true;
   $("auth").hidden = false;
   for (const id of ["auth-loading", "setup", "login"]) $(id).hidden = id !== view;
+  if (view === "login") setAuthMode("signin");
 }
 
 $("register").addEventListener("click", async () => {
@@ -146,6 +147,20 @@ $("register").addEventListener("click", async () => {
     $("setup-error").textContent = err.message;
   }
 });
+
+function setAuthMode(mode) {
+  const signup = mode === "signup";
+  $("signin-panel").hidden = signup;
+  $("signup-panel").hidden = !signup;
+  $("mode-signin").classList.toggle("active", !signup);
+  $("mode-signup").classList.toggle("active", signup);
+  $("mode-signin").setAttribute("aria-selected", String(!signup));
+  $("mode-signup").setAttribute("aria-selected", String(signup));
+  $("login-error").textContent = "";
+  if (signup) $("team-id").focus();
+}
+$("mode-signin").addEventListener("click", () => setAuthMode("signin"));
+$("mode-signup").addEventListener("click", () => setAuthMode("signup"));
 
 $("join").addEventListener("click", async () => {
   $("login-error").textContent = "";
@@ -162,7 +177,7 @@ $("join").addEventListener("click", async () => {
 $("signin").addEventListener("click", async () => {
   $("login-error").textContent = "";
   try {
-    const options = await api("/login/options", { method: "POST", body: JSON.stringify({ teamId: $("team-id").value.trim() }) });
+    const options = await api("/login/options", { method: "POST", body: "{}" });
     const cred = await navigator.credentials.get({ publicKey: requestOptions(options) });
     await api("/login/verify", { method: "POST", body: JSON.stringify({ response: credentialJSON(cred) }) });
     await enterApp();

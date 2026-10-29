@@ -52,7 +52,7 @@ test("最初のパスキー登録はセットアップトークンでだけ始�
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 200);
 });
 
-test("パスキー登録後は、チーム ID がないと登録もログインも始められない", async (t) => {
+test("パスキー登録後は、新しいパスキーの登録にはチーム ID が必要で、サインインには不要", async (t) => {
   const { post, state } = await start(t);
   await state.addCredential(fakeCredential);
 
@@ -64,9 +64,9 @@ test("パスキー登録後は、チーム ID がないと登録もログイン�
   const options = (await register.json()) as { excludeCredentials: { id: string }[] };
   assert.deepEqual(options.excludeCredentials.map((c) => c.id), ["cred-1"]);
 
-  assert.equal((await post("/login/options", {})).status, 403);
-  assert.equal((await post("/login/options", { teamId: "0000-0000-0000-0000" })).status, 403);
-  assert.equal((await post("/login/options", { teamId: state.teamId })).status, 200);
+  const login = await post("/login/options", {});
+  assert.equal(login.status, 200);
+  assert.deepEqual(((await login.json()) as { allowCredentials: { id: string }[] }).allowCredentials.map((c) => c.id), ["cred-1"]);
 });
 
 test("チーム ID や管理 API はログインしないと見えない", async (t) => {

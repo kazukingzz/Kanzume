@@ -94,6 +94,8 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 .auth-card { width: 100%; max-width: 400px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 24px; }
 .auth-card .brand { display: block; margin-bottom: 16px; }
 .auth-card h2 { font-size: 15px; margin-bottom: 12px; }
+.segmented.auth-mode { display: flex; margin-bottom: 16px; }
+.segmented.auth-mode button { flex: 1; }
 
 /* レイアウト */
 .app { display: grid; grid-template-columns: 228px minmax(0, 1fr); height: 100dvh; }
