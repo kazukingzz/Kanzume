@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
+import fs from "node:fs";
+import path from "node:path";
 import { AdminState, normalizeTeamId } from "../src/admin/state.ts";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
@@ -12,6 +14,7 @@ async function start(t: TestContext, dataDir = tmpDir(t)) {
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise((resolve) => app.server.close(resolve));
+    await app.state.flush();
     closeSiteDb(app.store.siteDir);
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
@@ -79,7 +82,7 @@ test("チーム ID や管理 API はログインしないと見えない", async
   assert.deepEqual(await (await fetch(`${base}/_admin/kanzume/api/state`)).json(), { registered: false, authenticated: false });
 });
 
-test("ログインのセッションは期限なしで、サーバーを再起動しても残り、ログアウトで消える", async (t) => {
+test("ログインのセッションはサーバーを再起動しても残り、ログアウトで消える", async (t) => {
   const dataDir = tmpDir(t);
   const before = new AdminState(dataDir);
   await before.init();
@@ -95,7 +98,9 @@ test("ログインのセッションは期限なしで、サーバーを再起�
   const logout = await fetch(`${second.base}/_admin/kanzume/api/logout`, { method: "POST", headers: { cookie, origin: second.base } });
   assert.equal(logout.status, 200);
   assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 401);
-  assert.equal(second.state.hasSession(id), false);
+  const reloaded = new AdminState(dataDir);
+  await reloaded.init();
+  assert.equal(reloaded.hasSession(id), false, "ログアウトがディスクにも反映されている");
 });
 
 test("認証なしで出せるログイン用の challenge では、新しいパスキーを登録できない", async (t) => {
@@ -122,6 +127,70 @@ test("認証なしで出せるログイン用の challenge では、新しいパ
   const legit = await post("/register/verify", { response: fakeRegistration(registerChallenge) });
   assert.equal(legit.status, 400);
   assert.doesNotMatch(((await legit.json()) as { error: string }).error, /challenge/i);
+});
+
+test("同時にログインしても admin.json の保存が失敗しない", async (t) => {
+  const dataDir = tmpDir(t);
+  const state = new AdminState(dataDir);
+  await state.init();
+  const ids = await Promise.all(Array.from({ length: 20 }, () => state.createSession()));
+  await Promise.all([state.rotateDeployToken(), state.removeSession(ids[0]), state.createSession()]);
+  const reloaded = new AdminState(dataDir);
+  await reloaded.init();
+  assert.equal(reloaded.sessionCount, 20);
+  assert.equal(reloaded.hasSession(ids[0]), false);
+  assert.ok(ids.slice(1).every((id) => reloaded.hasSession(id)));
+  assert.equal(reloaded.deployToken, state.deployToken);
+});
+
+test("400 日使われていないセッションは消え、使われているセッションは残る", async (t) => {
+  const dataDir = tmpDir(t);
+  const state = new AdminState(dataDir);
+  await state.init();
+  const old = await state.createSession();
+  const used = await state.createSession();
+  const file = path.join(dataDir, "admin.json");
+  const json = JSON.parse(fs.readFileSync(file, "utf8"));
+  const hashes = Object.keys(json.sessions);
+  json.sessions[hashes[0]] = Date.now() - 401 * 24 * 60 * 60 * 1000;
+  json.sessions[hashes[1]] = Date.now() - 399 * 24 * 60 * 60 * 1000;
+  fs.writeFileSync(file, JSON.stringify(json));
+
+  const reloaded = new AdminState(dataDir);
+  await reloaded.init();
+  assert.equal(reloaded.hasSession(old), false);
+  assert.equal(reloaded.hasSession(used), true);
+  await reloaded.flush();
+  const saved = JSON.parse(fs.readFileSync(file, "utf8")).sessions as Record<string, number>;
+  assert.equal(Object.keys(saved).length, 1);
+  assert.ok(Date.now() - Object.values(saved)[0] < 60_000, "使われたセッションの最終利用時刻が保存される");
+});
+
+test("リクエストのたびに admin.json を書き直さない", async (t) => {
+  const dataDir = tmpDir(t);
+  const state = new AdminState(dataDir);
+  await state.init();
+  const id = await state.createSession();
+  const file = path.join(dataDir, "admin.json");
+  const before = fs.statSync(file).mtimeMs;
+  for (let i = 0; i < 50; i++) assert.equal(state.hasSession(id), true);
+  await state.flush();
+  assert.equal(fs.statSync(file).mtimeMs, before);
+});
+
+test("前のバージョンが残した一時ファイルは起動時に消し、読めない admin.json は初期化せずに起動を止める", async (t) => {
+  const dataDir = tmpDir(t);
+  const state = new AdminState(dataDir);
+  await state.init();
+  const leftover = path.join(dataDir, "admin.json.123.4.tmp");
+  fs.writeFileSync(leftover, "secret");
+  const again = new AdminState(dataDir);
+  await again.init();
+  assert.equal(fs.existsSync(leftover), false);
+
+  fs.writeFileSync(path.join(dataDir, "admin.json"), "{ broken");
+  await assert.rejects(new AdminState(dataDir).init());
+  assert.equal(fs.readFileSync(path.join(dataDir, "admin.json"), "utf8"), "{ broken");
 });
 
 test("壊れた Cookie があっても管理 API は 500 にならない", async (t) => {

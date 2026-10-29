@@ -113,27 +113,28 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
 
     if (route === "POST /api/register/verify") {
       const body = await readJson(req, 256 * 1024);
+      let result;
       try {
-        const result = await verifyRegistrationResponse({
+        result = await verifyRegistrationResponse({
           response: body?.response as never,
           expectedChallenge: (c: string) => challenges.consume(c, "register"),
           expectedOrigin: origin,
           expectedRPID: rpID,
           requireUserVerification: false,
         });
-        if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
-        const { credential } = result.registrationInfo;
-        await state.addCredential({
-          id: credential.id,
-          publicKey: Buffer.from(credential.publicKey).toString("base64url"),
-          counter: credential.counter,
-          transports: credential.transports,
-          createdAt: new Date().toISOString(),
-        });
-        return login(res, origin);
       } catch (err) {
         return sendJson(res, 400, { error: (err as Error).message });
       }
+      if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      const { credential } = result.registrationInfo;
+      await state.addCredential({
+        id: credential.id,
+        publicKey: Buffer.from(credential.publicKey).toString("base64url"),
+        counter: credential.counter,
+        transports: credential.transports,
+        createdAt: new Date().toISOString(),
+      });
+      return login(res, origin);
     }
 
     if (route === "POST /api/login/options") {
@@ -152,8 +153,9 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       const response = body?.response as { id?: string } | undefined;
       const stored = state.credentials.find((c) => c.id === response?.id);
       if (!stored) return sendJson(res, 400, { error: "登録されていないパスキーです" });
+      let result;
       try {
-        const result = await verifyAuthenticationResponse({
+        result = await verifyAuthenticationResponse({
           response: response as never,
           expectedChallenge: (c: string) => challenges.consume(c, "login"),
           expectedOrigin: origin,
@@ -166,16 +168,21 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
           },
           requireUserVerification: false,
         });
-        if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
-        await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
-        return login(res, origin);
       } catch (err) {
         return sendJson(res, 400, { error: (err as Error).message });
       }
+      if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
+      return login(res, origin);
     }
 
     if (route === "POST /api/logout") {
-      await state.removeSession(sessionId);
+      try {
+        await state.removeSession(sessionId);
+      } catch (err) {
+        console.error("[kanzume] ログアウトの保存に失敗:", err);
+        return sendJson(res, 500, { error: "ログアウトできませんでした。もう一度試してください" });
+      }
       return sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, "", 0) });
     }
 

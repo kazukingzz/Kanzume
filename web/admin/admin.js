@@ -187,7 +187,14 @@ $("signin").addEventListener("click", async () => {
 });
 
 $("logout").addEventListener("click", async () => {
-  await api("/logout", { method: "POST", body: "{}" }).catch(() => {});
+  try {
+    await api("/logout", { method: "POST", body: "{}" });
+  } catch (err) {
+    setMenu(false);
+    $("main").querySelector(".logout-error")?.remove();
+    $("main").prepend(h("div", { class: "notice logout-error", role: "alert", text: err.message }));
+    return;
+  }
   showAuth("login");
 });
 

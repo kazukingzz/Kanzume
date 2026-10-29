@@ -154,6 +154,7 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 .status.neutral { color: var(--muted); }
 
 .empty { padding: 32px 16px; text-align: center; color: var(--muted); }
+.main > .logout-error { margin: 16px 28px 0; flex: none; }
 .notice { border: 1px solid var(--line); border-left: 3px solid var(--critical); border-radius: 8px; padding: 10px 12px; margin-bottom: 16px; font-size: 13px; background: var(--panel); }
 
 .segmented { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
