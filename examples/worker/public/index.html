@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kanzume Example</title>
+</head>
+<body>
+  <h1>Kanzume Example</h1>
+  <p id="message">…</p>
+  <script>
+    fetch("api/hello").then((r) => r.json()).then((d) => {
+      document.getElementById("message").textContent = d.message;
+    });
+  </script>
+</body>
+</html>

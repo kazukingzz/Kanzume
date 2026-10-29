@@ -1,0 +1,21 @@
+{
+  // Cloudflare にもそのまま `wrangler deploy` できる設定
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kanzume-example",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./public",
+    "binding": "ASSETS"
+  },
+  "vars": {
+    "GREETING": "Hello from Kanzume"
+  },
+  "kv_namespaces": [
+    { "binding": "KV", "id": "00000000000000000000000000000000" }
+  ],
+  "r2_buckets": [
+    { "binding": "BUCKET", "bucket_name": "kanzume-example" }
+  ],
+}
