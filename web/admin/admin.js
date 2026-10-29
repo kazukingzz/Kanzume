@@ -243,7 +243,7 @@ function route() {
   const tab = TABS[parseHash()] ? parseHash() : "deployments";
   state.tab = tab;
   for (const a of $("nav").querySelectorAll("a")) a.classList.toggle("current", a.dataset.tab === tab);
-  $("topbar-title").textContent = TABS[tab];
+  $("topbar-title").textContent = state.site?.release ? `Kanzume · ${state.site.release.name}` : "Kanzume";
   const main = $("main");
   main.className = "main" + (tab === "code" && state.site?.release ? " fill" : "");
   main.scrollTop = 0;
@@ -324,7 +324,7 @@ async function viewDeployments(main) {
   }
   page.append(current);
 
-  page.append(h("div", { class: "card-head" }, h("h2", { text: "デプロイ履歴" }), h("span", { class: "muted", text: `${deployments.length} 件` })));
+  page.append(h("div", { class: "section-head" }, h("h2", { text: "デプロイ履歴" }), h("span", { class: "muted", text: `${deployments.length} 件` })));
   const list = h("div", { class: "list" });
   for (const d of deployments) list.append(deploymentItem(d, d.release && d.release === active));
   if (!deployments.length) list.append(h("div", { class: "empty", text: "履歴はまだありません" }));
@@ -1054,7 +1054,7 @@ async function viewSettings(main) {
       h("p", { class: "muted", text: "デプロイしたいリポジトリの Variables に KANZUME_URL、Secrets に KANZUME_TOKEN を登録してください。" }),
       h("div", { class: "field" }, h("label", { text: "KANZUME_URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
       h("div", { class: "field" }, h("label", { text: "KANZUME_TOKEN" }), h("div", { class: "row" }, tokenView, toggle, copyButton(() => state.token))),
-      h("div", {}, rotate, h("p", { class: "muted", text: "再発行すると今の Token は使えなくなります。" }), rotateError),
+      h("div", {}, rotate, h("p", { class: "muted hint", text: "再発行すると今の Token は使えなくなります。" }), rotateError),
     ),
     h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)), h("pre", { class: "log", text: WORKFLOW })),
   );
