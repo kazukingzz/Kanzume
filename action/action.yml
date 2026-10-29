@@ -1,0 +1,30 @@
+name: Deploy to Kanzume
+description: wrangler の設定のまま Kanzume にデプロイする
+branding:
+  icon: upload-cloud
+  color: orange
+inputs:
+  url:
+    description: Kanzume の URL（管理画面に表示される KANZUME_URL）
+    required: true
+  token:
+    description: デプロイ用 Token（管理画面に表示される KANZUME_TOKEN）
+    required: true
+  working-directory:
+    description: wrangler.jsonc / wrangler.toml があるディレクトリ
+    required: false
+    default: "."
+outputs:
+  url:
+    description: デプロイ先の URL
+    value: ${{ steps.deploy.outputs.url }}
+runs:
+  using: composite
+  steps:
+    - id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: node "$GITHUB_ACTION_PATH/deploy.mjs"
+      env:
+        KANZUME_URL: ${{ inputs.url }}
+        KANZUME_TOKEN: ${{ inputs.token }}
