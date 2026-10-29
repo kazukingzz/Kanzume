@@ -1,0 +1,9 @@
+services:
+  - type: web
+    name: kanzume
+    runtime: docker
+    plan: free
+    healthCheckPath: /_health
+    envVars:
+      - key: KANZUME_SETUP_TOKEN
+        generateValue: true

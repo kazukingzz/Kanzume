@@ -1,0 +1,9 @@
+.git
+node_modules
+examples
+test
+action
+.data
+.kanzume
+.wrangler
+*.md
