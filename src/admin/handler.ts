@@ -52,7 +52,6 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
     sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(), SESSION_COOKIE_MAX_AGE) });
   };
 
-
   const allowedToRegister = (authenticated: boolean, body: Record<string, unknown> | null): string | null => {
     if (authenticated) return null;
     if (state.credentials.length === 0) {

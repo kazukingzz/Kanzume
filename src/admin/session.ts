@@ -1,7 +1,7 @@
 import type { IncomingMessage } from "node:http";
 
 export const SESSION_COOKIE = "kanzume_session";
-// Cookie を無期限にしないのは、ブラウザが Max-Age を最長 400 日に切り詰めるため。開くたびに延長する
+// Cookie を無期限にしないのは、ブラウザが Max-Age を最長 400 日に切り詰めるため
 export const SESSION_COOKIE_MAX_AGE = 400 * 24 * 60 * 60;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
