@@ -81,6 +81,8 @@ Action がやること:
 
 サンプルは [`examples/worker`](examples/worker) にあります。同じコードを `wrangler deploy` で Cloudflare にもそのままデプロイできます。
 
+このリポジトリ自体にも、サンプルをデプロイするワークフロー（[`.github/workflows/deploy-example.yml`](.github/workflows/deploy-example.yml)）があります。リポジトリの Variables に `KANZUME_URL`、Secrets に `KANZUME_TOKEN` を登録すると、`examples/worker` か `action` を変更して main に push するたび（または Actions の画面から手動で）デプロイします。`KANZUME_URL` が未登録の間は実行されません。
+
 Action はビルドログ・コミット情報・ソースマップから取り出した元のソースも一緒に送ります（`node_modules` 配下のソースは送りません）。ビルドに失敗した場合も失敗として記録されます。
 
 ## 管理画面
