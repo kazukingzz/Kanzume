@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Kanzume 管理画面</title>
+<link rel="stylesheet" href="/_admin/kanzume/admin.css">
+<script type="module" src="/_admin/kanzume/admin.js"></script>
+</head>
+<body>
+<div id="auth" class="auth">
+  <div class="auth-card">
+    <h1 class="brand">Kanzume</h1>
+    <div id="auth-loading"><p class="muted">読み込み中…</p></div>
+    <div id="setup" hidden>
+      <h2>パスキーを登録</h2>
+      <p class="muted">最初の 1 回だけ、サーバーの環境変数 KANZUME_SETUP_TOKEN（未設定ならサーバーのログに出ています）を入力してパスキーを登録します。</p>
+      <div class="field">
+        <label for="setup-token">セットアップトークン</label>
+        <input id="setup-token" autocomplete="off" spellcheck="false">
+      </div>
+      <button class="primary" id="register">パスキーを登録</button>
+      <div class="error" id="setup-error"></div>
+    </div>
+    <div id="login" hidden>
+      <h2>ログイン</h2>
+      <p class="muted">管理画面に表示されているチーム ID を入力してください。初めてのデバイスでは「パスキーを登録」を選びます。</p>
+      <div class="field">
+        <label for="team-id">チーム ID</label>
+        <input id="team-id" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
+      </div>
+      <div class="row wrap">
+        <button class="primary" id="signin">パスキーでログイン</button>
+        <button id="join">パスキーを登録</button>
+      </div>
+      <div class="error" id="login-error"></div>
+    </div>
+  </div>
+</div>
+
+<div id="app" class="app" hidden>
+  <header class="topbar">
+    <button class="icon-button" id="menu-open" aria-label="メニューを開く">
+      <svg viewBox="0 0 24 24" width="20" height="20" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16" /></svg>
+    </button>
+    <span class="topbar-title" id="topbar-title"></span>
+  </header>
+
+  <div class="scrim" id="scrim" hidden></div>
+
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-head">
+      <span class="brand">Kanzume</span>
+      <a class="site-link" id="site-link" target="_blank" rel="noopener" hidden></a>
+    </div>
+    <nav class="nav" id="nav">
+      <a data-tab="deployments">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12M7 8l5-5 5 5M5 21h14" /></svg>
+        デプロイ
+      </a>
+      <a data-tab="code">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 7l-5 5 5 5M15 7l5 5-5 5" /></svg>
+        コード
+      </a>
+      <a data-tab="observability">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" /></svg>
+        可観測性
+      </a>
+      <a data-tab="settings">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" /></svg>
+        設定
+      </a>
+    </nav>
+    <div class="sidebar-foot">
+      <button id="logout" class="ghost">ログアウト</button>
+    </div>
+  </aside>
+
+  <main class="main" id="main"></main>
+</div>
+</body>
+</html>
