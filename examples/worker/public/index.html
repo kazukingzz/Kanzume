@@ -1,17 +1,154 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Kanzume Example</title>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanzume — ハッカソンのための小さな Cloudflare</title>
+<meta name="description" content="Cloudflare Workers のコードを書き換えずに、自分のサーバー 1 台で動かせるセルフホスト環境。Render の無料プランで動き、GitHub Actions から URL と Token だけでデプロイできます。">
+<link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h1>Kanzume Example</h1>
-  <p id="message">…</p>
-  <script>
-    fetch("api/hello").then((r) => r.json()).then((d) => {
-      document.getElementById("message").textContent = d.message;
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="./">Kanzume</a>
+    <nav class="nav-links">
+      <a href="#why">特徴</a>
+      <a href="#start">始め方</a>
+      <a href="#features">対応機能</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="wrap">
+      <p class="eyebrow">ハッカソンのための小さな Cloudflare</p>
+      <h1>Workers のコードを、<br>自分のサーバーでそのまま。</h1>
+      <p class="lead">Kanzume は、Cloudflare Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Render の無料プランに置けて、GitHub Actions からは URL と Token の 2 つだけでデプロイできます。</p>
+      <div class="actions">
+        <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
+        <a class="button" href="https://render.com/deploy?repo=https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">Render に立てる</a>
+      </div>
+
+      <div class="live" aria-live="polite">
+        <span class="dot" aria-hidden="true"></span>
+        <div>
+          <strong>このページも Kanzume で動いています。</strong>
+          <span id="live-text">Worker に問い合わせ中…</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="why" class="section">
+    <div class="wrap">
+      <h2>ハッカソンで使いやすい理由</h2>
+      <div class="grid">
+        <article class="card">
+          <h3>無料のサーバー 1 台で動く</h3>
+          <p>Render の無料プラン（512MB RAM / 0.1 CPU）を想定して、軽さを最優先に作っています。起動直後のメモリは約 35MiB です。</p>
+        </article>
+        <article class="card">
+          <h3>Cloudflare と同じ書き方</h3>
+          <p>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから本物の Cloudflare に移すときも、コードはそのままです。</p>
+        </article>
+        <article class="card">
+          <h3>URL と Token だけでデプロイ</h3>
+          <p>GitHub Actions にステップを 1 つ足すだけです。wrangler でのバンドルも Action が引き受けるので、Cloudflare のアカウントは要りません。</p>
+        </article>
+        <article class="card">
+          <h3>チームで見られる管理画面</h3>
+          <p>パスキーでログインし、デプロイ履歴・ビルドログ・デプロイ中のコード・リクエストごとのログやエラーを確認できます。メンバーはチーム ID で参加します。</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="start" class="section alt">
+    <div class="wrap">
+      <h2>始め方</h2>
+      <ol class="steps">
+        <li>
+          <h3>Kanzume を立てる</h3>
+          <p>リポジトリを fork して、Render の <b>New &gt; Blueprint</b> で選ぶだけです（<code>render.yaml</code> が Docker の無料 Web Service を作ります）。自分のサーバーなら Docker で動かせます。</p>
+          <pre><code>docker build -t kanzume .
+docker run -d -p 8080:8080 -v kanzume-data:/data kanzume</code></pre>
+        </li>
+        <li>
+          <h3>管理画面でパスキーを登録する</h3>
+          <p><code>/_admin/kanzume</code> を開き、環境変数 <code>KANZUME_SETUP_TOKEN</code> を入力して最初のパスキーを登録します。2 人目以降は、設定に出るチーム ID を入力して登録します。</p>
+        </li>
+        <li>
+          <h3>リポジトリに URL と Token を登録する</h3>
+          <p>管理画面の設定に出ている値を、デプロイしたいリポジトリの Variables（<code>KANZUME_URL</code>）と Secrets（<code>KANZUME_TOKEN</code>）に登録します。</p>
+        </li>
+        <li>
+          <h3>ワークフローを置いて push する</h3>
+          <p>あとは main に push するたびにデプロイされます。</p>
+          <pre><code>name: Deploy to Kanzume
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: kazukingzz/Kanzume/action@main
+        with:
+          url: ${{ vars.KANZUME_URL }}
+          token: ${{ secrets.KANZUME_TOKEN }}</code></pre>
+        </li>
+      </ol>
+      <p class="note">まだ何もデプロイしていない Kanzume なら、管理画面に GitHub の public リポジトリの URL を貼るだけでもデプロイできます。このページのソースは <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker" target="_blank" rel="noopener">examples/worker</a> にあります。</p>
+    </div>
+  </section>
+
+  <section id="features" class="section">
+    <div class="wrap">
+      <h2>対応している機能</h2>
+      <div class="table">
+        <table>
+          <tbody>
+            <tr><th>fetch ハンドラ</th><td class="ok">○</td><td>ES Modules 形式。オブジェクトと <code>WorkerEntrypoint</code> の両方</td></tr>
+            <tr><th>KV</th><td class="ok">○</td><td>get / put / delete / list、metadata、expirationTtl</td></tr>
+            <tr><th>R2</th><td class="ok">○</td><td>get / put / head / delete / list、range、httpMetadata</td></tr>
+            <tr><th>Static Assets</th><td class="ok">○</td><td>html_handling / not_found_handling / run_worker_first</td></tr>
+            <tr><th>nodejs_compat</th><td class="partial">△</td><td>buffer・crypto・stream・util など。fs や net は使えない</td></tr>
+            <tr><th>D1・Durable Objects・Cron・Queues</th><td class="ng">×</td><td>今は対応していません</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Worker は 1 台のサーバーの中で動かすので、デプロイできる人（Token とチーム ID を持つ人）は信頼する前提です。詳しくは <a href="https://github.com/kazukingzz/Kanzume#readme" target="_blank" rel="noopener">README</a> を見てください。</p>
+    </div>
+  </section>
+
+  <section class="cta">
+    <div class="wrap">
+      <h2>次のハッカソンで、すぐ使える。</h2>
+      <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">github.com/kazukingzz/Kanzume</a>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さな Cloudflare</div>
+</footer>
+
+<script>
+  Promise.all([
+    fetch("api/hello").then((r) => r.json()),
+    fetch("api/counter").then((r) => r.json()),
+  ])
+    .then(([hello, counter]) => {
+      document.getElementById("live-text").textContent =
+        `vars の値は「${hello.message}」、KV に保存した訪問回数は ${counter.count.toLocaleString("ja-JP")} 回目です。`;
+    })
+    .catch(() => {
+      document.getElementById("live-text").textContent = "Worker に接続できませんでした。";
     });
-  </script>
+</script>
 </body>
 </html>
