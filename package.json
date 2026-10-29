@@ -1,0 +1,25 @@
+{
+  "name": "kanzume",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Workers + KV + R2 だけの小さな Cloudflare",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --disable-warning=ExperimentalWarning src/server.ts",
+    "dev": "KANZUME_DATA_DIR=.data node --watch --disable-warning=ExperimentalWarning src/server.ts",
+    "test": "node --disable-warning=ExperimentalWarning --expose-gc --test 'test/**/*.test.ts'",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@simplewebauthn/server": "^14.0.3",
+    "esbuild": "^0.28.2",
+    "smol-toml": "^1.9.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}
