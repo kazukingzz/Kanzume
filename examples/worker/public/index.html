@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kanzume — ハッカソンのための小さな Cloudflare</title>
-<meta name="description" content="Cloudflare Workers のコードを書き換えずに、自分のサーバー 1 台で動かせるセルフホスト環境。Render の無料プランで動き、GitHub Actions から URL と Token だけでデプロイできます。">
+<title>Kanzume — ハッカソンのための小さな Workers ホスティング</title>
+<meta name="description" content="Workers 向けのコードを書き換えずに、自分のサーバー 1 台で動かせるセルフホスト環境。Render の無料プランで動き、GitHub Actions から URL と Token だけでデプロイできます。">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
@@ -23,9 +23,9 @@
 <main>
   <section class="hero">
     <div class="wrap">
-      <p class="eyebrow">ハッカソンのための小さな Cloudflare</p>
+      <p class="eyebrow">ハッカソンのための小さな Workers ホスティング</p>
       <h1>Workers のコードを、<br>自分のサーバーでそのまま。</h1>
-      <p class="lead">Kanzume は、Cloudflare Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Render の無料プランに置けて、GitHub Actions からは URL と Token の 2 つだけでデプロイできます。</p>
+      <p class="lead">Kanzume は、Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Render の無料プランに置けて、GitHub Actions からは URL と Token の 2 つだけでデプロイできます。</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
         <a class="button" href="https://render.com/deploy?repo=https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">Render に立てる</a>
@@ -50,12 +50,12 @@
           <p>Render の無料プラン（512MB RAM / 0.1 CPU）を想定して、軽さを最優先に作っています。起動直後のメモリは約 35MiB です。</p>
         </article>
         <article class="card">
-          <h3>Cloudflare と同じ書き方</h3>
-          <p>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから本物の Cloudflare に移すときも、コードはそのままです。</p>
+          <h3>wrangler の書き方のまま</h3>
+          <p>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから <code>wrangler deploy</code> でほかへ移すときも、コードはそのままです。</p>
         </article>
         <article class="card">
           <h3>URL と Token だけでデプロイ</h3>
-          <p>GitHub Actions にステップを 1 つ足すだけです。wrangler でのバンドルも Action が引き受けるので、Cloudflare のアカウントは要りません。</p>
+          <p>GitHub Actions にステップを 1 つ足すだけです。wrangler でのバンドルも Action が引き受けるので、ほかのサービスのアカウントは要りません。</p>
         </article>
         <article class="card">
           <h3>チームで見られる管理画面</h3>
@@ -134,7 +134,7 @@ jobs:
 </main>
 
 <footer class="footer">
-  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さな Cloudflare</div>
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
 </footer>
 
 <script>

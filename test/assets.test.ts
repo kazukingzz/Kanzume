@@ -22,7 +22,7 @@ function withAssets(assets: Partial<NonNullable<Manifest["assets"]>> = {}) {
 
 const req = (p: string, init?: RequestInit) => new Request(`http://x${p}`, init);
 
-test("auto-trailing-slash で Cloudflare と同じように HTML を解決する", async (t) => {
+test("auto-trailing-slash で Workers Static Assets と同じように HTML を解決する", async (t) => {
   const { release: r } = await release(t, withAssets(), files);
   assert.equal(await (await matchAsset(r, req("/")))!.text(), "<h1>home</h1>");
   assert.equal(await (await matchAsset(r, req("/about")))!.text(), "about");

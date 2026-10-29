@@ -65,7 +65,7 @@ test("期限切れの値は返らない", async (t) => {
   assert.equal(list.keys.length, 0);
 });
 
-test("Cloudflare と同じく 60 秒未満の TTL や不正なキーは拒否する", async (t) => {
+test("Workers KV と同じく 60 秒未満の TTL や不正なキーは拒否する", async (t) => {
   const { kv: ns } = kv(t);
   await assert.rejects(ns.put("k", "v", { expirationTtl: 10 }), TypeError);
   await assert.rejects(ns.put("", "v"), TypeError);

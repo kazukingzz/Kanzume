@@ -168,7 +168,7 @@ export async function loadWorker(release: Release, siteDir: string, timeout: num
   vm.runInContext("globalThis.self = globalThis", context);
 
   const nodeCompat = hasNodejsCompat(manifest.compatibilityFlags);
-  const cloudflareWorkers = { WorkerEntrypoint, RpcTarget, DurableObject, env };
+  const workersModule = { WorkerEntrypoint, RpcTarget, DurableObject, env };
   const cache = new Map<string, { exports: unknown }>();
 
   const loadFile = (file: string): unknown => {
@@ -196,7 +196,7 @@ export async function loadWorker(release: Release, siteDir: string, timeout: num
   };
 
   const requireFrom = (dir: string) => (specifier: string) => {
-    if (specifier === "cloudflare:workers") return cloudflareWorkers;
+    if (specifier === "cloudflare:workers") return workersModule;
     if (specifier.startsWith(".") || specifier.startsWith("/")) {
       const file = path.resolve(dir, specifier);
       if (!file.startsWith(workerDir + path.sep)) throw new WorkerError(`Worker の外のモジュールは読み込めません: ${specifier}`);

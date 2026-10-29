@@ -41,7 +41,7 @@ not_found_handling = "single-page-application"
   assert.equal(m.assets?.htmlHandling, "auto-trailing-slash");
 });
 
-test("Cloudflare 用の KV id が書いてあってもそのまま受け付ける", () => {
+test("wrangler の設定に KV の id が書いてあってもそのまま受け付ける", () => {
   const m = toManifest({ name: "a", main: "src/worker.ts", kv_namespaces: [{ binding: "KV", id: "0123", preview_id: "x" }] }, true);
   assert.equal(m.main, "worker.cjs");
   assert.deepEqual(m.kvNamespaces, [{ binding: "KV" }]);

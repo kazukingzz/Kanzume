@@ -1,5 +1,5 @@
 {
-  // Cloudflare にもそのまま `wrangler deploy` できる設定
+  // `wrangler deploy` でもそのままデプロイできる設定
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "kanzume-example",
   "main": "src/index.ts",

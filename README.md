@@ -1,8 +1,8 @@
 # Kanzume
 
-Workers + KV + R2 だけの小さな Cloudflare。ハッカソン向け。
+Workers + KV + R2 だけの小さなホスティング。ハッカソン向け。
 
-Cloudflare Workers 用に書いたコード（`export default { fetch(request, env, ctx) }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。Render の無料プラン（512MB RAM / 0.1 CPU）で動かすことを想定しています。
+Workers 用に書いたコード（`export default { fetch(request, env, ctx) }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。Render の無料プラン（512MB RAM / 0.1 CPU）で動かすことを想定しています。
 
 - 1 つの Kanzume に置けるサイトは 1 つで、ルート（`https://<Kanzume の URL>/`）で配信する
 - 管理画面は `/_admin/kanzume`（パスキーでログイン）。予約パスは `/_admin/kanzume`・`/_api/`・`/_health` だけ
@@ -79,7 +79,7 @@ Action がやること:
 
 `wrangler.jsonc` / `wrangler.json` / `wrangler.toml` があるディレクトリが別の場所なら `working-directory` を指定してください。
 
-サンプルは [`examples/worker`](examples/worker) にあります。同じコードを `wrangler deploy` で Cloudflare にもそのままデプロイできます。
+サンプルは [`examples/worker`](examples/worker) にあります。同じコードは `wrangler deploy` でもそのままデプロイできます。
 
 このリポジトリ自体にも、サンプルをデプロイするワークフロー（[`.github/workflows/deploy-example.yml`](.github/workflows/deploy-example.yml)）があります。リポジトリの Variables に `KANZUME_URL`、Secrets に `KANZUME_TOKEN` を登録すると、`examples/worker` か `action` を変更して main に push するたび（または Actions の画面から手動で）デプロイします。`KANZUME_URL` が未登録の間は実行されません。
 
@@ -122,7 +122,7 @@ Action はビルドログ・コミット情報・ソースマップから取り�
 | Service Worker 形式（`addEventListener("fetch")`） | × |
 | secrets（`wrangler secret`） | × `vars` を使ってください |
 
-KV の namespace と R2 の bucket は binding 名 / bucket 名で分かれます。wrangler の設定に書いた Cloudflare の `id` は無視するので、そのまま置いておいて構いません。データは再デプロイしても残り、サイトを削除すると消えます。
+KV の namespace と R2 の bucket は binding 名 / bucket 名で分かれます。wrangler の設定に書いた `id` は無視するので、そのまま置いておいて構いません。データは再デプロイしても残り、サイトを削除すると消えます。
 
 ### 隔離について
 

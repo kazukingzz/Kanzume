@@ -2,7 +2,7 @@
   "name": "kanzume",
   "version": "0.1.0",
   "private": true,
-  "description": "Workers + KV + R2 だけの小さな Cloudflare",
+  "description": "Workers + KV + R2 だけの小さなホスティング",
   "type": "module",
   "engines": {
     "node": ">=24"
