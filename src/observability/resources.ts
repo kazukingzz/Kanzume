@@ -18,7 +18,7 @@ export interface ResourceSample {
 export interface ResourceSnapshot {
   source: ResourceSource;
   intervalMs: number;
-  limits: { cpu: number | null; memory: number | null };
+  limits: { cpu: number | null; cpuRaw: string | null; memory: number | null };
   samples: ResourceSample[];
 }
 
@@ -28,6 +28,8 @@ interface Reader {
   cpuUsec(): number;
   memory(): number;
   cpuLimit(): number | null;
+  /** 上限の計算元（cgroup のファイルの中身そのまま） */
+  cpuLimitRaw(): string | null;
   memoryLimit(): number | null;
 }
 
@@ -51,6 +53,10 @@ function cgroup2(root: string): Reader | null {
       if (!fs.existsSync(file)) return null;
       const [quota, period] = read(file).split(/\s+/);
       return quota === "max" ? null : Number(quota) / Number(period);
+    },
+    cpuLimitRaw: () => {
+      const file = path.join(root, "cpu.max");
+      return fs.existsSync(file) ? `cpu.max: ${read(file)}` : null;
     },
     memoryLimit: () => {
       const file = path.join(root, "memory.max");
@@ -77,6 +83,8 @@ function cgroup1(root: string): Reader | null {
       const quota = Number(read(path.join(cpu, "cpu.cfs_quota_us")));
       return quota > 0 ? quota / Number(read(path.join(cpu, "cpu.cfs_period_us"))) : null;
     },
+    cpuLimitRaw: () =>
+      cpu ? `cpu.cfs_quota_us: ${read(path.join(cpu, "cpu.cfs_quota_us"))} / cpu.cfs_period_us: ${read(path.join(cpu, "cpu.cfs_period_us"))}` : null,
     memoryLimit: () => finiteLimit(Number(read(path.join(mem, "memory.limit_in_bytes")))),
   };
 }
@@ -90,6 +98,7 @@ const processReader: Reader = {
   },
   memory: () => process.memoryUsage.rss(),
   cpuLimit: () => os.availableParallelism(),
+  cpuLimitRaw: () => null,
   memoryLimit: () => os.totalmem(),
 };
 
@@ -155,7 +164,7 @@ export class ResourceMonitor {
     return {
       source: this.#reader.source,
       intervalMs: this.#intervalMs,
-      limits: { cpu: limit(this.#reader.cpuLimit), memory: limit(this.#reader.memoryLimit) },
+      limits: { cpu: limit(this.#reader.cpuLimit), cpuRaw: limit(this.#reader.cpuLimitRaw), memory: limit(this.#reader.memoryLimit) },
       samples: this.#samples,
     };
   }

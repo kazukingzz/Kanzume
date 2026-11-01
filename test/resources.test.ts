@@ -25,6 +25,7 @@ test("cgroup v2 から上限と使用量を読み、page cache の解放でき�
   const reader = detectReader(root);
   assert.equal(reader.source, "cgroup2");
   assert.equal(reader.cpuLimit(), 0.1);
+  assert.equal(reader.cpuLimitRaw(), "cpu.max: 10000 100000");
   assert.equal(reader.memoryLimit(), 512 * 1024 * 1024);
   assert.equal(reader.memory(), 150 * 1024 * 1024);
   assert.equal(reader.cpuUsec(), 5_000_000);
@@ -47,6 +48,7 @@ test("cgroup v1 も読め、上限なしの巨大な値は null にする", (t) 
   const reader = detectReader(root);
   assert.equal(reader.source, "cgroup1");
   assert.equal(reader.cpuLimit(), 0.5);
+  assert.equal(reader.cpuLimitRaw(), "cpu.cfs_quota_us: 50000 / cpu.cfs_period_us: 100000");
   assert.equal(reader.memoryLimit(), null);
   assert.equal(reader.memory(), 96 * 1024 * 1024);
   assert.equal(reader.cpuUsec(), 2_000_000);
@@ -79,7 +81,7 @@ test("CPU は前回との差分から使ったコア数を出し、古いサン�
   monitor.sample();
   const snap = monitor.snapshot();
   assert.equal(snap.source, "cgroup2");
-  assert.deepEqual(snap.limits, { cpu: 0.1, memory: null });
+  assert.deepEqual(snap.limits, { cpu: 0.1, cpuRaw: "cpu.max: 10000 100000", memory: null });
   assert.equal(snap.samples[0].cpu, null);
   assert.equal(snap.samples[1].cpu, 0.05);
   assert.equal(snap.samples[1].memory, 1048576);

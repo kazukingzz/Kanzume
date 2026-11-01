@@ -704,7 +704,7 @@ function drawResources(body, r, prev) {
         h("section", { class: "chart-card" }, h("h2", { text: "CPU" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), cpuLimit ? "上限に対する使用率" : "使用率（1 コア = 100%）")), cpu, tables[0]),
         h("section", { class: "chart-card" }, h("h2", { text: "メモリ" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), "コンテナ"), h("span", {}, h("i", { class: "key line s2" }), "JS ヒープ")), memory, tables[1]),
       ),
-      h("p", { class: "muted hint", text: `${SOURCE_NOTE[r.source]}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。` }),
+      h("p", { class: "muted hint", text: `${SOURCE_NOTE[r.source]}${r.limits.cpuRaw ? `CPU の上限は ${r.limits.cpuRaw} から計算した、実際にかかっている上限です（ホスティングの公称値と違うことがあります）。` : ""}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。` }),
     );
     prev = { cpu, memory, tiles, tables, data: null };
     new ResizeObserver(() => prev.data && prev.render()).observe(cpu);
