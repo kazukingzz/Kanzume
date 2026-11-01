@@ -157,6 +157,14 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 
 .row { display: flex; gap: 8px; align-items: center; }
 .row > .grow { flex: 1; min-width: 0; }
+.passkeys { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: 10px; max-width: 720px; }
+.passkeys > li { padding: 10px 12px; border-top: 1px solid var(--line); }
+.passkeys > li:first-child { border-top: 0; }
+.passkey { display: flex; align-items: center; gap: 12px; }
+.passkey > .grow { flex: 1; min-width: 0; }
+.passkey-name { font-weight: 600; overflow-wrap: anywhere; }
+.passkey-meta { font-size: 12px; margin-top: 2px; }
+.passkey .error:empty { display: none; }
 .wrap { flex-wrap: wrap; }
 
 .kv { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 6px 16px; font-size: 13px; }

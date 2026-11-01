@@ -1100,6 +1100,55 @@ function armed(button, label, confirmLabel, action) {
   return button;
 }
 
+function passkeyList() {
+  const list = h("ul", { class: "passkeys" }, h("li", { class: "muted", text: "読み込み中…" }));
+  const render = (passkeys) => {
+    fill(list, ...passkeys.map((p, i) => passkeyItem(p, i, () => load())));
+  };
+  const load = () =>
+    api("/passkeys")
+      .then(({ passkeys }) => render(passkeys))
+      .catch((err) => fill(list, h("li", { class: "error", text: err.message })));
+  load();
+  return list;
+}
+
+function passkeyItem(p, i, reload) {
+  const label = p.name || `パスキー ${i + 1}`;
+  const meta = [
+    p.provider && p.provider !== p.name ? p.provider : null,
+    p.device && p.device !== p.name ? `${p.device} で登録` : null,
+    `登録 ${fmtDate(p.createdAt).slice(0, 10)}`,
+    p.lastUsedAt ? `最終使用 ${fmtAgo(p.lastUsedAt)}` : "未使用",
+  ].filter(Boolean);
+  const item = h("li", { class: "passkey" });
+  const show = () => {
+    const rename = h("button", { class: "ghost", text: "名前を変更", onclick: edit });
+    fill(item, h("div", { class: "grow" }, h("div", { class: "passkey-name", text: label }), h("div", { class: "muted passkey-meta", text: meta.join(" · ") })), rename);
+  };
+  function edit() {
+    const input = h("input", { value: p.name, maxlength: "40", placeholder: label, "aria-label": "パスキーの名前" });
+    const error = h("div", { class: "error" });
+    const save = async () => {
+      try {
+        await api("/passkeys/rename", { method: "POST", body: JSON.stringify({ id: p.id, name: input.value }) });
+        reload();
+      } catch (err) {
+        error.textContent = err.message;
+      }
+    };
+    input.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" && !e.isComposing) save();
+      if (e.key === "Escape") show();
+    });
+    fill(item, h("div", { class: "grow" }, h("div", { class: "row" }, input, h("button", { class: "primary", text: "保存", onclick: save }), h("button", { text: "キャンセル", onclick: show })), error));
+    input.focus();
+    input.select();
+  }
+  show();
+  return item;
+}
+
 async function viewSettings(main) {
   const page = h("div", { class: "page" }, pageHead("設定"));
   const tokenView = h("code", { class: "value grow", text: state.showToken ? state.token : "••••••••••••••••" });
@@ -1127,7 +1176,8 @@ async function viewSettings(main) {
       h("h2", { text: "チーム" }),
       h("p", { class: "muted", text: "メンバーはログイン画面でこのチーム ID を入力すると、自分のパスキーを登録してログインできます。" }),
       h("div", { class: "field" }, h("label", { text: "チーム ID" }), h("div", { class: "row" }, h("code", { class: "value grow team-id", text: state.overview.teamId }), copyButton(() => state.overview.teamId))),
-      h("p", { class: "muted", text: `登録済みのパスキー: ${state.overview.members} 件` }),
+      h("div", { class: "log-title", text: "登録済みのパスキー" }),
+      passkeyList(),
     ),
     h(
       "section",

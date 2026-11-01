@@ -18,6 +18,7 @@ import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Store } from "../store.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
+import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
 import { safeEqual, type AdminState } from "./state.ts";
 
@@ -133,13 +134,17 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       }
       if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
       challenges.markUsed(challenge);
-      const { credential } = result.registrationInfo;
+      const { credential, aaguid } = result.registrationInfo;
+      const device = describeDevice(req.headers["user-agent"]);
       await state.addCredential({
         id: credential.id,
         publicKey: Buffer.from(credential.publicKey).toString("base64url"),
         counter: credential.counter,
         transports: credential.transports,
         createdAt: new Date().toISOString(),
+        name: providerName(aaguid) ?? device ?? "",
+        aaguid,
+        device,
       });
       return login(res, origin);
     }
@@ -204,6 +209,27 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         teamId: state.teamId,
         members: state.credentials.length,
       });
+    }
+
+    if (route === "GET /api/passkeys") {
+      return sendJson(res, 200, {
+        passkeys: state.credentials.map((c) => ({
+          id: c.id,
+          name: c.name ?? "",
+          provider: providerName(c.aaguid) ?? null,
+          device: c.device ?? null,
+          createdAt: c.createdAt,
+          lastUsedAt: c.lastUsedAt ?? null,
+        })),
+      });
+    }
+
+    if (route === "POST /api/passkeys/rename") {
+      const body = await readJson(req);
+      const name = normalizePasskeyName(body?.name);
+      if (!name) return sendJson(res, 400, { error: "名前を入力してください" });
+      const ok = await state.renameCredential(String(body?.id ?? ""), name);
+      return ok ? sendJson(res, 200, { name }) : sendJson(res, 404, { error: "パスキーが見つかりません" });
     }
 
     if (route === "GET /api/resources") return sendJson(res, 200, resources.snapshot());

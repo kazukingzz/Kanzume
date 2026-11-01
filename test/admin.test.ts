@@ -8,6 +8,7 @@ import { AdminState, normalizeTeamId } from "../src/admin/state.ts";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
+import { describeDevice, providerName } from "../src/admin/passkeys.ts";
 import { tmpDir } from "./helpers.ts";
 
 async function start(t: TestContext, dataDir = tmpDir(t)) {
@@ -257,4 +258,39 @@ test("KANZUME_ORIGIN を設定したときはその Origin だけを受け付け
   const render = loadConfig({ RENDER_EXTERNAL_URL: "https://kanzume-abcd.onrender.com" });
   assert.equal(render.origin, undefined);
   assert.equal(render.publicUrl, "https://kanzume-abcd.onrender.com");
+});
+
+test("パスキーの識別名を AAGUID と User-Agent から推測する", () => {
+  assert.equal(providerName("EA9B8D66-4D01-1D21-3CE4-B6B48CB575D4"), "Google パスワード マネージャー");
+  assert.equal(providerName("00000000-0000-0000-0000-000000000000"), undefined);
+  const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
+  assert.equal(describeDevice(mac), "Mac・Chrome");
+  assert.equal(describeDevice(`${mac} Edg/131.0.0.0`), "Mac・Edge");
+  assert.equal(describeDevice("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"), "iPhone・Safari");
+  assert.equal(describeDevice("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0"), "Windows・Firefox");
+  assert.equal(describeDevice(undefined), undefined);
+});
+
+test("パスキーの一覧を取得し、名前を変更できる", async (t) => {
+  const { base, state } = await start(t);
+  await state.addCredential({ ...fakeCredential, name: "Mac・Chrome", device: "Mac・Chrome", aaguid: "ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4" });
+  await state.addCredential({ ...fakeCredential, id: "cred-old" });
+  const cookie = `kanzume_session=${await state.createSession()}`;
+  const list = async () => ((await (await fetch(`${base}/_admin/kanzume/api/passkeys`, { headers: { cookie } })).json()) as { passkeys: Record<string, unknown>[] }).passkeys;
+  const rename = (body: unknown) =>
+    fetch(`${base}/_admin/kanzume/api/passkeys/rename`, { method: "POST", headers: { cookie, origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+  const before = await list();
+  assert.equal(before.length, 2);
+  assert.deepEqual(
+    { name: before[0].name, provider: before[0].provider, device: before[0].device },
+    { name: "Mac・Chrome", provider: "Google パスワード マネージャー", device: "Mac・Chrome" },
+  );
+  assert.deepEqual({ name: before[1].name, provider: before[1].provider }, { name: "", provider: null });
+
+  assert.equal((await rename({ id: "cred-1", name: "  仕事用の MacBook\n" })).status, 200);
+  assert.equal((await list())[0].name, "仕事用の MacBook");
+  assert.equal((await rename({ id: "cred-1", name: "  " })).status, 400);
+  assert.equal((await rename({ id: "nope", name: "x" })).status, 404);
+  assert.equal((await fetch(`${base}/_admin/kanzume/api/passkeys`)).status, 401);
 });

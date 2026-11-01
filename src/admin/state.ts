@@ -9,6 +9,13 @@ export interface StoredCredential {
   counter: number;
   transports?: string[];
   createdAt: string;
+  /** 管理画面に出す識別名。登録時に自動で付け、あとから変えられる */
+  name?: string;
+  /** パスキーを保存した認証器の種類 */
+  aaguid?: string;
+  /** 登録したブラウザ（「Mac・Chrome」など） */
+  device?: string;
+  lastUsedAt?: string;
 }
 
 interface StateFile {
@@ -211,6 +218,21 @@ export class AdminState {
     const credential = this.#state.credentials.find((c) => c.id === id);
     if (!credential) return;
     credential.counter = counter;
+    credential.lastUsedAt = new Date().toISOString();
     await this.#save();
+  }
+
+  async renameCredential(id: string, name: string): Promise<boolean> {
+    const credential = this.#state.credentials.find((c) => c.id === id);
+    if (!credential) return false;
+    const before = credential.name;
+    credential.name = name;
+    try {
+      await this.#save();
+    } catch (err) {
+      credential.name = before;
+      throw err;
+    }
+    return true;
   }
 }
