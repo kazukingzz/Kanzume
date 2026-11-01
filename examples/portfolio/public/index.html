@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mio Tanaka — Designer &amp; Frontend Engineer</title>
+<meta name="description" content="UI デザイナー / フロントエンドエンジニア 田中みおのポートフォリオ（Kanzume のサンプルサイト）">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="module" src="app.js"></script>
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="mark" href="#top" aria-label="トップへ"><span class="mark-dot" aria-hidden="true"></span>Mio Tanaka</a>
+    <nav class="nav-links" aria-label="ページ内リンク">
+      <a href="#works">Works</a>
+      <a href="#about">About</a>
+      <a href="#contact">Contact</a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <section class="hero wrap">
+    <p class="eyebrow">Designer &amp; Frontend Engineer</p>
+    <h1>使う人の毎日が、<br>すこし軽くなる<span class="accent">かたち</span>をつくる。</h1>
+    <p class="lead">田中みお。東京を拠点に、プロダクトの UI デザインからフロントエンドの実装までを一人で担当しています。小さなチームの「最初の 1 画面」をつくるのが得意です。</p>
+    <div class="hero-actions">
+      <a class="button primary" href="#works">作品を見る</a>
+      <a class="button" href="#contact">お仕事の相談</a>
+    </div>
+    <ul class="facts" aria-label="プロフィールの概要">
+      <li><b>8</b><span>年の経験</span></li>
+      <li><b>40+</b><span>リリースした画面</span></li>
+      <li><b>3</b><span>個人開発のアプリ</span></li>
+    </ul>
+  </section>
+
+  <section id="works" class="section">
+    <div class="wrap">
+      <div class="section-head">
+        <h2>Works</h2>
+        <p class="muted">いいねは Workers KV に保存しています。</p>
+      </div>
+      <div class="works">
+        <article class="work" data-slug="tide">
+          <div class="thumb thumb-tide" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="work-body">
+            <p class="work-meta">2026 · モバイルアプリ</p>
+            <h3>Tide — 潮汐と天気の釣りアプリ</h3>
+            <p>港ごとの潮位と風を 1 枚のグラフに重ねて、出かける時間を決められるようにしました。</p>
+            <ul class="tags"><li>UI デザイン</li><li>React Native</li></ul>
+          </div>
+          <button class="like" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg><span class="count">–</span><span class="sr">いいね</span></button>
+        </article>
+        <article class="work" data-slug="kumo">
+          <div class="thumb thumb-kumo" aria-hidden="true"><span></span><span></span></div>
+          <div class="work-body">
+            <p class="work-meta">2025 · Web サービス</p>
+            <h3>kumo — チームの空き時間カレンダー</h3>
+            <p>予定の「中身」を見せずに空き具合だけを共有する、ゆるい日程調整ツール。</p>
+            <ul class="tags"><li>プロダクトデザイン</li><li>TypeScript</li><li>Workers</li></ul>
+          </div>
+          <button class="like" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg><span class="count">–</span><span class="sr">いいね</span></button>
+        </article>
+        <article class="work" data-slug="hako">
+          <div class="thumb thumb-hako" aria-hidden="true"><span></span><span></span><span></span><span></span></div>
+          <div class="work-body">
+            <p class="work-meta">2024 · デザインシステム</p>
+            <h3>HAKO — 社内向けデザインシステム</h3>
+            <p>3 つのプロダクトで使い回せるコンポーネントと、色・余白のトークンを整備しました。</p>
+            <ul class="tags"><li>デザインシステム</li><li>Figma</li><li>CSS</li></ul>
+          </div>
+          <button class="like" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg><span class="count">–</span><span class="sr">いいね</span></button>
+        </article>
+        <article class="work" data-slug="noren">
+          <div class="thumb thumb-noren" aria-hidden="true"><span></span><span></span><span></span></div>
+          <div class="work-body">
+            <p class="work-meta">2023 · ブランディング</p>
+            <h3>のれん — 商店街の共同 EC</h3>
+            <p>12 店舗の商品をまとめて買えるサイト。お店ごとの「らしさ」を残すレイアウトを考えました。</p>
+            <ul class="tags"><li>アートディレクション</li><li>EC</li></ul>
+          </div>
+          <button class="like" type="button" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/></svg><span class="count">–</span><span class="sr">いいね</span></button>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section id="about" class="section alt">
+    <div class="wrap about">
+      <div>
+        <h2>About</h2>
+        <p>美大でグラフィックデザインを学んだあと、Web 制作会社と SaaS のスタートアップを経て、2024 年からフリーランス。デザインと実装の間で失われがちな細部を、自分の手で埋めることを大事にしています。</p>
+        <p class="muted">好きなもの：路地裏の看板、等幅フォント、朝の市場。</p>
+      </div>
+      <div class="skills">
+        <h3>Skills</h3>
+        <dl>
+          <dt>Design</dt><dd>UI / UX、デザインシステム、プロトタイピング、Figma</dd>
+          <dt>Frontend</dt><dd>TypeScript、React、CSS、アクセシビリティ</dd>
+          <dt>Backend</dt><dd>Cloudflare Workers、KV / R2、Node.js</dd>
+        </dl>
+        <h3>Timeline</h3>
+        <ol class="timeline">
+          <li><span>2024–</span>フリーランス</li>
+          <li><span>2020–2024</span>SaaS スタートアップ（デザイナー → フロントエンド）</li>
+          <li><span>2018–2020</span>Web 制作会社</li>
+        </ol>
+      </div>
+    </div>
+  </section>
+
+  <section id="contact" class="section">
+    <div class="wrap contact">
+      <div>
+        <h2>Contact</h2>
+        <p>お仕事のご相談・ご感想はこちらから。送ったメッセージは Workers KV に 30 日間保存されます。</p>
+      </div>
+      <form id="contact-form" class="form" novalidate>
+        <label>お名前<input name="name" required maxlength="60" autocomplete="name"></label>
+        <label>メールアドレス<input name="email" type="email" required maxlength="200" autocomplete="email"></label>
+        <label>メッセージ<textarea name="message" required maxlength="2000" rows="5"></textarea></label>
+        <div class="form-foot">
+          <button class="button primary" type="submit">送信する</button>
+          <p class="form-status" id="form-status" role="status"></p>
+        </div>
+      </form>
+    </div>
+  </section>
+</main>
+
+<footer class="footer">
+  <div class="wrap">
+    <p>© 2026 Mio Tanaka（架空の人物です）</p>
+    <p class="muted">これは <a href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">Kanzume</a> のサンプルサイトです。</p>
+  </div>
+</footer>
+</body>
+</html>

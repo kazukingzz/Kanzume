@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - examples/worker/**
+      - examples/portfolio/**
       - action/**
       - .github/workflows/deploy-example.yml
   workflow_dispatch:
@@ -18,6 +19,9 @@ jobs:
     # fork や未設定のリポジトリで毎回失敗しないよう、KANZUME_URL を登録したときだけ動かす
     if: vars.KANZUME_URL != ''
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        example: [worker, portfolio]
     permissions:
       contents: read
     steps:
@@ -26,14 +30,12 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-          cache-dependency-path: examples/worker/package-lock.json
 
       - id: kanzume
         uses: ./action
         with:
           url: ${{ vars.KANZUME_URL }}
           token: ${{ secrets.KANZUME_TOKEN }}
-          working-directory: examples/worker
+          working-directory: examples/${{ matrix.example }}
 
       - run: echo "デプロイしました：${{ steps.kanzume.outputs.url }}"

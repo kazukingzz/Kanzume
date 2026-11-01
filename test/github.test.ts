@@ -107,6 +107,35 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   assert.deepEqual(sources.map((s) => s.path), ["src/index.ts"]);
 });
 
+test("examples/portfolio を GitHub の URL からデプロイでき、いいねとお問い合わせが KV に保存される", async (t) => {
+  const app = await start(t);
+  const dir = path.join(import.meta.dirname, "..", "examples", "portfolio");
+  const files: Record<string, Buffer> = {};
+  for (const rel of ["wrangler.jsonc", "src/index.js", "public/index.html", "public/style.css", "public/app.js", "public/favicon.svg"]) {
+    files[`examples/portfolio/${rel}`] = fs.readFileSync(path.join(dir, rel));
+  }
+  const { fetcher } = fakeGitHub(repoTarball(t, files));
+  const result = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/examples/portfolio", app.deployer, {
+    fetch: fetcher,
+    apiBase: "https://api.test",
+    codeloadBase: "https://codeload.test",
+    maxBytes: 10 * 1024 * 1024,
+  });
+  assert.equal(result.ok, true, result.ok ? "" : result.error);
+  const release = app.sites.get("portfolio")!.get()!;
+  const worker = await app.runtime.get(release);
+  const call = async (path: string, init?: RequestInit) => (await worker.fetch(new Request(`http://x${path}`, init))).response!;
+
+  assert.deepEqual(await (await call("/api/likes")).json(), { tide: 0, kumo: 0, hako: 0, noren: 0 });
+  assert.deepEqual(await (await call("/api/likes/kumo", { method: "POST" })).json(), { slug: "kumo", count: 1 });
+  assert.equal((await call("/api/likes/nope", { method: "POST" })).status, 404);
+
+  const post = (body: unknown) => call("/api/contact", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  assert.equal((await post({ name: "テスト", email: "a@example.com", message: "こんにちは" })).status, 200);
+  assert.equal((await post({ name: "テスト", email: "not-an-email", message: "x" })).status, 400);
+  assert.equal((await call("/api/unknown")).status, 404);
+});
+
 test("スラッシュを含むブランチ名とリポジトリのトップを解決できる", async (t) => {
   const app = await start(t);
   const files = { "wrangler.json": JSON.stringify({ name: "top", assets: { directory: "site" } }), "site/index.html": "top" };

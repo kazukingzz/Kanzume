@@ -35,7 +35,7 @@ jobs:
           token: ${{ secrets.KANZUME_TOKEN }}
 ```
 
-**GitHub の URL**: 未デプロイなら管理画面から public リポジトリの URL を指定してデプロイできます（空欄なら [`examples/worker`](examples/worker)）。npm パッケージの import・ビルドが必要なものは Actions を使ってください。
+**GitHub の URL**: 管理画面の「サイトを追加」から、public リポジトリの URL を指定してデプロイできます。サンプル（[`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio)）もそこからワンクリックで追加できます。npm パッケージの import・ビルドが必要なものは Actions を使ってください。
 
 ## 対応している機能
 

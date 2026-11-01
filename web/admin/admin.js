@@ -472,36 +472,108 @@ function bindingTags(release) {
   ].filter(Boolean);
 }
 
-const EXAMPLE_URL = "https://github.com/kazukingzz/Kanzume/tree/main/examples/worker";
+const SAMPLE_BASE = "https://github.com/kazukingzz/Kanzume/tree/main/examples";
+const SAMPLES = [
+  {
+    name: "kanzume-example",
+    title: "Kanzume の紹介ページ",
+    description: "KV のカウンター・R2 へのアップロード・vars を使った、機能の一覧を兼ねたページ。",
+    url: `${SAMPLE_BASE}/worker`,
+    tags: ["Worker", "Assets", "KV", "R2"],
+  },
+  {
+    name: "portfolio",
+    title: "ポートフォリオ",
+    description: "作品の「いいね」と、お問い合わせフォームのメッセージを KV に保存する個人サイト。",
+    url: `${SAMPLE_BASE}/portfolio`,
+    tags: ["Worker", "Assets", "KV"],
+  },
+];
+
+async function deployGitHub(url, onError) {
+  try {
+    const { site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ url }) });
+    state.github = { url: "", error: "" };
+    await loadOverview();
+    location.hash = siteHash("deployments", site);
+  } catch (err) {
+    onError(err.message);
+  }
+}
+
+function busy(button, label) {
+  button.disabled = true;
+  button.textContent = label;
+}
+
+function samplesCard() {
+  const error = h("div", { class: "error" });
+  const deployed = new Set(state.sites.sites.map((x) => x.name));
+  const buttons = [];
+  const items = SAMPLES.map((sample) => {
+    const exists = deployed.has(sample.name);
+    const button = h("button", { class: exists ? "" : "primary", text: exists ? "再デプロイ" : "デプロイ" });
+    buttons.push(button);
+    button.addEventListener("click", async () => {
+      error.textContent = "";
+      for (const b of buttons) b.disabled = true;
+      busy(button, "デプロイ中…");
+      await deployGitHub(sample.url, (message) => {
+        error.textContent = message;
+        for (const b of buttons) b.disabled = false;
+        button.textContent = exists ? "再デプロイ" : "デプロイ";
+      });
+    });
+    return h(
+      "li",
+      { class: "sample" },
+      h(
+        "div",
+        { class: "grow" },
+        h("div", { class: "sample-title" }, h("b", { text: sample.title }), h("span", { class: "muted mono", text: `${sample.name}.${location.host}` }), exists ? h("span", { class: "tag", text: "デプロイ済み" }) : null),
+        h("p", { class: "muted", text: sample.description }),
+        h("div", { class: "tags" }, ...sample.tags.map((t) => h("span", { class: "tag", text: t })), h("a", { href: sample.url, target: "_blank", rel: "noopener", text: "コードを見る ↗" })),
+      ),
+      button,
+    );
+  });
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "サンプルからデプロイ" }),
+    h("p", { class: "muted", text: "このリポジトリの examples にあるサンプルを、そのままサイトとして追加します。" }),
+    h("ul", { class: "samples" }, ...items),
+    error,
+  );
+}
 
 function githubCard() {
-  const input = h("input", { type: "url", placeholder: EXAMPLE_URL, spellcheck: "false", "aria-label": "GitHub の URL", value: state.github.url });
+  const input = h("input", { type: "url", placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>", spellcheck: "false", "aria-label": "GitHub の URL", value: state.github.url });
   const error = h("div", { class: "error", text: state.github.error });
   const button = h("button", { class: "primary", text: "デプロイ" });
   const run = async () => {
-    error.textContent = "";
-    button.disabled = true;
-    button.textContent = "デプロイ中…";
     state.github.url = input.value.trim();
-    try {
-      const { site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ url: state.github.url || EXAMPLE_URL }) });
-      state.github = { url: "", error: "" };
-      await loadOverview();
-      location.hash = siteHash("deployments", site);
+    if (!state.github.url) {
+      error.textContent = "GitHub の URL を入力してください";
+      input.focus();
       return;
-    } catch (err) {
-      state.github.error = err.message;
     }
-    await loadOverview().catch(() => {});
-    route();
+    error.textContent = "";
+    busy(button, "デプロイ中…");
+    await deployGitHub(state.github.url, (message) => {
+      state.github.error = message;
+      error.textContent = message;
+      button.disabled = false;
+      button.textContent = "デプロイ";
+    });
   };
   button.addEventListener("click", run);
-  input.addEventListener("keydown", (e) => e.key === "Enter" && run());
+  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
   return h(
     "section",
     { class: "card" },
     h("h2", { text: "GitHub の public リポジトリからデプロイ" }),
-    h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。設定の name がサブドメインになり、同じ name のサイトがあれば更新します。空のままならこのリポジトリのサンプルをデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions からデプロイしてください。" }),
+    h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。設定の name がサブドメインになり、同じ name のサイトがあれば更新します。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions からデプロイしてください。" }),
     h("div", { class: "row" }, h("div", { class: "grow" }, input), button),
     error,
   );
@@ -1413,6 +1485,7 @@ async function viewSite(main) {
 async function viewNewSite(main) {
   const page = h("div", { class: "page" }, pageHead("サイトを追加"));
   page.append(
+    samplesCard(),
     githubCard(),
     h(
       "section",
