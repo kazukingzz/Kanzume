@@ -229,3 +229,32 @@ test("challenge は署名・用途・期限・使用済みを確かめる", () =
   challenges.markUsed(c, now);
   assert.equal(challenges.check(c, "login", now), false, "一度使ったものは受け付けない");
 });
+
+test("Render の独自ドメインから開いても、Host と同じ Origin なら管理画面の API を使える", async (t) => {
+  const app = await createServer(
+    loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", RENDER_EXTERNAL_URL: "https://kanzume-abcd.onrender.com" }),
+  );
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(async () => {
+    await new Promise((resolve) => app.server.close(resolve));
+    await app.state.flush();
+  });
+  const url = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}/_admin/kanzume/api/register/options`;
+  const post = (origin: string) =>
+    fetch(url, {
+      method: "POST",
+      headers: { origin, "x-forwarded-host": "tekitou.app", "x-forwarded-proto": "https", "content-type": "application/json" },
+      body: JSON.stringify({ setupToken: "setup" }),
+    });
+  const ok = await post("https://tekitou.app");
+  assert.equal(ok.status, 200);
+  assert.equal(((await ok.json()) as { rp: { id: string } }).rp.id, "tekitou.app");
+  assert.equal((await post("https://evil.example")).status, 403);
+});
+
+test("KANZUME_ORIGIN を設定したときはその Origin だけを受け付ける", () => {
+  assert.equal(loadConfig({ KANZUME_ORIGIN: "https://tekitou.app/" }).origin, "https://tekitou.app");
+  const render = loadConfig({ RENDER_EXTERNAL_URL: "https://kanzume-abcd.onrender.com" });
+  assert.equal(render.origin, undefined);
+  assert.equal(render.publicUrl, "https://kanzume-abcd.onrender.com");
+});

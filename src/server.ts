@@ -60,7 +60,7 @@ if (import.meta.main) {
   const { server } = await createServer(config);
   server.listen(config.port, () => {
     console.log(`[kanzume] listening on :${config.port} (data: ${config.dataDir})`);
-    console.log(`[kanzume] 管理画面: ${config.origin ?? `http://localhost:${config.port}`}${ADMIN_PATH}`);
+    console.log(`[kanzume] 管理画面: ${config.publicUrl ?? `http://localhost:${config.port}`}${ADMIN_PATH}`);
     if (config.setupTokenGenerated) console.log(`[kanzume] セットアップトークン: ${config.setupToken}`);
   });
   for (const signal of ["SIGTERM", "SIGINT"] as const) {

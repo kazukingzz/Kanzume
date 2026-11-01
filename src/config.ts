@@ -4,7 +4,10 @@ import path from "node:path";
 export interface Config {
   port: number;
   dataDir: string;
+  /** KANZUME_ORIGIN で固定した公開 URL。未設定ならリクエストの Host から決める */
   origin: string | undefined;
+  /** 起動ログに出す管理画面の URL 用 */
+  publicUrl: string | undefined;
   setupToken: string;
   setupTokenGenerated: boolean;
   maxUploadBytes: number;
@@ -14,12 +17,15 @@ export interface Config {
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
-  const origin = (env.KANZUME_ORIGIN || env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
+  // RENDER_EXTERNAL_URL（*.onrender.com）で固定すると、独自ドメインから開いたときに Origin が一致せずログインできない
+  const origin = (env.KANZUME_ORIGIN || "").replace(/\/+$/, "");
+  const publicUrl = origin || (env.RENDER_EXTERNAL_URL || "").replace(/\/+$/, "");
   const setupToken = env.KANZUME_SETUP_TOKEN || "";
   return {
     port: Number(env.PORT || 8080),
     dataDir: path.resolve(env.KANZUME_DATA_DIR || "/data"),
     origin: origin || undefined,
+    publicUrl: publicUrl || undefined,
     setupToken: setupToken || randomBytes(16).toString("hex"),
     setupTokenGenerated: !setupToken,
     maxUploadBytes: Number(env.KANZUME_MAX_UPLOAD_MB || 50) * 1024 * 1024,
