@@ -1,6 +1,7 @@
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import { PROJECT_NAME, type Manifest, type Release, type Store, type UploadedFile } from "../store.ts";
+import type { Sites } from "../sites.ts";
+import { PROJECT_NAME, type Manifest, type Release, type UploadedFile } from "../store.ts";
 import type { DeployHistory, DeploySource } from "./history.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig, toManifest } from "./wrangler.ts";
 
@@ -61,13 +62,13 @@ function sourcesFile(sources: DeployInput["sources"]): UploadedFile | null {
 }
 
 export class Deployer {
-  #store: Store;
+  #sites: Sites;
   #runtime: Runtime;
   #history: DeployHistory;
   #queue: Promise<unknown> = Promise.resolve();
 
-  constructor(store: Store, runtime: Runtime, history: DeployHistory) {
-    this.#store = store;
+  constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
+    this.#sites = sites;
     this.#runtime = runtime;
     this.#history = history;
   }
@@ -127,7 +128,8 @@ export class Deployer {
     if (sources) kept.push(sources);
 
     const result = await this.#serialize(async (): Promise<DeployResult> => {
-      const release = await this.#store.createRelease(manifest, kept);
+      const store = await this.#sites.ensure(manifest.name);
+      const release = await store.createRelease(manifest, kept);
       log.add(`リリース ${release.id} を保存しました`);
       let worker = null;
       if (manifest.main) {
@@ -136,14 +138,16 @@ export class Deployer {
           worker = await this.#runtime.preload(release);
           log.add(`Worker を読み込みました（${Math.round(performance.now() - loadStarted)}ms）`);
         } catch (err) {
-          await this.#store.discard(release);
+          await store.discard(release);
           if (err instanceof WorkerError) return { ok: false, error: err.message };
           throw err;
         }
       }
-      await this.#store.activate(release);
+      await store.activate(release);
+      // 最初のサイトはルートドメインでも配信する（1 サイトだけなら今までどおり / で開ける）
+      if (this.#sites.root === null) await this.#sites.setRoot(manifest.name);
       if (worker) this.#runtime.install(worker);
-      else this.#runtime.evict();
+      else this.#runtime.evict(store.siteDir);
       log.add("新しいリリースに切り替えました");
       return { ok: true, release };
     });

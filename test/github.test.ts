@@ -50,7 +50,7 @@ async function start(t: TestContext) {
   const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }));
   t.after(() => {
     app.server.close();
-    closeSiteDb(app.store.siteDir);
+    
   });
   return app;
 }
@@ -79,7 +79,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   });
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 
-  const release = app.store.get()!;
+  const release = app.sites.get(app.sites.root ?? "")?.get()!;
   assert.equal(release.manifest.name, "kanzume-example");
   const worker = await app.runtime.get(release);
   const hello = await worker.fetch(new Request("http://x/api/hello"));
@@ -155,7 +155,7 @@ test("デプロイできないリポジトリは理由付きの失敗として�
   const emptyResult = await deployFromGitHub("https://github.com/kazukingzz/kanzume", app.deployer, { ...opts(noConfig), fetch: empty });
   assert.match(emptyResult.ok ? "" : emptyResult.error, /空のリポジトリ/);
 
-  assert.equal(app.store.get(), undefined);
+  assert.equal(app.sites.get(app.sites.root ?? "")?.get(), undefined);
   const history = app.history.list();
   assert.equal(history.length, 5);
   assert.ok(history.every((d) => d.status === "failed"));
@@ -192,7 +192,7 @@ test("リポジトリの外のファイルを import・alias するリポジト�
   });
   assert.match(aliased.ok ? "" : aliased.error, /alias/);
 
-  assert.equal(app.store.get(), undefined);
+  assert.equal(app.sites.get(app.sites.root ?? "")?.get(), undefined);
   for (const d of app.history.list()) {
     const full = app.history.get(d.id)!;
     assert.doesNotMatch(full.log + full.buildLog, /kz_secret_value/);

@@ -11,22 +11,23 @@ import { Observability } from "./observability/events.ts";
 import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
 import { Runtime } from "./runtime/runtime.ts";
-import { Store } from "./store.ts";
+import { Sites } from "./sites.ts";
+import { closeAllSiteDbs } from "./bindings/db.ts";
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions> } = {}) {
-  const store = new Store(config.dataDir);
-  await store.init();
+  const sites = new Sites(config.dataDir);
+  await sites.init();
   const state = new AdminState(config.dataDir);
   await state.init();
-  const runtime = new Runtime({ siteDir: store.siteDir, idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs });
+  const runtime = new Runtime({ idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs, maxWorkers: config.maxWorkers });
 
   const metaDb = openMetaDb(config.dataDir);
   const history = new DeployHistory(metaDb);
   const observability = new Observability(metaDb, config.logRetentionHours);
   const resources = new ResourceMonitor();
 
-  const deployer = new Deployer(store, runtime, history);
-  const deps = { config, state, store, runtime, history, observability, resources, deployer, github: options.github };
+  const deployer = new Deployer(sites, runtime, history);
+  const deps = { config, state, sites, runtime, history, observability, resources, deployer, github: options.github };
   const { handleDeploy, handleReport } = createDeployHandler(deps);
   const handle = createRouter({
     ...deps,
@@ -51,8 +52,9 @@ export async function createServer(config: Config, options: { github?: Partial<G
     observability.close();
     resources.close();
     metaDb.close();
+    closeAllSiteDbs();
   });
-  return { server, store, state, runtime, history, observability, resources, deployer };
+  return { server, sites, state, runtime, history, observability, resources, deployer };
 }
 
 if (import.meta.main) {

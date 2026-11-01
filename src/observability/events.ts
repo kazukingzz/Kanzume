@@ -152,8 +152,8 @@ export class Observability {
     this.#db = db;
     this.#retentionMs = retentionHours * 60 * 60_000;
     this.#insert = db.prepare(
-      `INSERT INTO events (ts, kind, release, method, path, status, outcome, duration_ms, log_count, error, detail)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO events (site, ts, kind, release, method, path, status, outcome, duration_ms, log_count, error, detail)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     let ticks = 0;
     this.#timer = setInterval(() => {
@@ -177,6 +177,7 @@ export class Observability {
       for (const { invocation: inv, status, duration } of queue) {
         const error = inv.detail.exceptions[0] ? `${inv.detail.exceptions[0].name}: ${inv.detail.exceptions[0].message}` : null;
         this.#insert.run(
+          inv.worker,
           inv.start,
           inv.kind,
           inv.release,
@@ -201,15 +202,15 @@ export class Observability {
     this.#db.prepare("DELETE FROM events WHERE ts < ?").run(now - this.#retentionMs);
   }
 
-  clear(): void {
-    this.#queue = [];
-    this.#db.prepare("DELETE FROM events").run();
+  clear(site: string): void {
+    this.flush();
+    this.#db.prepare("DELETE FROM events WHERE site = ?").run(site);
   }
 
-  events(query: EventQuery = {}) {
+  events(site: string, query: EventQuery = {}) {
     this.flush();
-    const where = ["1 = 1"];
-    const params: (string | number)[] = [];
+    const where = ["site = ?"];
+    const params: (string | number)[] = [site];
     if (query.before) {
       where.push("id < ?");
       params.push(query.before);
@@ -254,9 +255,9 @@ export class Observability {
     }));
   }
 
-  event(id: number) {
+  event(site: string, id: number) {
     this.flush();
-    const row = this.#db.prepare("SELECT * FROM events WHERE id = ?").get(id) as
+    const row = this.#db.prepare("SELECT * FROM events WHERE site = ? AND id = ?").get(site, id) as
       | (EventRow & { detail: string })
       | undefined;
     if (!row) return null;
@@ -276,14 +277,14 @@ export class Observability {
     };
   }
 
-  metrics(range: string, now = Date.now()) {
+  metrics(site: string, range: string, now = Date.now()) {
     this.flush();
     const { range: span, step } = BUCKETS[range] ?? BUCKETS["24h"];
     const end = Math.ceil(now / step) * step;
     const start = end - span;
     const rows = this.#db
-      .prepare("SELECT ts, status, outcome, duration_ms, kind FROM events WHERE ts >= ? ORDER BY ts")
-      .all(start) as { ts: number; status: number; outcome: string; duration_ms: number; kind: string }[];
+      .prepare("SELECT ts, status, outcome, duration_ms, kind FROM events WHERE site = ? AND ts >= ? ORDER BY ts")
+      .all(site, start) as { ts: number; status: number; outcome: string; duration_ms: number; kind: string }[];
 
     const count = span / step;
     const buckets = Array.from({ length: count }, (_, i) => ({ t: start + i * step, ok: 0, errors: 0, durations: [] as number[] }));

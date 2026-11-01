@@ -13,7 +13,7 @@ async function start(t: TestContext) {
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise((resolve) => app.server.close(resolve));
-    closeSiteDb(app.store.siteDir);
+    
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const auth = { authorization: `Bearer ${app.state.deployToken}` };
@@ -99,7 +99,7 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
   await fetch(`${base}/`);
   await new Promise((r) => setTimeout(r, 100));
 
-  const events = observability.events();
+  const events = observability.events("app");
   assert.equal(events.length, 4);
   const byPath = (p: string) => events.find((e) => e.path === p)!;
   const [asset, sub, boom, hello] = ["/", "/sub", "/boom", "/hello?x=1"].map(byPath);
@@ -107,7 +107,7 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
   assert.deepEqual([boom.status, boom.outcome, boom.error], [500, "exception", "TypeError: 壊れた"]);
   assert.deepEqual([hello.kind, hello.method, hello.path, hello.outcome], ["worker", "GET", "/hello?x=1", "ok"]);
 
-  const helloDetail = observability.event(hello.id)!.detail;
+  const helloDetail = observability.event("app", hello.id)!.detail;
   assert.deepEqual(
     helloDetail.logs.map((l) => [l.level, l.message]),
     [
@@ -115,19 +115,19 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
       ["log", "after response"],
     ],
   );
-  const subDetail = observability.event(sub.id)!.detail;
+  const subDetail = observability.event("app", sub.id)!.detail;
   assert.equal(subDetail.subrequests.length, 1);
   assert.equal(subDetail.subrequests[0].url, upstream);
   assert.equal(subDetail.subrequests[0].status, 200);
   assert.deepEqual(subDetail.logs.map((l) => l.level), ["log", "warn", "log"]);
-  const stack = observability.event(boom.id)!.detail.exceptions[0].stack ?? "";
+  const stack = observability.event("app", boom.id)!.detail.exceptions[0].stack ?? "";
   assert.match(stack, /TypeError: 壊れた\n\s+at .*worker\/index\.cjs/);
   assert.doesNotMatch(stack, /src\/runtime|node:/);
 
-  assert.deepEqual(observability.events({ result: "error" }).map((e) => e.id), [boom.id]);
-  assert.deepEqual(observability.events({ kind: "asset" }).map((e) => e.id), [asset.id]);
-  assert.deepEqual(observability.events({ q: "fetched" }).map((e) => e.id), [sub.id]);
-  assert.deepEqual(observability.events({ before: events[0].id, limit: 1 }).map((e) => e.id), [events[1].id]);
+  assert.deepEqual(observability.events("app", { result: "error" }).map((e) => e.id), [boom.id]);
+  assert.deepEqual(observability.events("app", { kind: "asset" }).map((e) => e.id), [asset.id]);
+  assert.deepEqual(observability.events("app", { q: "fetched" }).map((e) => e.id), [sub.id]);
+  assert.deepEqual(observability.events("app", { before: events[0].id, limit: 1 }).map((e) => e.id), [events[1].id]);
 });
 
 test("同期処理の時間超過は exceededCpu として記録される", async (t) => {
@@ -142,7 +142,7 @@ test("同期処理の時間超過は exceededCpu として記録される", asyn
     body: new Uint8Array(bundle(t, `export default { fetch() { while (true) {} } }`)),
   });
   assert.equal((await fetch(`${base}/x`)).status, 500);
-  const [e] = app.observability.events();
+  const [e] = app.observability.events("app");
   assert.equal(e.outcome, "exceededCpu");
 });
 
@@ -153,7 +153,7 @@ test("メトリクスは期間内のリクエスト数・エラー数・実行�
   for (let i = 0; i < 2; i++) await fetch(`${base}/e`);
   await fetch(`${base}/`);
 
-  const m = observability.metrics("1h");
+  const m = observability.metrics("app", "1h");
   assert.equal(m.totals.requests, 8);
   assert.equal(m.totals.worker, 7);
   assert.equal(m.totals.errors, 2);
@@ -162,7 +162,7 @@ test("メトリクスは期間内のリクエスト数・エラー数・実行�
   assert.equal(m.buckets.reduce((n, b) => n + b.ok + b.errors, 0), 8);
   assert.ok(m.totals.p50! > 0 && m.totals.p99! >= m.totals.p50!);
 
-  const old = observability.metrics("1h", Date.now() + 2 * 3600e3);
+  const old = observability.metrics("app", "1h", Date.now() + 2 * 3600e3);
   assert.equal(old.totals.requests, 0);
 });
 
@@ -172,17 +172,17 @@ test("古いイベントは保持期間を過ぎると削除され、サイト�
   await fetch(`${base}/a`);
   observability.flush();
   observability.prune(Date.now() + 73 * 3600e3);
-  assert.equal(observability.events().length, 0);
+  assert.equal(observability.events("app").length, 0);
   await fetch(`${base}/b`);
-  observability.clear();
-  assert.equal(observability.events().length, 0);
+  observability.clear("app");
+  assert.equal(observability.events("app").length, 0);
 });
 
 test("管理 API でデプロイ中のコード（ソース・設定・変換後・アセット）を読める", async (t) => {
-  const { store, deploy } = await start(t);
+  const { sites, deploy } = await start(t);
   await deploy(bundle(t, `export default { fetch() { return new Response("ok"); } }`, { ...META, "assets/logo.bin": "\u0000\u0001" }));
   const { listFiles, readFile } = await import("../src/admin/files.ts");
-  const release = store.get()!;
+  const release = sites.get("app")!.get()!;
   const groups = listFiles(release);
   assert.deepEqual(groups.source.map((f) => f.path), ["etc/passwd", "src/index.ts"]);
   assert.deepEqual(groups.config.map((f) => f.path), ["wrangler.jsonc"]);

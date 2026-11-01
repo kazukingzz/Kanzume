@@ -7,16 +7,15 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
-import { closeSiteDb } from "../bindings/db.ts";
 import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { deployFromGitHub, type GitHubOptions } from "../deploy/github.ts";
 import type { DeployHistory } from "../deploy/history.ts";
-import { externalOrigin, readJson, sendJson, sendText } from "../http.ts";
+import { externalOrigin, readJson, sendJson, sendText, siteOrigin } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { Store } from "../store.ts";
+import type { Sites } from "../sites.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
 import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
@@ -36,7 +35,7 @@ const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 interface Deps {
   config: Config;
   state: AdminState;
-  store: Store;
+  sites: Sites;
   runtime: Runtime;
   history: DeployHistory;
   observability: Observability;
@@ -45,7 +44,7 @@ interface Deps {
   github?: Partial<GitHubOptions>;
 }
 
-export function createAdminHandler({ config, state, store, runtime, history, observability, resources, deployer, github }: Deps) {
+export function createAdminHandler({ config, state, sites, runtime, history, observability, resources, deployer, github }: Deps) {
   const challenges = new Challenges();
   let githubDeploying = false;
 
@@ -238,41 +237,38 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       return sendJson(res, 200, { token: await state.rotateDeployToken() });
     }
 
-    const release = store.get();
-
-    if (route === "GET /api/site") {
-      const m = release?.manifest;
+    if (route === "GET /api/sites") {
+      const listed = sites.list();
+      const names = new Set(listed.map((x) => x.name));
       return sendJson(res, 200, {
-        url: `${origin}/`,
-        release: release
-          ? {
-              id: release.id,
-              name: m!.name,
-              deployedAt: release.deployedAt,
-              deployment: history.forRelease(release.id),
-              main: m!.main,
-              compatibilityDate: m!.compatibilityDate,
-              compatibilityFlags: m!.compatibilityFlags,
-              vars: m!.vars,
-              kv: m!.kvNamespaces.map((k) => k.binding),
-              r2: m!.r2Buckets.map((b) => ({ binding: b.binding, bucket: b.bucketName })),
-              assets: m!.assets,
-            }
-          : null,
-        latest: history.latest(),
+        root: sites.root,
+        sites: listed.map(({ name, store }) => {
+          const release = store.get()!;
+          return { name, url: `${siteOrigin(origin, name)}/`, deployedAt: release.deployedAt, latest: history.latest(name) };
+        }),
+        // 初回のデプロイに失敗して、まだ一覧に出ないサイトのデプロイ
+        pending: history
+          .list()
+          .filter((d) => !names.has(d.name))
+          .slice(0, 10),
       });
     }
 
-    if (route === "DELETE /api/site") {
-      runtime.evict();
-      closeSiteDb(store.siteDir);
-      await store.remove();
-      history.clear();
-      observability.clear();
-      return sendJson(res, 200, { ok: true });
+    if (route === "POST /api/root-site") {
+      const body = await readJson(req);
+      const name = body?.name === null ? null : String(body?.name ?? "");
+      if (name !== null && !sites.get(name)?.get()) return sendJson(res, 404, { error: "サイトが見つかりません" });
+      await sites.setRoot(name);
+      return sendJson(res, 200, { root: sites.root });
     }
 
-    if (route === "POST /api/site/deploy-github") {
+    const pendingDeployment = /^GET \/api\/deployments\/([^/]+)$/.exec(route);
+    if (pendingDeployment) {
+      const found = history.get(decodeURIComponent(pendingDeployment[1]));
+      return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
+    }
+
+    if (route === "POST /api/deploy-github") {
       const body = await readJson(req);
       const url = typeof body?.url === "string" ? body.url : "";
       if (!url) return sendJson(res, 400, { error: "GitHub の URL を入力してください" });
@@ -280,41 +276,78 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       githubDeploying = true;
       try {
         const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github });
-        return result.ok
-          ? sendJson(res, 200, { release: result.release.id, url: `${origin}/` })
-          : sendJson(res, 400, { error: result.error });
+        if (!result.ok) return sendJson(res, 400, { error: result.error });
+        const name = result.release.manifest.name;
+        return sendJson(res, 200, { site: name, release: result.release.id, url: `${siteOrigin(origin, name)}/` });
       } finally {
         githubDeploying = false;
       }
     }
 
-    if (route === "GET /api/site/deployments") return sendJson(res, 200, { deployments: history.list(), active: release?.id ?? null });
+    const siteRoute = /^(GET|DELETE) \/api\/sites\/([a-z0-9-]+)(\/.*)?$/.exec(route);
+    if (!siteRoute) return sendJson(res, 404, { error: "Not Found" });
+    const [, , name, rest = ""] = siteRoute;
+    const store = sites.get(name);
+    const release = store?.get();
+    if (!store || !release) return sendJson(res, 404, { error: "サイトが見つかりません" });
+    const siteRouteKey = `${method} ${rest}`;
 
-    const deployment = /^GET \/api\/site\/deployments\/([^/]+)$/.exec(route);
+    if (siteRouteKey === "GET ") {
+      const m = release.manifest;
+      return sendJson(res, 200, {
+        name,
+        url: `${siteOrigin(origin, name)}/`,
+        root: sites.root === name,
+        release: {
+          id: release.id,
+          name: m.name,
+          deployedAt: release.deployedAt,
+          deployment: history.forRelease(release.id),
+          main: m.main,
+          compatibilityDate: m.compatibilityDate,
+          compatibilityFlags: m.compatibilityFlags,
+          vars: m.vars,
+          kv: m.kvNamespaces.map((k) => k.binding),
+          r2: m.r2Buckets.map((b) => ({ binding: b.binding, bucket: b.bucketName })),
+          assets: m.assets,
+        },
+        latest: history.latest(name),
+      });
+    }
+
+    if (siteRouteKey === "DELETE ") {
+      runtime.evict(store.siteDir);
+      await sites.remove(name);
+      history.clear(name);
+      observability.clear(name);
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (siteRouteKey === "GET /deployments") return sendJson(res, 200, { deployments: history.list(name), active: release.id });
+
+    const deployment = /^GET \/deployments\/([^/]+)$/.exec(siteRouteKey);
     if (deployment) {
-      const found = history.get(decodeURIComponent(deployment[1]));
+      const found = history.get(decodeURIComponent(deployment[1]), name);
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
     }
 
-    if (route === "GET /api/site/files") {
-      return sendJson(res, 200, release ? { release: release.id, groups: listFiles(release) } : { release: null, groups: null });
-    }
+    if (siteRouteKey === "GET /files") return sendJson(res, 200, { release: release.id, groups: listFiles(release) });
 
-    if (route === "GET /api/site/file") {
+    if (siteRouteKey === "GET /file") {
       const group = query.get("group") as FileGroup;
-      if (!release || !FILE_GROUPS.includes(group)) return sendJson(res, 404, { error: "ファイルが見つかりません" });
+      if (!FILE_GROUPS.includes(group)) return sendJson(res, 404, { error: "ファイルが見つかりません" });
       const content = readFile(release, group, query.get("path") ?? "");
       return content ? sendJson(res, 200, content) : sendJson(res, 404, { error: "ファイルが見つかりません" });
     }
 
-    if (route === "GET /api/site/metrics") return sendJson(res, 200, observability.metrics(query.get("range") ?? "24h"));
+    if (siteRouteKey === "GET /metrics") return sendJson(res, 200, observability.metrics(name, query.get("range") ?? "24h"));
 
-    if (route === "GET /api/site/events") {
+    if (siteRouteKey === "GET /events") {
       const num = (k: string) => (query.get(k) ? Number(query.get(k)) : undefined);
       const result = query.get("result");
       const kind = query.get("kind");
       return sendJson(res, 200, {
-        events: observability.events({
+        events: observability.events(name, {
           before: num("before"),
           after: num("after"),
           from: num("from"),
@@ -326,9 +359,9 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
       });
     }
 
-    const event = /^GET \/api\/site\/events\/(\d+)$/.exec(route);
+    const event = /^GET \/events\/(\d+)$/.exec(siteRouteKey);
     if (event) {
-      const found = observability.event(Number(event[1]));
+      const found = observability.event(name, Number(event[1]));
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "イベントが見つかりません" });
     }
 

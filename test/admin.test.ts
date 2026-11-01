@@ -17,7 +17,7 @@ async function start(t: TestContext, dataDir = tmpDir(t)) {
   t.after(async () => {
     await new Promise((resolve) => app.server.close(resolve));
     await app.state.flush();
-    closeSiteDb(app.store.siteDir);
+    
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown) =>

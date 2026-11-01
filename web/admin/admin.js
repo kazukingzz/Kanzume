@@ -1,9 +1,14 @@
 const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
-const TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", resources: "リソース", settings: "設定" };
+// サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
+const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", site: "サイト設定" };
+const GLOBAL_TABS = { new: "サイトを追加", resources: "リソース", settings: "設定" };
+const NEW_SITE = "__new";
 
 const state = {
   overview: null,
+  sites: { root: null, sites: [], pending: [] },
+  siteName: null,
   site: null,
   tab: "deployments",
   token: "",
@@ -207,48 +212,88 @@ function setMenu(open) {
 $("menu-open").addEventListener("click", () => setMenu(true));
 $("scrim").addEventListener("click", () => setMenu(false));
 
+const siteHash = (tab, name = state.siteName) => (name ? `#/${encodeURIComponent(name)}/${tab}` : "#/new");
+
 for (const a of $("nav").querySelectorAll("a")) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     const tab = a.dataset.tab;
-    location.hash = `#/${tab}`;
+    location.hash = SITE_TABS[tab] ? siteHash(tab) : `#/${tab}`;
     setMenu(false);
   });
 }
 
+$("site-select").addEventListener("change", (e) => {
+  const v = e.target.value;
+  const tab = SITE_TABS[state.tab] ? state.tab : "deployments";
+  location.hash = v === NEW_SITE ? "#/new" : siteHash(tab, v);
+  setMenu(false);
+});
+
+const siteApi = (path = "") => `/sites/${encodeURIComponent(state.siteName)}${path}`;
+
 async function loadOverview() {
-  [state.overview, state.site] = await Promise.all([api("/overview"), api("/site")]);
+  [state.overview, state.sites] = await Promise.all([api("/overview"), api("/sites")]);
   state.token = state.overview.token;
+}
+
+function renderShell() {
+  const names = state.sites.sites.map((x) => x.name);
+  const select = $("site-select");
+  fill(
+    select,
+    ...state.sites.sites.map((x) => h("option", { value: x.name, text: x.name === state.sites.root ? `${x.name}（ルート）` : x.name })),
+    h("option", { value: NEW_SITE, text: "＋ サイトを追加" }),
+  );
+  const current = state.tab === "new" ? null : state.sites.sites.find((x) => x.name === state.siteName);
+  select.value = current ? current.name : NEW_SITE;
   const link = $("site-link");
-  link.hidden = !state.site.release;
-  link.href = state.site.url;
-  link.textContent = state.site.release ? state.site.release.name : "";
+  link.hidden = !current;
+  link.href = current?.url ?? "";
+  link.textContent = current ? current.url.replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
+  for (const a of $("nav").querySelectorAll("a")) {
+    a.classList.toggle("current", a.dataset.tab === state.tab);
+    a.hidden = !!SITE_TABS[a.dataset.tab] && !current;
+  }
+  $("topbar-title").textContent = current ? current.name : GLOBAL_TABS[state.tab] ?? "";
 }
 
 async function enterApp() {
   await loadOverview();
   $("auth").hidden = true;
   $("app").hidden = false;
-  if (!TABS[parseHash()]) location.hash = "#/deployments";
   route();
 }
 
 function parseHash() {
-  return location.hash.replace(/^#\/?/, "").split("/")[0] || "deployments";
+  const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  if (parts.length >= 2) return { site: parts[0], tab: parts[1] };
+  return { site: null, tab: parts[0] ?? "" };
 }
 
 function route() {
   if ($("app").hidden) return;
   clearTimers();
-  const tab = TABS[parseHash()] ? parseHash() : "deployments";
+  const names = state.sites.sites.map((x) => x.name);
+  let { site, tab } = parseHash();
+  if (site && SITE_TABS[tab] && names.includes(site)) {
+    state.siteName = site;
+  } else if (GLOBAL_TABS[tab]) {
+    if (!names.includes(state.siteName)) state.siteName = names[0] ?? null;
+  } else {
+    // 不明な URL は最初のサイト（なければサイトの追加）へ
+    const first = names.includes(state.siteName) ? state.siteName : (state.sites.root ?? names[0]);
+    location.replace(first ? siteHash(SITE_TABS[tab] ? tab : "deployments", first) : "#/new");
+    return;
+  }
   state.tab = tab;
-  for (const a of $("nav").querySelectorAll("a")) a.classList.toggle("current", a.dataset.tab === tab);
-  $("topbar-title").textContent = state.site?.release?.name ?? "";
+  renderShell();
   const main = $("main");
-  main.className = "main" + (tab === "code" && state.site?.release ? " fill" : "");
+  main.className = "main" + (tab === "code" ? " fill" : "");
   main.scrollTop = 0;
-  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, resources: viewResources, settings: viewSettings };
+  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, site: viewSite, new: viewNewSite, resources: viewResources, settings: viewSettings };
   views[tab](main).catch((err) => {
+    main.className = "main";
     main.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice", text: err.message })));
   });
 }
@@ -261,20 +306,10 @@ function pageHead(title, extra = []) {
     h("h1", { text: title }),
     ...extra,
     h("span", { class: "spacer" }),
-    state.site?.release ? h("a", { class: "open", href: state.site.url, target: "_blank", rel: "noopener", text: "サイトを開く ↗" }) : null,
+    SITE_TABS[state.tab] && state.site?.url ? h("a", { class: "open", href: state.site.url, target: "_blank", rel: "noopener", text: "サイトを開く ↗" }) : null,
   );
 }
 
-function notDeployed(main, title) {
-  main.replaceChildren(
-    h(
-      "div",
-      { class: "page" },
-      pageHead(title),
-      h("div", { class: "card empty" }, h("p", { text: "まだサイトがデプロイされていません。" }), h("a", { href: "#/deployments", text: "デプロイのページを開く" })),
-    ),
-  );
-}
 
 function statusBadge(status) {
   return status === "success" ? h("span", { class: "status good", text: "成功" }) : h("span", { class: "status bad", text: "失敗" });
@@ -291,11 +326,14 @@ function commitLink(source) {
 
 // ---------- デプロイ ----------
 
+async function loadSite() {
+  state.site = await api(siteApi());
+  return state.site;
+}
+
 async function viewDeployments(main) {
-  const [detail, { deployments, active }] = await Promise.all([api("/site"), api("/site/deployments")]);
-  state.site = detail;
+  const [detail, { deployments, active }] = await Promise.all([loadSite(), api(siteApi("/deployments"))]);
   const page = h("div", { class: "page" }, pageHead("デプロイ"));
-  if (!detail.release) page.append(githubCard());
 
   const latest = detail.latest;
   if (latest && latest.status === "failed" && (!detail.release || latest.id !== detail.release.deployment?.id)) {
@@ -353,12 +391,15 @@ function githubCard() {
     button.textContent = "デプロイ中…";
     state.github.url = input.value.trim();
     try {
-      await api("/site/deploy-github", { method: "POST", body: JSON.stringify({ url: state.github.url || EXAMPLE_URL }) });
+      const { site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ url: state.github.url || EXAMPLE_URL }) });
       state.github = { url: "", error: "" };
       await loadOverview();
+      location.hash = siteHash("deployments", site);
+      return;
     } catch (err) {
       state.github.error = err.message;
     }
+    await loadOverview().catch(() => {});
     route();
   };
   button.addEventListener("click", run);
@@ -367,7 +408,7 @@ function githubCard() {
     "section",
     { class: "card" },
     h("h2", { text: "GitHub の public リポジトリからデプロイ" }),
-    h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。空のままならこのリポジトリのサンプルをデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions からデプロイしてください。" }),
+    h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。設定の name がサブドメインになり、同じ name のサイトがあれば更新します。空のままならこのリポジトリのサンプルをデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions からデプロイしてください。" }),
     h("div", { class: "row" }, h("div", { class: "grow" }, input), button),
     error,
   );
@@ -393,7 +434,7 @@ function deploymentItem(d, isActive) {
           detail.dataset.loaded = "1";
           detail.replaceChildren(h("p", { class: "muted", text: "読み込み中…" }));
           try {
-            const full = await api(`/site/deployments/${encodeURIComponent(d.id)}`);
+            const full = await api(state.tab === "new" ? `/deployments/${encodeURIComponent(d.id)}` : siteApi(`/deployments/${encodeURIComponent(d.id)}`));
             fill(
               detail,
               full.error ? h("div", { class: "notice mono", text: full.error }) : null,
@@ -441,8 +482,7 @@ function buildTree(files) {
 }
 
 async function viewCode(main) {
-  const { groups } = await api("/site/files");
-  if (!groups) return notDeployed(main, "コード");
+  const [{ groups }] = await Promise.all([api(siteApi("/files")), loadSite()]);
   const page = h("div", { class: "page" }, pageHead("コード", [h("span", { class: "muted", text: "読み取り専用" })]));
 
   const all = GROUPS.flatMap(([g]) => groups[g].map((f) => ({ group: g, ...f })));
@@ -503,7 +543,7 @@ async function viewCode(main) {
 
 async function showFile(viewer, group, path) {
   viewer.replaceChildren(h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })), h("div", { class: "placeholder", text: "読み込み中…" }));
-  const file = await api(`/site/file?group=${group}&path=${encodeURIComponent(path)}`).catch((err) => ({ error: err.message }));
+  const file = await api(siteApi(`/file?group=${group}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
   if (state.code.group !== group || state.code.path !== path) return;
   const head = h(
     "div",
@@ -573,7 +613,7 @@ const RANGES = [
 const RANGE_MS = { "1h": 3600e3, "24h": 86400e3, "3d": 3 * 86400e3 };
 
 async function viewObservability(main) {
-  if (!state.site?.release && !(await api("/site/deployments")).deployments.length) return notDeployed(main, "可観測性");
+  await loadSite();
   const o = state.obs;
   const page = h("div", { class: "page" });
   const body = h("div");
@@ -591,7 +631,7 @@ async function viewObservability(main) {
 
 async function renderMetrics(body) {
   const load = async () => {
-    const m = await api(`/site/metrics?range=${state.obs.range}`);
+    const m = await api(siteApi(`/metrics?range=${state.obs.range}`));
     if (state.tab !== "observability") return;
     drawMetrics(body, m);
   };
@@ -923,7 +963,7 @@ async function renderEvents(body, filters) {
     h("div", { class: "event-row head" }, h("span", { text: "時刻" }), h("span", { text: "ステータス" }), h("span", { text: "メソッド" }), h("span", { text: "パス" }), h("span", { class: "num", text: "実行時間" }), h("span", { class: "num", text: "ログ" }));
 
   const reload = async () => {
-    const { events } = await api(`/site/events?${params({})}`);
+    const { events } = await api(siteApi(`/events?${params({})}`));
     list.replaceChildren(header(), ...events.map((e) => eventRow(e)));
     if (!events.length) list.append(h("div", { class: "empty", text: "この期間のイベントはありません" }));
     oldest = events.length ? events[events.length - 1].id : null;
@@ -933,7 +973,7 @@ async function renderEvents(body, filters) {
 
   more.addEventListener("click", async () => {
     more.disabled = true;
-    const { events } = await api(`/site/events?${params({ before: String(oldest) })}`);
+    const { events } = await api(siteApi(`/events?${params({ before: String(oldest) })}`));
     more.remove();
     for (const e of events) list.append(eventRow(e));
     oldest = events.length ? events[events.length - 1].id : oldest;
@@ -942,7 +982,7 @@ async function renderEvents(body, filters) {
   });
 
   const poll = async () => {
-    const { events } = await api(`/site/events?${params(newest ? { after: String(newest) } : {})}`);
+    const { events } = await api(siteApi(`/events?${params(newest ? { after: String(newest) } : {})}`));
     if (!events.length || state.tab !== "observability") return;
     list.querySelector(".empty")?.remove();
     const head = list.querySelector(".event-row.head");
@@ -984,7 +1024,7 @@ function eventRow(e) {
           detail.dataset.loaded = "1";
           detail.append(h("p", { class: "muted", text: "読み込み中…" }));
           try {
-            renderEventDetail(detail, await api(`/site/events/${e.id}`));
+            renderEventDetail(detail, await api(siteApi(`/events/${e.id}`)));
           } catch (err) {
             detail.replaceChildren(h("div", { class: "notice", text: err.message }));
           }
@@ -1191,53 +1231,110 @@ async function viewSettings(main) {
     h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)), h("pre", { class: "log", text: WORKFLOW })),
   );
 
-  const detail = await api("/site");
-  const r = detail.release;
-  if (r) {
-    const rows = [
-      ["名前", r.name],
-      ["URL", h("a", { href: detail.url, target: "_blank", rel: "noopener", text: detail.url })],
-      ["Worker", r.main ? `worker/${r.main}` : "なし（静的サイト）"],
-      ["compatibility_date", r.compatibilityDate ?? "–"],
-      ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],
-      ["KV", r.kv.length ? r.kv.join(", ") : "–"],
-      ["R2", r.r2.length ? r.r2.map((b) => `${b.binding}（${b.bucket}）`).join(", ") : "–"],
-      ["Assets", r.assets ? [`binding: ${r.assets.binding ?? "–"}`, `html_handling: ${r.assets.htmlHandling}`, `not_found_handling: ${r.assets.notFoundHandling}`, `run_worker_first: ${JSON.stringify(r.assets.runWorkerFirst)}`].join(" / ") : "–"],
-    ];
-    const vars = Object.entries(r.vars);
-    page.append(
-      h(
-        "section",
-        { class: "card" },
-        h("h2", { text: "サイト" }),
-        h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)])),
-        h("div", { class: "log-title", text: "変数（vars）" }),
-        vars.length ? h("table", { class: "mono" }, h("tbody", {}, ...vars.map(([k, v]) => h("tr", {}, h("td", { text: k }), h("td", { text: typeof v === "string" ? v : JSON.stringify(v) }))))) : h("p", { class: "muted", text: "なし" }),
-        h("p", { class: "muted", text: "設定を変えるには wrangler の設定ファイルを編集して再デプロイしてください。" }),
-      ),
-    );
-  }
+  main.replaceChildren(page);
+}
 
-  if (r || detail.latest) {
-    const delError = h("div", { class: "error" });
-    page.append(
-      h(
-        "section",
-        { class: "card" },
-        h("h2", { text: "サイトの削除" }),
-        h("p", { class: "muted", text: "公開を止め、KV / R2 のデータ・デプロイ履歴・ログもすべて削除します。パスキーとチーム ID・Token は残ります。" }),
-        armed(h("button", { class: "danger" }), "サイトを削除", "もう一度押すと削除", async () => {
-          try {
-            await api("/site", { method: "DELETE" });
-            await loadOverview();
-            location.hash = "#/deployments";
-          } catch (err) {
-            delError.textContent = err.message;
-          }
-        }),
-        delError,
-      ),
-    );
+// ---------- サイト設定 ----------
+
+async function viewSite(main) {
+  const detail = await loadSite();
+  const r = detail.release;
+  const page = h("div", { class: "page" }, pageHead("サイト設定"));
+  const rows = [
+    ["名前", r.name],
+    ["URL", h("a", { href: detail.url, target: "_blank", rel: "noopener", text: detail.url })],
+    ["Worker", r.main ? `worker/${r.main}` : "なし（静的サイト）"],
+    ["compatibility_date", r.compatibilityDate ?? "–"],
+    ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],
+    ["KV", r.kv.length ? r.kv.join(", ") : "–"],
+    ["R2", r.r2.length ? r.r2.map((b) => `${b.binding}（${b.bucket}）`).join(", ") : "–"],
+    ["Assets", r.assets ? [`binding: ${r.assets.binding ?? "–"}`, `html_handling: ${r.assets.htmlHandling}`, `not_found_handling: ${r.assets.notFoundHandling}`, `run_worker_first: ${JSON.stringify(r.assets.runWorkerFirst)}`].join(" / ") : "–"],
+  ];
+  const vars = Object.entries(r.vars);
+
+  const rootError = h("div", { class: "error" });
+  const rootOrigin = location.origin;
+  const rootToggle = h("button", {
+    class: detail.root ? "" : "primary",
+    text: detail.root ? "ルートドメインでの配信をやめる" : "ルートドメインで配信する",
+    onclick: async () => {
+      try {
+        await api("/root-site", { method: "POST", body: JSON.stringify({ name: detail.root ? null : state.siteName }) });
+        await loadOverview();
+        route();
+      } catch (err) {
+        rootError.textContent = err.message;
+      }
+    },
+  });
+  const otherRoot = !detail.root && state.sites.root;
+
+  const delError = h("div", { class: "error" });
+  page.append(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "サイト" }),
+      h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)])),
+      h("div", { class: "log-title", text: "変数（vars）" }),
+      vars.length ? h("table", { class: "mono" }, h("tbody", {}, ...vars.map(([k, v]) => h("tr", {}, h("td", { text: k }), h("td", { text: typeof v === "string" ? v : JSON.stringify(v) }))))) : h("p", { class: "muted", text: "なし" }),
+      h("p", { class: "muted", text: "設定を変えるには wrangler の設定ファイルを編集して再デプロイしてください。" }),
+    ),
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "ルートドメイン" }),
+      h("p", {
+        class: "muted",
+        text: detail.root
+          ? `このサイトは ${rootOrigin}/ でも配信しています。`
+          : `${rootOrigin}/ で配信するサイトを 1 つ選べます。${otherRoot ? `今は ${otherRoot} を配信しています。` : "今は何も配信していません。"}`,
+      }),
+      rootToggle,
+      rootError,
+    ),
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "サイトの削除" }),
+      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログをすべて削除します。他のサイトとパスキー・チーム ID・Token は残ります。" }),
+      armed(h("button", { class: "danger" }), "サイトを削除", "もう一度押すと削除", async () => {
+        try {
+          await api(siteApi(), { method: "DELETE" });
+          state.siteName = null;
+          await loadOverview();
+          const next = state.sites.root ?? state.sites.sites[0]?.name;
+          location.hash = next ? siteHash("deployments", next) : "#/new";
+        } catch (err) {
+          delError.textContent = err.message;
+        }
+      }),
+      delError,
+    ),
+  );
+  main.replaceChildren(page);
+}
+
+// ---------- サイトを追加 ----------
+
+async function viewNewSite(main) {
+  const page = h("div", { class: "page" }, pageHead("サイトを追加"));
+  page.append(
+    githubCard(),
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "GitHub Actions からデプロイ" }),
+      h("p", { class: "muted", text: "wrangler の設定の name がサイト名（サブドメイン）になります。Token は全サイト共通なので、設定のページの KANZUME_URL と KANZUME_TOKEN をそのまま使えます。" }),
+      h("a", { href: "#/settings", text: "設定のページを開く" }),
+    ),
+  );
+  const pending = state.sites.pending;
+  if (pending.length) {
+    page.append(h("div", { class: "section-head" }, h("h2", { text: "公開に至らなかったデプロイ" }), h("span", { class: "muted", text: `${pending.length} 件` })));
+    const list = h("div", { class: "list" });
+    for (const d of pending) list.append(deploymentItem(d, false));
+    page.append(list);
   }
   main.replaceChildren(page);
 }

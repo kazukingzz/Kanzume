@@ -27,6 +27,7 @@ export interface DeploymentInput {
 
 interface Row {
   id: string;
+  site: string;
   name: string;
   release: string | null;
   status: "success" | "failed";
@@ -85,11 +86,12 @@ export class DeployHistory {
     const id = input.id ?? newDeploymentId();
     this.#db
       .prepare(
-        `INSERT INTO deployments (id, name, release, status, created_at, duration_ms, size, files, error, meta, log, build_log)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO deployments (id, site, name, release, status, created_at, duration_ms, size, files, error, meta, log, build_log)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       )
       .run(
         id,
+        input.name,
         input.name,
         input.release,
         input.status,
@@ -103,23 +105,29 @@ export class DeployHistory {
         input.buildLog.slice(-MAX_LOG),
       );
     this.#db
-      .prepare("DELETE FROM deployments WHERE id NOT IN (SELECT id FROM deployments ORDER BY created_at DESC, id DESC LIMIT ?)")
-      .run(KEEP);
+      .prepare("DELETE FROM deployments WHERE site = ? AND id NOT IN (SELECT id FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC LIMIT ?)")
+      .run(input.name, input.name, KEEP);
     return id;
   }
 
-  list() {
-    const rows = this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC").all() as unknown as Row[];
+  /** site を省略するとすべてのサイト */
+  list(site?: string) {
+    const rows = (
+      site === undefined
+        ? this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC").all()
+        : this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC").all(site)
+    ) as unknown as Row[];
     return rows.map(summary);
   }
 
-  get(id: string) {
+  get(id: string, site?: string) {
     const row = this.#db.prepare("SELECT * FROM deployments WHERE id = ?").get(id) as Row | undefined;
-    return row ? { ...summary(row), log: row.log, buildLog: row.build_log } : null;
+    if (!row || (site !== undefined && row.site !== site)) return null;
+    return { ...summary(row), log: row.log, buildLog: row.build_log };
   }
 
-  latest() {
-    const row = this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC LIMIT 1").get() as Row | undefined;
+  latest(site: string) {
+    const row = this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(site) as Row | undefined;
     return row ? summary(row) : null;
   }
 
@@ -128,7 +136,7 @@ export class DeployHistory {
     return row ? summary(row) : null;
   }
 
-  clear(): void {
-    this.#db.prepare("DELETE FROM deployments").run();
+  clear(site: string): void {
+    this.#db.prepare("DELETE FROM deployments WHERE site = ?").run(site);
   }
 }

@@ -67,6 +67,10 @@
         <img class="logo" src="/_admin/kanzume/logo.svg" alt="" width="40" height="40">
         <span class="brand">Kanzume</span>
       </div>
+    </div>
+    <div class="site-picker">
+      <label for="site-select">サイト</label>
+      <select id="site-select"></select>
       <a class="site-link" id="site-link" target="_blank" rel="noopener" hidden></a>
     </div>
     <nav class="nav" id="nav">
@@ -82,6 +86,11 @@
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-7 4 14 3-7h4" /></svg>
         可観測性
       </a>
+      <a data-tab="site">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18" /><circle cx="12" cy="12" r="9" /></svg>
+        サイト設定
+      </a>
+      <hr class="nav-sep">
       <a data-tab="resources">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2" /><path d="M10 10h4v4h-4zM9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4" /></svg>
         リソース

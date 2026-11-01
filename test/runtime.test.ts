@@ -152,7 +152,7 @@ test("Response 以外を返すとエラーになる", async (t) => {
 
 test("Runtime は同じリリースなら読み込み済みの Worker を使い回す", async (t) => {
   const a = await worker(t, `export default { fetch() { return new Response("a"); } }`);
-  const runtime = new Runtime({ siteDir: a.store.siteDir, idleMs: 60_000, cpuTimeoutMs: 200 });
+  const runtime = new Runtime({ idleMs: 60_000, cpuTimeoutMs: 200 });
   t.after(() => runtime.close());
   const first = await runtime.get(a.r);
   assert.equal(await runtime.get(a.r), first);
@@ -162,7 +162,7 @@ test("Runtime は同じリリースなら読み込み済みの Worker を使い�
 
 test("Runtime は一定時間使われていない Worker を捨てる", async (t) => {
   const a = await worker(t, `export default { fetch() { return new Response("a"); } }`);
-  const runtime = new Runtime({ siteDir: a.store.siteDir, idleMs: 1000, cpuTimeoutMs: 200 });
+  const runtime = new Runtime({ idleMs: 1000, cpuTimeoutMs: 200 });
   t.after(() => runtime.close());
   await runtime.get(a.r);
   runtime.sweep(Date.now() + 2000);
@@ -173,7 +173,7 @@ test("再デプロイで差し替えた古い Worker のコンテキストは GC
   const gc = (globalThis as { gc?: () => void }).gc;
   if (!gc) return t.skip("--expose-gc が必要");
   const a = await worker(t, `export default { fetch() { return new Response("v1"); } }`);
-  const runtime = new Runtime({ siteDir: a.store.siteDir, idleMs: 60_000, cpuTimeoutMs: 200 });
+  const runtime = new Runtime({ idleMs: 60_000, cpuTimeoutMs: 200 });
   t.after(() => runtime.close());
 
   let collected = false;
@@ -194,4 +194,20 @@ test("再デプロイで差し替えた古い Worker のコンテキストは GC
     await tick();
   }
   assert.equal(collected, true);
+});
+
+test("Runtime はサイトごとに Worker を持ち、上限を超えたら最後に使ったのが一番古いものから捨てる", async (t) => {
+  const [a, b, c] = await Promise.all(["a", "b", "c"].map((n) => worker(t, `export default { fetch() { return new Response("${n}"); } }`)));
+  const runtime = new Runtime({ idleMs: 60_000, cpuTimeoutMs: 200, maxWorkers: 2 });
+  t.after(() => runtime.close());
+  const wa = await runtime.get(a.r);
+  await new Promise((r) => setTimeout(r, 5));
+  const wb = await runtime.get(b.r);
+  await new Promise((r) => setTimeout(r, 5));
+  assert.equal(await runtime.get(a.r), wa, "別のサイトを読み込んでも a は残る");
+  await new Promise((r) => setTimeout(r, 5));
+  await runtime.get(c.r);
+  assert.equal(runtime.size, 2);
+  assert.equal(await runtime.get(a.r), wa, "直前に使った a は残る");
+  assert.notEqual(await runtime.get(b.r), wb, "一番古い b は捨てられて読み込み直される");
 });

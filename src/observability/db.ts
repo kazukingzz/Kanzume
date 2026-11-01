@@ -7,6 +7,7 @@ PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 CREATE TABLE IF NOT EXISTS deployments (
   id TEXT PRIMARY KEY,
+  site TEXT NOT NULL,
   name TEXT NOT NULL,
   release TEXT,
   status TEXT NOT NULL,
@@ -19,9 +20,10 @@ CREATE TABLE IF NOT EXISTS deployments (
   log TEXT NOT NULL,
   build_log TEXT NOT NULL
 );
-CREATE INDEX IF NOT EXISTS deployments_created ON deployments (created_at);
+CREATE INDEX IF NOT EXISTS deployments_site_created ON deployments (site, created_at);
 CREATE TABLE IF NOT EXISTS events (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
+  site TEXT NOT NULL,
   ts INTEGER NOT NULL,
   kind TEXT NOT NULL,
   release TEXT,
@@ -35,6 +37,7 @@ CREATE TABLE IF NOT EXISTS events (
   detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_ts ON events (ts);
+CREATE INDEX IF NOT EXISTS events_site_id ON events (site, id);
 `;
 
 export function openMetaDb(dataDir: string): DatabaseSync {

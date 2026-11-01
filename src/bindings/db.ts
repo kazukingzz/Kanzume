@@ -39,6 +39,11 @@ export function siteDb(siteDir: string): DatabaseSync {
   return db;
 }
 
+export function closeAllSiteDbs(): void {
+  for (const db of open.values()) db.close();
+  open.clear();
+}
+
 export function closeSiteDb(siteDir: string): void {
   open.get(siteDir)?.close();
   open.delete(siteDir);

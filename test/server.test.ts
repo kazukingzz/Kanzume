@@ -10,16 +10,16 @@ import { rawTarEntry, rawTarGz, tarGz, tmpDir, toCjs } from "./helpers.ts";
 async function start(t: TestContext, env: Record<string, string> = {}) {
   const dataDir = tmpDir(t);
   const config = loadConfig({ KANZUME_DATA_DIR: dataDir, KANZUME_SETUP_TOKEN: "setup", ...env });
-  const { server, state, store } = await createServer(config);
+  const { server, state, sites } = await createServer(config);
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
-    closeSiteDb(store.siteDir);
+    
   });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const deploy = (body: Buffer, token = state.deployToken) =>
     fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: new Uint8Array(body) });
-  return { base, deploy, state, store };
+  return { base, deploy, state, sites, store: { get: () => sites.get(sites.root ?? "")?.get() } };
 }
 
 function workerBundle(t: TestContext, source: string, extra: Record<string, unknown> = {}, assets: Record<string, string> = {}) {
@@ -54,7 +54,7 @@ test("静的サイトをデプロイするとルートで配信される", async
   assert.equal(res.status, 200);
   const json = (await res.json()) as { url: string; name: string };
   assert.equal(json.name, "site");
-  assert.equal(json.url, `${base}/`);
+  assert.equal(json.url, `${base.replace("://", "://site.")}/`);
 
   assert.equal(await (await fetch(`${base}/`)).text(), "<h1>site</h1>");
   assert.equal(await (await fetch(`${base}/about`)).text(), "about");

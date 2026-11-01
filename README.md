@@ -2,7 +2,9 @@
 
 Workers + KV + R2 だけの小さなホスティング。ハッカソン向け。
 
-Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。サイトは 1 つで、ルート（`/`）で配信します。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
+Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
+
+サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`）。DNS はワイルドカード（`*.example.com`）で Kanzume に向けてください。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
 
 ## 立てる
 
@@ -45,7 +47,7 @@ Worker は `node:vm` で動かします。セキュリティ境界ではない�
 
 ## 環境変数
 
-`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（未設定ならアクセスされたドメイン）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_LOG_RETENTION_HOURS`（72）
+`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。未設定ならアクセスされたドメイン。設定すると存在しないサブドメインを 404 にできる）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）
 
 ## 開発
 

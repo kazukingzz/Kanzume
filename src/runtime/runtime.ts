@@ -8,13 +8,15 @@ interface Entry {
 }
 
 export interface RuntimeOptions {
-  siteDir: string;
   idleMs: number;
   cpuTimeoutMs: number;
+  /** 同時にメモリに載せておく Worker の数。超えたら最後に使ったのが一番古いものから捨てる */
+  maxWorkers?: number;
 }
 
+/** 読み込んだ Worker をサイト（siteDir）ごとに 1 つずつ持つ */
 export class Runtime {
-  #entry: Entry | null = null;
+  #entries = new Map<string, Entry>();
   #options: RuntimeOptions;
   #timer: NodeJS.Timeout;
 
@@ -25,40 +27,58 @@ export class Runtime {
   }
 
   get loaded(): boolean {
-    return this.#entry !== null;
+    return this.#entries.size > 0;
+  }
+
+  get size(): number {
+    return this.#entries.size;
   }
 
   get(release: Release): Promise<LoadedWorker> {
-    if (this.#entry?.release.id === release.id) {
-      this.#entry.lastUsed = Date.now();
-      return this.#entry.worker;
+    const existing = this.#entries.get(release.siteDir);
+    if (existing?.release.id === release.id) {
+      existing.lastUsed = Date.now();
+      return existing.worker;
     }
     const entry: Entry = { release, worker: this.preload(release), lastUsed: Date.now() };
-    this.#entry = entry;
+    this.#set(entry);
     entry.worker.catch(() => {
-      if (this.#entry === entry) this.#entry = null;
+      if (this.#entries.get(release.siteDir) === entry) this.#entries.delete(release.siteDir);
     });
     return entry.worker;
   }
 
   preload(release: Release): Promise<LoadedWorker> {
-    return loadWorker(release, this.#options.siteDir, this.#options.cpuTimeoutMs);
+    return loadWorker(release, release.siteDir, this.#options.cpuTimeoutMs);
   }
 
   install(worker: LoadedWorker): void {
-    this.#entry = { release: worker.release, worker: Promise.resolve(worker), lastUsed: Date.now() };
+    this.#set({ release: worker.release, worker: Promise.resolve(worker), lastUsed: Date.now() });
   }
 
-  evict(): void {
-    this.#entry = null;
+  #set(entry: Entry): void {
+    this.#entries.set(entry.release.siteDir, entry);
+    const max = this.#options.maxWorkers ?? Infinity;
+    while (this.#entries.size > max) {
+      let oldest: [string, Entry] | null = null;
+      for (const e of this.#entries) if (e[1] !== entry && (!oldest || e[1].lastUsed < oldest[1].lastUsed)) oldest = e;
+      if (!oldest) break;
+      this.#entries.delete(oldest[0]);
+    }
+  }
+
+  /** siteDir を省略するとすべて捨てる */
+  evict(siteDir?: string): void {
+    if (siteDir === undefined) this.#entries.clear();
+    else this.#entries.delete(siteDir);
   }
 
   sweep(now = Date.now()): void {
-    if (this.#entry && now - this.#entry.lastUsed > this.#options.idleMs) this.#entry = null;
+    for (const [key, entry] of this.#entries) if (now - entry.lastUsed > this.#options.idleMs) this.#entries.delete(key);
   }
 
   close(): void {
     clearInterval(this.#timer);
-    this.#entry = null;
+    this.#entries.clear();
   }
 }

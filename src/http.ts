@@ -2,10 +2,21 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 
-export function externalOrigin(req: IncomingMessage, configured: string | undefined): string {
-  if (configured) return configured;
+/** リクエストされたホストのオリジン */
+export function requestOrigin(req: IncomingMessage): string {
   const proto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim() || "http";
   return `${proto}://${req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"}`;
+}
+
+/** ルートドメイン（管理画面）のオリジン。KANZUME_ORIGIN があればそれを使う */
+export function externalOrigin(req: IncomingMessage, configured: string | undefined): string {
+  return configured ?? requestOrigin(req);
+}
+
+/** サイトのオリジン（`https://<name>.<ルートドメイン>`） */
+export function siteOrigin(rootOrigin: string, name: string): string {
+  const url = new URL(rootOrigin);
+  return `${url.protocol}//${name}.${url.host}`;
 }
 
 export function clientIp(req: IncomingMessage): string {

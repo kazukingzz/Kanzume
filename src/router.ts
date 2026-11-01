@@ -2,14 +2,15 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { ADMIN_PATH } from "./admin/handler.ts";
 import { matchAsset, notFoundAsset, serveAssets } from "./bindings/assets.ts";
 import type { Config } from "./config.ts";
-import { clientIp, externalOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
+import { clientIp, requestOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
 import { Invocation, runInvocation, type Observability } from "./observability/events.ts";
 import type { Runtime } from "./runtime/runtime.ts";
-import type { Release, Store } from "./store.ts";
+import { matchHost, parentHost, type Sites } from "./sites.ts";
+import type { Release } from "./store.ts";
 
 interface Deps {
   config: Config;
-  store: Store;
+  sites: Sites;
   runtime: Runtime;
   handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void>;
   handleDeploy(req: IncomingMessage, res: ServerResponse): Promise<void>;
@@ -49,9 +50,12 @@ function workerFailure(release: Release, error: unknown): Response {
   return new Response("Worker threw exception", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-export function createRouter({ config, store, runtime, handleAdmin, handleDeploy, handleReport, observability }: Deps) {
+export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy, handleReport, observability }: Deps) {
+  const rootHost = config.origin ? new URL(config.origin).host : undefined;
+
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
-    const request = toWebRequest(req, `${externalOrigin(req, config.origin)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });
+    // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
+    const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });
     const invocation = new Invocation(release.manifest.name, release.id, request, `${pathname}${search}`);
     let waitUntil: Promise<unknown>[] = [];
 
@@ -104,12 +108,30 @@ export function createRouter({ config, store, runtime, handleAdmin, handleDeploy
     const search = q === -1 ? "" : raw.slice(q);
 
     if (pathname === "/_health") return sendText(res, 200, "ok");
+
+    const isAdmin = pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`);
+    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
+    const match = matchHost(host, (name) => sites.has(name), rootHost);
+    if (match.kind === "unknown") return sendText(res, 404, "Not Found");
+    if (match.kind === "site") {
+      // 管理画面はサイトと別のオリジン（ルートドメイン）だけで開く
+      if (isAdmin) {
+        const proto = requestOrigin(req).split("://")[0];
+        res.writeHead(302, { location: `${config.origin ?? `${proto}://${parentHost(host)}`}${ADMIN_PATH}` });
+        res.end();
+        return;
+      }
+      const release = sites.get(match.name)?.get();
+      if (!release) return sendText(res, 404, "Not Found");
+      return handleSite(req, res, release, pathname, search);
+    }
+
     if (pathname === "/_api/deploy") return handleDeploy(req, res);
     if (pathname === "/_api/deploy/report") return handleReport(req, res);
-    if (pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`)) return handleAdmin(req, res, pathname);
+    if (isAdmin) return handleAdmin(req, res, pathname);
     if (pathname.startsWith("/_api/")) return sendText(res, 404, "Not Found");
 
-    const release = store.get();
+    const release = sites.root ? sites.get(sites.root)?.get() : undefined;
     if (!release) {
       if (pathname !== "/") return sendText(res, 404, "Not Found");
       res.writeHead(200, { "content-type": "text/html; charset=utf-8" });

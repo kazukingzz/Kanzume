@@ -24,6 +24,8 @@ export interface Manifest {
 export interface Release {
   id: string;
   dir: string;
+  /** KV / R2 のデータを置くサイトのディレクトリ */
+  siteDir: string;
   deployedAt: string;
   manifest: Manifest;
 }
@@ -43,8 +45,8 @@ export class Store {
   #releasesDir: string;
   #current: Release | undefined;
 
-  constructor(dataDir: string) {
-    this.siteDir = path.join(dataDir, "site");
+  constructor(siteDir: string) {
+    this.siteDir = siteDir;
     this.#releasesDir = path.join(this.siteDir, "releases");
   }
 
@@ -72,7 +74,7 @@ export class Store {
       await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify({ deployedAt, manifest }));
       const dir = path.join(this.#releasesDir, id);
       await fs.rename(tmp, dir);
-      return { id, dir, deployedAt, manifest };
+      return { id, dir, siteDir: this.siteDir, deployedAt, manifest };
     } catch (err) {
       await fs.rm(tmp, { recursive: true, force: true });
       throw err;
@@ -100,7 +102,7 @@ export class Store {
   async #readRelease(id: string): Promise<Release> {
     const dir = path.join(this.#releasesDir, id);
     const { deployedAt, manifest } = JSON.parse(await fs.readFile(path.join(dir, MANIFEST_FILE), "utf8"));
-    return { id, dir, deployedAt, manifest };
+    return { id, dir, siteDir: this.siteDir, deployedAt, manifest };
   }
 
   async #prune(): Promise<void> {

@@ -13,6 +13,7 @@ export interface Config {
   maxUploadBytes: number;
   workerIdleMs: number;
   cpuTimeoutMs: number;
+  maxWorkers: number;
   logRetentionHours: number;
 }
 
@@ -32,6 +33,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     workerIdleMs: Number(env.KANZUME_WORKER_IDLE_SEC || 600) * 1000,
     // vm の timeout は実時間で測るので、0.1 CPU で混んでいるときに正常なリクエストを打ち切らないよう長めにする
     cpuTimeoutMs: Number(env.KANZUME_CPU_TIMEOUT_MS || 5000),
+    // すべてのサイトの Worker が同じプロセスに載るので、メモリが少ない環境に合わせて少なめにする
+    maxWorkers: Number(env.KANZUME_MAX_WORKERS || 5),
     logRetentionHours: Number(env.KANZUME_LOG_RETENTION_HOURS || 72),
   };
 }
