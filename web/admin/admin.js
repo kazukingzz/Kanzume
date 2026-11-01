@@ -223,12 +223,112 @@ for (const a of $("nav").querySelectorAll("a")) {
   });
 }
 
-$("site-select").addEventListener("change", (e) => {
-  const v = e.target.value;
+// ---------- サイトの切り替え（自作のドロップダウン） ----------
+
+const picker = { open: false, active: -1, items: [] };
+
+function chooseSite(value) {
+  closePicker(true);
   const tab = SITE_TABS[state.tab] ? state.tab : "deployments";
-  location.hash = v === NEW_SITE ? "#/new" : siteHash(tab, v);
+  const next = value === NEW_SITE ? "#/new" : siteHash(tab, value);
   setMenu(false);
+  if (location.hash === next) route();
+  else location.hash = next;
+}
+
+function renderPickerMenu() {
+  const menu = $("site-menu");
+  const selected = state.tab === "new" ? NEW_SITE : state.siteName;
+  picker.items = [...state.sites.sites.map((x) => x.name), NEW_SITE];
+  const option = (value, i, ...children) =>
+    h(
+      "li",
+      {
+        id: `site-option-${i}`,
+        role: "option",
+        class: `site-option${value === NEW_SITE ? " add" : ""}${i === picker.active ? " active" : ""}`,
+        "aria-selected": String(value === selected),
+        onpointermove: () => setActive(i),
+        onclick: () => chooseSite(value),
+      },
+      ...children,
+    );
+  const check = () => h("span", { html: '<svg class="check" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12l5 5L20 7"/></svg>' }).firstChild;
+  fill(
+    menu,
+    ...state.sites.sites.map((x, i) =>
+      option(
+        x.name,
+        i,
+        check(),
+        h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: x.name }), h("span", { class: "site-option-host", text: hostOf(x.url) })),
+        x.name === state.sites.root ? h("span", { class: "tag", text: "ルート" }) : null,
+      ),
+    ),
+    state.sites.sites.length ? h("li", { class: "site-menu-sep", role: "presentation" }) : h("li", { class: "site-menu-empty", role: "presentation", text: "サイトはまだありません" }),
+    option(NEW_SITE, picker.items.length - 1, check(), h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: "＋ サイトを追加" }))),
+  );
+  if (picker.active >= 0) menu.setAttribute("aria-activedescendant", `site-option-${picker.active}`);
+  else menu.removeAttribute("aria-activedescendant");
+}
+
+function setActive(i) {
+  if (i === picker.active) return;
+  picker.active = i;
+  const menu = $("site-menu");
+  for (const el of menu.querySelectorAll(".site-option")) el.classList.toggle("active", el.id === `site-option-${i}`);
+  menu.setAttribute("aria-activedescendant", `site-option-${i}`);
+  $(`site-option-${i}`)?.scrollIntoView({ block: "nearest" });
+}
+
+function openPicker() {
+  if (picker.open) return;
+  picker.open = true;
+  const selected = state.tab === "new" ? NEW_SITE : state.siteName;
+  picker.active = Math.max(0, [...state.sites.sites.map((x) => x.name), NEW_SITE].indexOf(selected));
+  renderPickerMenu();
+  $("site-menu").hidden = false;
+  $("site-trigger").setAttribute("aria-expanded", "true");
+  $("site-menu").focus();
+  $(`site-option-${picker.active}`)?.scrollIntoView({ block: "nearest" });
+}
+
+function closePicker(focusTrigger = false) {
+  if (!picker.open) return;
+  picker.open = false;
+  $("site-menu").hidden = true;
+  $("site-trigger").setAttribute("aria-expanded", "false");
+  if (focusTrigger) $("site-trigger").focus();
+}
+
+$("site-trigger").addEventListener("click", () => (picker.open ? closePicker(true) : openPicker()));
+$("site-trigger").addEventListener("keydown", (e) => {
+  if (["ArrowDown", "ArrowUp", "Enter", " "].includes(e.key)) {
+    e.preventDefault();
+    openPicker();
+  }
 });
+$("site-menu").addEventListener("keydown", (e) => {
+  const last = picker.items.length - 1;
+  const moves = { ArrowDown: Math.min(last, picker.active + 1), ArrowUp: Math.max(0, picker.active - 1), Home: 0, End: last };
+  if (e.key in moves) {
+    e.preventDefault();
+    setActive(moves[e.key]);
+  } else if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    if (picker.active >= 0) chooseSite(picker.items[picker.active]);
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closePicker(true);
+  } else if (e.key === "Tab") {
+    closePicker();
+  }
+});
+document.addEventListener("pointerdown", (e) => {
+  if (picker.open && !$("site-picker").contains(e.target)) closePicker();
+});
+
+const hostOf = (url) => url.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
 const siteApi = (path = "") => `/sites/${encodeURIComponent(state.siteName)}${path}`;
 
@@ -238,21 +338,12 @@ async function loadOverview() {
 }
 
 function renderShell() {
-  const names = state.sites.sites.map((x) => x.name);
-  const select = $("site-select");
-  fill(
-    select,
-    ...state.sites.sites.map((x) => h("option", { value: x.name, text: x.name === state.sites.root ? `${x.name}（ルート）` : x.name })),
-    h("option", { value: NEW_SITE, text: "＋ サイトを追加" }),
-  );
   const current = state.tab === "new" ? null : state.sites.sites.find((x) => x.name === state.siteName);
-  // 選択中の項目を選び直しても change が起きないので、サイトがないときは「＋ サイトを追加」を選択状態にしない
-  if (!current && state.tab !== "new") select.prepend(h("option", { value: "", disabled: true, text: names.length ? "サイトを選択" : "サイトがありません" }));
-  select.value = current ? current.name : state.tab === "new" ? NEW_SITE : "";
-  const link = $("site-link");
-  link.hidden = !current;
-  link.href = current?.url ?? "";
-  link.textContent = current ? current.url.replace(/^https?:\/\//, "").replace(/\/$/, "") : "";
+  const name = $("site-trigger-name");
+  name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : "サイトがありません";
+  name.classList.toggle("placeholder", !current && state.tab !== "new");
+  $("site-trigger-host").textContent = current ? hostOf(current.url) : "";
+  closePicker();
   for (const a of $("nav").querySelectorAll("a")) {
     a.classList.toggle("current", a.dataset.tab === state.tab);
     a.hidden = !!SITE_TABS[a.dataset.tab] && !current;

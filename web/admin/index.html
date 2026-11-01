@@ -68,10 +68,16 @@
         <span class="brand">Kanzume</span>
       </div>
     </div>
-    <div class="site-picker">
-      <label for="site-select">サイト</label>
-      <select id="site-select"></select>
-      <a class="site-link" id="site-link" target="_blank" rel="noopener" hidden></a>
+    <div class="site-picker" id="site-picker">
+      <span class="site-picker-label" id="site-picker-label">サイト</span>
+      <button class="site-trigger" id="site-trigger" type="button" aria-haspopup="listbox" aria-expanded="false" aria-labelledby="site-picker-label site-trigger">
+        <span class="site-trigger-text">
+          <span class="site-trigger-name" id="site-trigger-name"></span>
+          <span class="site-trigger-host" id="site-trigger-host"></span>
+        </span>
+        <svg class="chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="M7 10l5 5 5-5" /></svg>
+      </button>
+      <ul class="site-menu" id="site-menu" role="listbox" tabindex="-1" aria-labelledby="site-picker-label" hidden></ul>
     </div>
     <nav class="nav" id="nav">
       <a data-tab="deployments">
