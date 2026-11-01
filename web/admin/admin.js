@@ -1,6 +1,6 @@
 const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
-const TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", settings: "設定" };
+const TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", resources: "リソース", settings: "設定" };
 
 const state = {
   overview: null,
@@ -247,7 +247,7 @@ function route() {
   const main = $("main");
   main.className = "main" + (tab === "code" && state.site?.release ? " fill" : "");
   main.scrollTop = 0;
-  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, settings: viewSettings };
+  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, resources: viewResources, settings: viewSettings };
   views[tab](main).catch((err) => {
     main.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice", text: err.message })));
   });
@@ -653,6 +653,88 @@ function drawMetrics(body, m) {
   ro.observe(requests);
 }
 
+// ---------- resources ----------
+
+const SOURCE_NOTE = {
+  cgroup2: "コンテナ（cgroup v2）の値です。",
+  cgroup1: "コンテナ（cgroup v1）の値です。",
+  process: "cgroup を読めないため、Node プロセスとマシン全体の値を表示しています。",
+};
+
+const fmtPct = (v) => (v === null || v === undefined ? "–" : `${v < 10 ? v.toFixed(1) : Math.round(v)}%`);
+const fmtCores = (v) => (v === null || v === undefined ? "–" : v < 1 ? v.toFixed(3).replace(/0+$/, "").replace(/\.$/, "") : v.toFixed(2).replace(/\.?0+$/, ""));
+const fmtMiB = (n) => (n === null || n === undefined ? "–" : `${(n / 1024 / 1024).toFixed(n < 100 * 1024 * 1024 ? 1 : 0)} MiB`);
+
+async function viewResources(main) {
+  const page = h("div", { class: "page" });
+  const body = h("div");
+  page.append(pageHead("リソース"), body);
+  main.replaceChildren(page);
+  let draw = null;
+  const load = async () => {
+    const r = await api("/resources");
+    if (state.tab !== "resources") return;
+    draw = drawResources(body, r, draw);
+  };
+  await load();
+  state.timers.push(setInterval(() => load().catch(() => {}), 5000));
+}
+
+function drawResources(body, r, prev) {
+  const { cpu: cpuLimit, memory: memLimit } = r.limits;
+  const latest = r.samples.at(-1);
+  // 上限がなければ docker stats と同じく 1 コア = 100% で表す
+  const cpuPct = (v) => (v === null || v === undefined ? null : (v / (cpuLimit ?? 1)) * 100);
+  const buckets = r.samples.map((s) => ({ t: s.t, cpu: cpuPct(s.cpu), memory: s.memory / 1024 / 1024, heap: s.heap / 1024 / 1024 }));
+  const peakCpu = Math.max(0, ...buckets.map((b) => b.cpu ?? 0));
+  const peakMem = Math.max(0, ...r.samples.map((s) => s.memory));
+  const tile = (label, value, note) => h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
+  const xLabel = (v) => fmtTime(v);
+
+  if (!prev) {
+    const cpu = h("div", { class: "chart" });
+    const memory = h("div", { class: "chart" });
+    const tiles = h("div", { class: "tiles" });
+    const tables = [h("div"), h("div")];
+    body.replaceChildren(
+      tiles,
+      h(
+        "div",
+        { class: "charts" },
+        h("section", { class: "chart-card" }, h("h2", { text: "CPU" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), cpuLimit ? "上限に対する使用率" : "使用率（1 コア = 100%）")), cpu, tables[0]),
+        h("section", { class: "chart-card" }, h("h2", { text: "メモリ" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), "コンテナ"), h("span", {}, h("i", { class: "key line s2" }), "JS ヒープ")), memory, tables[1]),
+      ),
+      h("p", { class: "muted hint", text: `${SOURCE_NOTE[r.source]}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。` }),
+    );
+    prev = { cpu, memory, tiles, tables, data: null };
+    new ResizeObserver(() => prev.data && prev.render()).observe(cpu);
+  }
+  prev.data = { buckets, xLabel };
+  prev.render = () => {
+    const { buckets, xLabel } = prev.data;
+    if (!buckets.length) return;
+    lineChart(prev.cpu, buckets, [{ key: "cpu", label: "CPU", cls: "1" }], xLabel, fmtPct, "CPU 使用率の推移");
+    lineChart(prev.memory, buckets, [{ key: "memory", label: "コンテナ", cls: "1" }, { key: "heap", label: "JS ヒープ", cls: "2" }], xLabel, (v) => `${Math.round(v)} MiB`, "メモリ使用量の推移");
+  };
+  fill(
+    prev.tiles,
+    tile("CPU", fmtPct(cpuPct(latest?.cpu)), cpuLimit ? `${fmtCores(latest?.cpu)} / ${fmtCores(cpuLimit)} CPU` : `${fmtCores(latest?.cpu)} CPU（上限なし・1 コア = 100%）`),
+    tile("CPU（30 分の最大）", fmtPct(peakCpu), `${fmtCores((peakCpu / 100) * (cpuLimit ?? 1))} CPU`),
+    tile("メモリ", fmtMiB(latest?.memory), `${memLimit ? `上限 ${fmtMiB(memLimit)}（${fmtPct((latest.memory / memLimit) * 100)}）` : "上限なし"} · 30 分の最大 ${fmtMiB(peakMem)}`),
+    tile("Node プロセス", fmtMiB(latest?.rss), `JS ヒープ ${fmtMiB(latest?.heap)}`),
+  );
+  const keepOpen = (el) => el.querySelector("details")?.open;
+  const [t0, t1] = prev.tables;
+  const o0 = keepOpen(t0);
+  const o1 = keepOpen(t1);
+  fill(t0, tableView(["時刻", "CPU"], buckets.map((b) => [xLabel(b.t), fmtPct(b.cpu)])));
+  fill(t1, tableView(["時刻", "コンテナ", "JS ヒープ"], r.samples.map((s) => [xLabel(s.t), fmtMiB(s.memory), fmtMiB(s.heap)])));
+  if (o0) t0.querySelector("details").open = true;
+  if (o1) t1.querySelector("details").open = true;
+  prev.render();
+  return prev;
+}
+
 function tableView(headers, rows) {
   return h(
     "details",
@@ -756,7 +838,7 @@ function stackedColumns(el, buckets, series, xLabel, fmtY) {
   });
 }
 
-function lineChart(el, buckets, series, xLabel, fmtY) {
+function lineChart(el, buckets, series, xLabel, fmtY, label = "実行時間の推移") {
   const values = buckets.flatMap((b) => series.map((s) => b[s.key]).filter((v) => v !== null));
   const f = frame(el, niceScale(values.length ? Math.max(...values) : 1), fmtY, buckets, xLabel);
   const xOf = (i) => PAD.l + f.band * i + f.band / 2;
@@ -780,7 +862,7 @@ function lineChart(el, buckets, series, xLabel, fmtY) {
     marks += `<path class="line-${s.cls}" d="${d}"/>`;
     for (const i of dots) marks += `<circle class="dot-${s.cls}" cx="${xOf(i)}" cy="${f.y(buckets[i][s.key])}" r="4"/>`;
   }
-  el.innerHTML = `<svg viewBox="0 0 ${f.w} ${f.hgt}" role="img" aria-label="実行時間の推移">${f.svg}${marks}<line class="crosshair" visibility="hidden" y1="${PAD.t}" y2="${PAD.t + f.ih}" x1="0" x2="0"/><g class="focus"></g><rect class="hit" x="${PAD.l}" y="${PAD.t}" width="${f.iw}" height="${f.ih}"/></svg>`;
+  el.innerHTML = `<svg viewBox="0 0 ${f.w} ${f.hgt}" role="img" aria-label="${esc(label)}">${f.svg}${marks}<line class="crosshair" visibility="hidden" y1="${PAD.t}" y2="${PAD.t + f.ih}" x1="0" x2="0"/><g class="focus"></g><rect class="hit" x="${PAD.l}" y="${PAD.t}" width="${f.iw}" height="${f.ih}"/></svg>`;
   const svg = el.querySelector("svg");
   const cross = svg.querySelector(".crosshair");
   const focus = svg.querySelector(".focus");

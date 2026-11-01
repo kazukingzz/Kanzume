@@ -14,6 +14,7 @@ import { deployFromGitHub, type GitHubOptions } from "../deploy/github.ts";
 import type { DeployHistory } from "../deploy/history.ts";
 import { externalOrigin, readJson, sendJson, sendText } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
+import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Store } from "../store.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
@@ -38,11 +39,12 @@ interface Deps {
   runtime: Runtime;
   history: DeployHistory;
   observability: Observability;
+  resources: ResourceMonitor;
   deployer: Deployer;
   github?: Partial<GitHubOptions>;
 }
 
-export function createAdminHandler({ config, state, store, runtime, history, observability, deployer, github }: Deps) {
+export function createAdminHandler({ config, state, store, runtime, history, observability, resources, deployer, github }: Deps) {
   const challenges = new Challenges();
   let githubDeploying = false;
 
@@ -203,6 +205,8 @@ export function createAdminHandler({ config, state, store, runtime, history, obs
         members: state.credentials.length,
       });
     }
+
+    if (route === "GET /api/resources") return sendJson(res, 200, resources.snapshot());
 
     if (route === "POST /api/token/rotate") {
       return sendJson(res, 200, { token: await state.rotateDeployToken() });
