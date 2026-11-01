@@ -246,7 +246,9 @@ function renderShell() {
     h("option", { value: NEW_SITE, text: "＋ サイトを追加" }),
   );
   const current = state.tab === "new" ? null : state.sites.sites.find((x) => x.name === state.siteName);
-  select.value = current ? current.name : NEW_SITE;
+  // 選択中の項目を選び直しても change が起きないので、サイトがないときは「＋ サイトを追加」を選択状態にしない
+  if (!current && state.tab !== "new") select.prepend(h("option", { value: "", disabled: true, text: names.length ? "サイトを選択" : "サイトがありません" }));
+  select.value = current ? current.name : state.tab === "new" ? NEW_SITE : "";
   const link = $("site-link");
   link.hidden = !current;
   link.href = current?.url ?? "";
