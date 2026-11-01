@@ -95,6 +95,10 @@ test("ログインのセッションはサーバーを再起動しても残り�
   assert.deepEqual(await state.json(), { registered: false, authenticated: true });
   assert.match(state.headers.get("set-cookie") ?? "", /Max-Age=34560000/);
   assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 200);
+  const resources = await fetch(`${second.base}/_admin/kanzume/api/resources`, { headers: { cookie } });
+  assert.equal(resources.status, 200);
+  assert.ok(((await resources.json()) as { samples: unknown[] }).samples.length >= 1);
+  assert.equal((await fetch(`${second.base}/_admin/kanzume/api/resources`)).status, 401);
 
   const logout = await fetch(`${second.base}/_admin/kanzume/api/logout`, { method: "POST", headers: { cookie, origin: second.base } });
   assert.equal(logout.status, 200);

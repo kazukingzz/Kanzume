@@ -8,6 +8,7 @@ import { createDeployHandler } from "./deploy/handler.ts";
 import { DeployHistory } from "./deploy/history.ts";
 import { openMetaDb } from "./observability/db.ts";
 import { Observability } from "./observability/events.ts";
+import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
 import { Runtime } from "./runtime/runtime.ts";
 import { Store } from "./store.ts";
@@ -22,9 +23,10 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const metaDb = openMetaDb(config.dataDir);
   const history = new DeployHistory(metaDb);
   const observability = new Observability(metaDb, config.logRetentionHours);
+  const resources = new ResourceMonitor();
 
   const deployer = new Deployer(store, runtime, history);
-  const deps = { config, state, store, runtime, history, observability, deployer, github: options.github };
+  const deps = { config, state, store, runtime, history, observability, resources, deployer, github: options.github };
   const { handleDeploy, handleReport } = createDeployHandler(deps);
   const handle = createRouter({
     ...deps,
@@ -47,9 +49,10 @@ export async function createServer(config: Config, options: { github?: Partial<G
   server.on("close", () => {
     runtime.close();
     observability.close();
+    resources.close();
     metaDb.close();
   });
-  return { server, store, state, runtime, history, observability, deployer };
+  return { server, store, state, runtime, history, observability, resources, deployer };
 }
 
 if (import.meta.main) {
