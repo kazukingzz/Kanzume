@@ -77,9 +77,11 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
 test("KANZUME_ORIGIN を設定すると、存在しないサブドメインは 404 になる", async (t) => {
   const { deploy, site } = await start(t, { KANZUME_ORIGIN: "https://tekitou.app" });
   const res = await deploy(counter(t, "blog"));
-  assert.equal(((await res.json()) as { url: string }).url, "https://blog.tekitou.app/");
+  assert.equal(((await res.json()) as { url: string }).url, "https://tekitou.app/", "ルートで配信するサイトはルートの URL を返す");
+  const shop = await deploy(counter(t, "shop"));
+  assert.equal(((await shop.json()) as { url: string }).url, "https://shop.tekitou.app/");
   assert.equal((await site("blog.tekitou.app")).status, 200);
-  assert.equal((await site("shop.tekitou.app")).status, 404);
+  assert.equal((await site("nope.tekitou.app")).status, 404);
   assert.equal((await site("blog.tekitou.app", "/_admin/kanzume")).headers.get("location"), "https://tekitou.app/_admin/kanzume");
 });
 
@@ -104,6 +106,10 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   ]);
   assert.equal(((await (await api("/sites/shop/events")).json()) as { events: unknown[] }).events.length, 2);
   assert.equal((await api("/sites/nope")).status, 404);
+  assert.deepEqual(await (await api("/samples")).json(), {
+    worker: "https://github.com/kazukingzz/Kanzume/tree/main/examples/worker",
+    portfolio: "https://github.com/kazukingzz/Kanzume/tree/main/examples/portfolio",
+  });
 
   assert.equal((await api("/root-site", { method: "POST", body: JSON.stringify({ name: "shop" }) })).status, 200);
   assert.equal(sites.root, "shop");

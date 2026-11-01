@@ -11,7 +11,7 @@ import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { deployFromGitHub, type GitHubOptions } from "../deploy/github.ts";
 import type { DeployHistory } from "../deploy/history.ts";
-import { externalOrigin, readJson, sendJson, sendText, siteOrigin } from "../http.ts";
+import { externalOrigin, readJson, sendJson, sendText } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -231,17 +231,18 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
       return ok ? sendJson(res, 200, { name }) : sendJson(res, 404, { error: "パスキーが見つかりません" });
     }
 
+    if (route === "GET /api/samples") {
+      const sample = (dir: string) => `${config.samplesRepo}/examples/${dir}`;
+      return sendJson(res, 200, { worker: sample("worker"), portfolio: sample("portfolio") });
+    }
+
     if (route === "GET /api/resources") return sendJson(res, 200, resources.snapshot());
 
     if (route === "POST /api/token/rotate") {
       return sendJson(res, 200, { token: await state.rotateDeployToken() });
     }
 
-    // ルートドメインで配信しているサイトは、ルートの URL を主に見せる（サブドメインは補足）
-    const siteUrls = (name: string) => {
-      const subdomainUrl = `${siteOrigin(origin, name)}/`;
-      return { url: sites.root === name ? `${origin}/` : subdomainUrl, subdomainUrl };
-    };
+    const siteUrls = (name: string) => sites.urls(origin, name);
 
     if (route === "GET /api/sites") {
       const listed = sites.list();
@@ -284,7 +285,7 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
         const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github });
         if (!result.ok) return sendJson(res, 400, { error: result.error });
         const name = result.release.manifest.name;
-        return sendJson(res, 200, { site: name, release: result.release.id, url: `${siteOrigin(origin, name)}/` });
+        return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url });
       } finally {
         githubDeploying = false;
       }

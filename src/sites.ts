@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { closeSiteDb } from "./bindings/db.ts";
+import { siteOrigin } from "./http.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 
 const ROOT_FILE = "_root";
@@ -64,6 +65,12 @@ export class Sites {
     closeSiteDb(store.siteDir);
     await fs.rm(store.siteDir, { recursive: true, force: true });
     if (this.#root === name) await this.setRoot(null);
+  }
+
+  /** サイトの URL。ルートドメインで配信しているサイトはルートの URL を主にする（サブドメインは補足） */
+  urls(rootOrigin: string, name: string): { url: string; subdomainUrl: string } {
+    const subdomainUrl = `${siteOrigin(rootOrigin, name)}/`;
+    return { url: this.#root === name ? `${rootOrigin}/` : subdomainUrl, subdomainUrl };
   }
 
   /** ルートドメイン（サブドメインなし）で配信するサイト */

@@ -242,10 +242,12 @@ function chooseSite(value) {
   else location.hash = next;
 }
 
+const pickerItems = () => [...state.sites.sites.map((x) => x.name), NEW_SITE];
+
 function renderPickerMenu() {
   const menu = $("site-menu");
   const selected = state.tab === "new" ? NEW_SITE : state.siteName;
-  picker.items = [...state.sites.sites.map((x) => x.name), NEW_SITE];
+  picker.items = pickerItems();
   const option = (value, i, ...children) =>
     h(
       "li",
@@ -295,7 +297,7 @@ function openPicker() {
   if (picker.open) return;
   picker.open = true;
   const selected = state.tab === "new" ? NEW_SITE : state.siteName;
-  picker.active = Math.max(0, [...state.sites.sites.map((x) => x.name), NEW_SITE].indexOf(selected));
+  picker.active = Math.max(0, pickerItems().indexOf(selected));
   renderPickerMenu();
   $("site-menu").hidden = false;
   $("site-trigger").setAttribute("aria-expanded", "true");
@@ -488,33 +490,36 @@ function bindingTags(release) {
   ].filter(Boolean);
 }
 
-const SAMPLE_BASE = "https://github.com/kazukingzz/Kanzume/tree/main/examples";
+// url はサーバーの GET /api/samples から埋める（KANZUME_SAMPLES_REPO で fork 先に変えられる）
 const SAMPLES = [
   {
     name: "kanzume-example",
     title: "Kanzume の紹介ページ",
     description: "KV のカウンター・R2 へのアップロード・vars を使った、機能の一覧を兼ねたページ。",
-    url: `${SAMPLE_BASE}/worker`,
+    key: "worker",
     tags: ["Worker", "Assets", "KV", "R2"],
   },
   {
     name: "portfolio",
     title: "ポートフォリオ",
     description: "作品の「いいね」と、お問い合わせフォームのメッセージを KV に保存する個人サイト。",
-    url: `${SAMPLE_BASE}/portfolio`,
+    key: "portfolio",
     tags: ["Worker", "Assets", "KV"],
   },
 ];
 
 async function deployGitHub(url, onError) {
+  let site;
   try {
-    const { site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ url }) });
-    state.github = { url: "", error: "" };
-    await loadOverview();
-    location.hash = siteHash("deployments", site);
+    ({ site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ url }) }));
   } catch (err) {
     onError(err.message);
+    return;
   }
+  // デプロイは成功しているので、一覧の再読み込みに失敗してもエラーにしない
+  state.github = { url: "", error: "" };
+  await loadOverview().catch(() => {});
+  location.hash = siteHash("deployments", site);
 }
 
 function busy(button, label) {
@@ -522,11 +527,12 @@ function busy(button, label) {
   button.textContent = label;
 }
 
-function samplesCard() {
+function samplesCard(urls) {
   const error = h("div", { class: "error" });
   const deployed = new Set(state.sites.sites.map((x) => x.name));
   const buttons = [];
-  const items = SAMPLES.map((sample) => {
+  const items = SAMPLES.map((s) => {
+    const sample = { ...s, url: urls[s.key] };
     const exists = deployed.has(sample.name);
     const button = h("button", { class: exists ? "" : "primary", text: exists ? "再デプロイ" : "デプロイ" });
     buttons.push(button);
@@ -584,7 +590,7 @@ function githubCard() {
     });
   };
   button.addEventListener("click", run);
-  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
+  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && !button.disabled && run());
   return h(
     "section",
     { class: "card" },
@@ -1501,7 +1507,7 @@ async function viewSite(main) {
 async function viewNewSite(main) {
   const page = h("div", { class: "page" }, pageHead("サイトを追加"));
   page.append(
-    samplesCard(),
+    samplesCard(await api("/samples")),
     githubCard(),
     h(
       "section",

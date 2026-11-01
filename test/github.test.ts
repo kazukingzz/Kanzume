@@ -134,6 +134,17 @@ test("examples/portfolio を GitHub の URL からデプロイでき、いいね
   assert.equal((await post({ name: "テスト", email: "a@example.com", message: "こんにちは" })).status, 200);
   assert.equal((await post({ name: "テスト", email: "not-an-email", message: "x" })).status, 400);
   assert.equal((await call("/api/unknown")).status, 404);
+
+  await Promise.all(Array.from({ length: 10 }, () => call("/api/likes/tide", { method: "POST" })));
+  assert.equal(((await (await call("/api/likes")).json()) as Record<string, number>).tide, 10, "同時に押しても数え漏れない");
+
+  const from = (ip: string) => (body: unknown) =>
+    call("/api/contact", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": ip }, body: JSON.stringify(body) });
+  const spam = from("203.0.113.9");
+  const ok = { name: "x", email: "x@example.com", message: "y" };
+  for (let i = 0; i < 5; i++) assert.equal((await spam(ok)).status, 200);
+  assert.equal((await spam(ok)).status, 429, "同じ接続元からは 1 時間に 5 件まで");
+  assert.equal((await from("203.0.113.10")(ok)).status, 200, "別の接続元は送れる");
 });
 
 test("スラッシュを含むブランチ名とリポジトリのトップを解決できる", async (t) => {

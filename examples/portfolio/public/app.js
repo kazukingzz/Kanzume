@@ -33,18 +33,24 @@ async function setupLikes() {
     const count = button.querySelector(".count");
     count.textContent = slug in counts ? counts[slug] : "–";
     button.setAttribute("aria-pressed", String(liked.has(slug)));
+    let sending = false;
     button.addEventListener("click", async () => {
-      if (liked.has(slug)) return;
-      liked.add(slug);
-      saveLiked(liked);
+      if (liked.has(slug) || sending) return;
+      sending = true;
       button.setAttribute("aria-pressed", "true");
       button.classList.add("pop");
       setTimeout(() => button.classList.remove("pop"), 200);
       try {
         const res = await fetch(`/api/likes/${slug}`, { method: "POST" });
-        if (res.ok) count.textContent = (await res.json()).count;
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        count.textContent = (await res.json()).count;
+        // 送れたときだけ覚える（失敗したらもう一度押せるようにする）
+        liked.add(slug);
+        saveLiked(liked);
       } catch {
-        // 通信に失敗しても表示はそのまま
+        button.setAttribute("aria-pressed", "false");
+      } finally {
+        sending = false;
       }
     });
   }

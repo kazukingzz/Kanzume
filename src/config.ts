@@ -14,6 +14,8 @@ export interface Config {
   workerIdleMs: number;
   cpuTimeoutMs: number;
   maxWorkers: number;
+  /** 管理画面の「サンプルからデプロイ」が使う examples の場所（fork したら自分のリポジトリにする） */
+  samplesRepo: string;
   logRetentionHours: number;
 }
 
@@ -35,6 +37,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     cpuTimeoutMs: Number(env.KANZUME_CPU_TIMEOUT_MS || 5000),
     // すべてのサイトの Worker が同じプロセスに載るので、メモリが少ない環境に合わせて少なめにする
     maxWorkers: Number(env.KANZUME_MAX_WORKERS || 5),
+    samplesRepo: (env.KANZUME_SAMPLES_REPO || "https://github.com/kazukingzz/Kanzume/tree/main").replace(/\/+$/, ""),
     logRetentionHours: Number(env.KANZUME_LOG_RETENTION_HOURS || 72),
   };
 }

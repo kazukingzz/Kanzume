@@ -54,7 +54,7 @@ test("静的サイトをデプロイするとルートで配信される", async
   assert.equal(res.status, 200);
   const json = (await res.json()) as { url: string; name: string };
   assert.equal(json.name, "site");
-  assert.equal(json.url, `${base.replace("://", "://site.")}/`);
+  assert.equal(json.url, `${base}/`, "最初のサイトはルートで配信するのでルートの URL");
 
   assert.equal(await (await fetch(`${base}/`)).text(), "<h1>site</h1>");
   assert.equal(await (await fetch(`${base}/about`)).text(), "about");

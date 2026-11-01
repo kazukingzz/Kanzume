@@ -2,7 +2,8 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { gunzipSync } from "node:zlib";
 import type { AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
-import { externalOrigin, readBody, readJson, sendJson, siteOrigin } from "../http.ts";
+import { externalOrigin, readBody, readJson, sendJson } from "../http.ts";
+import type { Sites } from "../sites.ts";
 import type { UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer } from "./deployer.ts";
 import { sanitizeSource } from "./history.ts";
@@ -11,6 +12,7 @@ import { readTar, TarError } from "./tar.ts";
 interface Deps {
   config: Config;
   state: AdminState;
+  sites: Sites;
   deployer: Deployer;
 }
 
@@ -32,7 +34,7 @@ function parseJson(file: UploadedFile | undefined): unknown {
   }
 }
 
-export function createDeployHandler({ config, state, deployer }: Deps) {
+export function createDeployHandler({ config, state, sites, deployer }: Deps) {
   async function handleDeploy(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
     if (!authorized(req, state)) return sendJson(res, 401, { error: "Token が違います" });
@@ -59,7 +61,7 @@ export function createDeployHandler({ config, state, deployer }: Deps) {
       log,
     });
     if (!result.ok) return sendJson(res, 400, { error: result.error });
-    sendJson(res, 200, { name: result.release.manifest.name, release: result.release.id, url: `${siteOrigin(externalOrigin(req, config.origin), result.release.manifest.name)}/` });
+    sendJson(res, 200, { name: result.release.manifest.name, release: result.release.id, url: sites.urls(externalOrigin(req, config.origin), result.release.manifest.name).url });
   }
 
   async function handleReport(req: IncomingMessage, res: ServerResponse): Promise<void> {
