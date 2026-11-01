@@ -44,11 +44,17 @@ function fill(el, ...children) {
 }
 
 async function api(path, options = {}) {
-  const res = await fetch(BASE + "/api" + path, {
-    ...options,
-    headers: { "content-type": "application/json", ...(options.headers || {}) },
-    credentials: "same-origin",
-  });
+  let res;
+  try {
+    res = await fetch(BASE + "/api" + path, {
+      ...options,
+      headers: { "content-type": "application/json", ...(options.headers || {}) },
+      credentials: "same-origin",
+    });
+  } catch {
+    // 「Failed to fetch」はサーバーから応答がなかったとき（再起動中・ネットワークの切断）に出る
+    throw new Error("サーバーに接続できませんでした。サーバーが再起動中かもしれません。しばらく待ってからページを再読み込みしてください。");
+  }
   const data = await res.json().catch(() => ({}));
   if (res.status === 401 && !path.startsWith("/state")) {
     showAuth("login");
