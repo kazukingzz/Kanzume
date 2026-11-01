@@ -133,11 +133,13 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 .site-trigger .chevron { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--muted); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.15s; }
 .site-trigger[aria-expanded="true"] .chevron { transform: rotate(180deg); }
 .site-menu {
-  position: absolute; top: calc(100% + 6px); left: 6px; right: 6px; z-index: 30; margin: 0; padding: 4px; list-style: none;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.14);
-  max-height: min(60vh, 360px); overflow: auto; outline: none;
+  /* サイドバーより広げて、メイン側にはみ出してよい */
+  position: absolute; top: calc(100% + 6px); left: 6px; z-index: 30; margin: 0; padding: 6px; list-style: none;
+  width: max(calc(100% - 12px), 340px); max-width: calc(100vw - 32px);
+  background: var(--panel); border: 1px solid var(--line); border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
+  max-height: min(70vh, 480px); overflow: auto; outline: none;
 }
-.site-option { display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 7px; cursor: pointer; }
+.site-option { display: flex; align-items: center; gap: 10px; padding: 9px 12px; border-radius: 8px; cursor: pointer; }
 .site-option.active { background: var(--hover); }
 .site-option[aria-selected="true"] { font-weight: 600; }
 .site-option .check { width: 16px; height: 16px; flex: none; fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; visibility: hidden; }
