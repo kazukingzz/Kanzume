@@ -2,23 +2,16 @@
 
 Workers + KV + R2 だけの小さなホスティング。ハッカソン向け。
 
-Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。Render の無料プラン（512MB RAM / 0.1 CPU）で動かす想定です。サイトは 1 つで、ルート（`/`）で配信します。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
+Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。サイトは 1 つで、ルート（`/`）で配信します。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
 
 ## 立てる
 
-**Render**: このリポジトリを fork し、**New > Blueprint** で選ぶ → `https://<サービス名>.onrender.com/_admin/kanzume` を開き、Environment の `KANZUME_SETUP_TOKEN` でパスキーを登録。2 人目以降は「サインアップ」で設定に表示されるチーム ID を入力します。
-
-> [!WARNING]
-> Render の無料プランは 15 分アクセスがないとスリープし、ディスクが消えます（サイト・KV / R2・パスキー・Token すべて）。
-
-**自前のサーバー**:
-
 ```sh
 docker build -t kanzume .
-docker run -d -p 8080:8080 -v kanzume-data:/data -e KANZUME_ORIGIN=https://kanzume.example.com kanzume
+docker run -d -p 8080:8080 -v kanzume-data:/data kanzume
 ```
 
-`KANZUME_SETUP_TOKEN` を渡さなければ起動ログに出ます。
+`/_admin/kanzume` を開き、起動ログに出るセットアップトークンでパスキーを登録します。
 
 ## デプロイする
 
