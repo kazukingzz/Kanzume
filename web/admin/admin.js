@@ -261,8 +261,12 @@ function renderPickerMenu() {
         x.name,
         i,
         check(),
-        h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: x.name }), h("span", { class: "site-option-host", text: hostOf(x.url) })),
-        x.name === state.sites.root ? h("span", { class: "tag", text: "ルート" }) : null,
+        h(
+          "span",
+          { class: "site-option-text" },
+          h("span", { class: "site-option-name", text: x.name }),
+          h("span", { class: "site-option-host" }, x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null, hostOf(x.url)),
+        ),
       ),
     ),
     state.sites.sites.length ? h("li", { class: "site-menu-sep", role: "presentation" }) : h("li", { class: "site-menu-empty", role: "presentation", text: "サイトはまだありません" }),
@@ -419,6 +423,12 @@ function commitLink(source) {
 
 // ---------- デプロイ ----------
 
+function siteUrlCell(detail) {
+  const link = (url) => h("a", { href: url, target: "_blank", rel: "noopener", text: url });
+  if (detail.url === detail.subdomainUrl) return link(detail.url);
+  return h("div", { class: "urls" }, link(detail.url), h("span", { class: "muted" }, "サブドメイン: ", link(detail.subdomainUrl)));
+}
+
 async function loadSite() {
   state.site = await api(siteApi());
   return state.site;
@@ -440,7 +450,7 @@ async function viewDeployments(main) {
     const rows = [
       ["名前", detail.release.name],
       ["デプロイ日時", `${fmtDate(detail.release.deployedAt)}（${fmtAgo(detail.release.deployedAt)}）`],
-      ["URL", h("a", { href: detail.url, target: "_blank", rel: "noopener", text: detail.url })],
+      ["URL", siteUrlCell(detail)],
       ["リリース", h("span", { class: "mono", text: detail.release.id })],
       s.commitMessage || s.sha ? ["コミット", h("span", {}, commitLink(s), s.commitMessage ? ` ${s.commitMessage}` : "")] : null,
       s.ref ? ["ブランチ", s.ref] : null,
@@ -1407,7 +1417,7 @@ async function viewSite(main) {
   const page = h("div", { class: "page" }, pageHead("サイト設定"));
   const rows = [
     ["名前", r.name],
-    ["URL", h("a", { href: detail.url, target: "_blank", rel: "noopener", text: detail.url })],
+    ["URL", siteUrlCell(detail)],
     ["Worker", r.main ? `worker/${r.main}` : "なし（静的サイト）"],
     ["compatibility_date", r.compatibilityDate ?? "–"],
     ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],

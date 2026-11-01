@@ -237,6 +237,12 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
       return sendJson(res, 200, { token: await state.rotateDeployToken() });
     }
 
+    // ルートドメインで配信しているサイトは、ルートの URL を主に見せる（サブドメインは補足）
+    const siteUrls = (name: string) => {
+      const subdomainUrl = `${siteOrigin(origin, name)}/`;
+      return { url: sites.root === name ? `${origin}/` : subdomainUrl, subdomainUrl };
+    };
+
     if (route === "GET /api/sites") {
       const listed = sites.list();
       const names = new Set(listed.map((x) => x.name));
@@ -244,7 +250,7 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
         root: sites.root,
         sites: listed.map(({ name, store }) => {
           const release = store.get()!;
-          return { name, url: `${siteOrigin(origin, name)}/`, deployedAt: release.deployedAt, latest: history.latest(name) };
+          return { name, ...siteUrls(name), deployedAt: release.deployedAt, latest: history.latest(name) };
         }),
         // 初回のデプロイに失敗して、まだ一覧に出ないサイトのデプロイ
         pending: history
@@ -296,7 +302,7 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
       const m = release.manifest;
       return sendJson(res, 200, {
         name,
-        url: `${siteOrigin(origin, name)}/`,
+        ...siteUrls(name),
         root: sites.root === name,
         release: {
           id: release.id,
