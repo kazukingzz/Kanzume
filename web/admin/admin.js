@@ -1675,7 +1675,7 @@ async function viewRepo(main, name) {
   }
 
   // トークン
-  const tokenList = h("div", { class: "list" });
+  const tokenList = h("div", { class: "list token-list" });
   const issued = h("div");
   const renderTokens = (tokens) => {
     fill(
@@ -1700,11 +1700,12 @@ async function viewRepo(main, name) {
     if (!tokens.length) tokenList.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
   };
   renderTokens(repo.tokens);
-  const scope = h("select", { "aria-label": "権限" }, h("option", { value: "write", text: "write（push もできる）" }), h("option", { value: "read", text: "read（clone だけ）" }));
-  const ttl = h("select", { "aria-label": "期限" }, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
+  const scope = h("select", {}, h("option", { value: "write", text: "write（push もできる）" }), h("option", { value: "read", text: "read（clone だけ）" }));
+  const ttl = h("select", {}, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
   ttl.value = "86400";
   const issueError = h("div", { class: "error" });
   const issue = h("button", {
+    class: "primary",
     text: "発行",
     onclick: async () => {
       issueError.textContent = "";
@@ -1732,7 +1733,13 @@ async function viewRepo(main, name) {
       { class: "card" },
       h("h2", { text: "このリポジトリ用のトークン" }),
       h("p", { class: "muted", text: "このリポジトリだけに使えるトークンです。AI エージェントや CI に渡すときは、権限と期限を絞ったものを発行してください。" }),
-      h("div", { class: "row wrap" }, scope, ttl, issue),
+      h(
+        "div",
+        { class: "token-form" },
+        h("label", { class: "token-field grow" }, h("span", { text: "権限" }), scope),
+        h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl),
+        issue,
+      ),
       issueError,
       issued,
       tokenList,
