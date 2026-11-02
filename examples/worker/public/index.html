@@ -29,7 +29,6 @@
       <p class="lead">Kanzume は、Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Render の無料プランに置けて、GitHub Actions からは URL と Token の 2 つだけでデプロイできます。</p>
       <div class="actions">
         <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
-        <a class="button" href="https://render.com/deploy?repo=https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">Render に立てる</a>
       </div>
 
       <div class="live" aria-live="polite">
@@ -72,7 +71,7 @@
       <ol class="steps">
         <li>
           <h3>Kanzume を立てる</h3>
-          <p>リポジトリを fork して、Render の <b>New &gt; Blueprint</b> で選ぶだけです（<code>render.yaml</code> が Docker の無料 Web Service を作ります）。自分のサーバーなら Docker で動かせます。</p>
+          <p>Docker で動かします。Render などの Docker が動くサービスにもそのまま置けます。</p>
           <pre><code>docker build -t kanzume .
 docker run -d -p 8080:8080 -v kanzume-data:/data kanzume</code></pre>
         </li>
