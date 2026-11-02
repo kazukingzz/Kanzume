@@ -2,7 +2,7 @@ const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
 // サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
 const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", site: "サイト設定" };
-const GLOBAL_TABS = { new: "サイトを追加", resources: "リソース", settings: "設定" };
+const GLOBAL_TABS = { new: "サイトを追加", repos: "リポジトリ", resources: "リソース", settings: "設定" };
 const NEW_SITE = "__new";
 
 const state = {
@@ -372,6 +372,8 @@ async function enterApp() {
 
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+  // #/repos と #/repos/<名前> は全体のタブ
+  if (parts[0] === "repos") return { site: null, tab: "repos", repo: parts[1] ?? null };
   if (parts.length >= 2) return { site: parts[0], tab: parts[1] };
   return { site: null, tab: parts[0] ?? "" };
 }
@@ -380,7 +382,8 @@ function route() {
   if ($("app").hidden) return;
   clearTimers();
   const names = state.sites.sites.map((x) => x.name);
-  let { site, tab } = parseHash();
+  let { site, tab, repo } = parseHash();
+  state.repo = repo ?? null;
   if (site && SITE_TABS[tab] && names.includes(site)) {
     state.siteName = site;
   } else if (GLOBAL_TABS[tab]) {
@@ -396,7 +399,7 @@ function route() {
   const main = $("main");
   main.className = "main" + (tab === "code" ? " fill" : "");
   main.scrollTop = 0;
-  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, site: viewSite, new: viewNewSite, resources: viewResources, settings: viewSettings };
+  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, site: viewSite, new: viewNewSite, repos: viewRepos, resources: viewResources, settings: viewSettings };
   views[tab](main).catch((err) => {
     main.className = "main";
     main.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice", text: err.message })));
@@ -732,6 +735,10 @@ async function showFile(viewer, group, path) {
   viewer.replaceChildren(h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })), h("div", { class: "placeholder", text: "読み込み中…" }));
   const file = await api(siteApi(`/file?group=${group}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
   if (state.code.group !== group || state.code.path !== path) return;
+  renderFile(viewer, path, file, group === "assets" && state.site ? state.site.url + path : null);
+}
+
+function renderFile(viewer, path, file, publicUrl = null) {
   const head = h(
     "div",
     { class: "viewer-head" },
@@ -743,7 +750,7 @@ async function showFile(viewer, group, path) {
   if (file.binary) {
     return viewer.replaceChildren(
       head,
-      h("div", { class: "placeholder" }, "バイナリファイルのため表示できません。", group === "assets" ? h("a", { href: state.site.url + path, target: "_blank", rel: "noopener", text: " 公開 URL で開く ↗" }) : null),
+      h("div", { class: "placeholder" }, "バイナリファイルのため表示できません。", publicUrl ? h("a", { href: publicUrl, target: "_blank", rel: "noopener", text: " 公開 URL で開く ↗" }) : null),
     );
   }
   const text = file.text;
@@ -1492,6 +1499,257 @@ async function viewSite(main) {
           await loadOverview();
           const next = state.sites.root ?? state.sites.sites[0]?.name;
           location.hash = next ? siteHash("deployments", next) : "#/new";
+        } catch (err) {
+          delError.textContent = err.message;
+        }
+      }),
+      delError,
+    ),
+  );
+  main.replaceChildren(page);
+}
+
+// ---------- リポジトリ ----------
+
+async function viewRepos(main) {
+  if (state.repo) return viewRepo(main, state.repo);
+  const { repos } = await api("/repos");
+  const page = h("div", { class: "page" }, pageHead("リポジトリ"));
+  const input = h("input", { placeholder: "my-app", spellcheck: "false", "aria-label": "リポジトリの名前", autocomplete: "off" });
+  const error = h("div", { class: "error" });
+  const create = h("button", { class: "primary", text: "作成" });
+  const run = async () => {
+    if (create.disabled) return;
+    error.textContent = "";
+    create.disabled = true;
+    try {
+      const repo = await api("/repos", { method: "POST", body: JSON.stringify({ name: input.value.trim() }) });
+      location.hash = `#/repos/${encodeURIComponent(repo.name)}`;
+    } catch (err) {
+      error.textContent = err.message;
+      create.disabled = false;
+    }
+  };
+  create.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
+  page.append(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "新しいリポジトリ" }),
+      h("p", { class: "muted", text: "Kanzume を Git のリモートとして使えます。デフォルトブランチ（main）に push すると、wrangler の設定どおりにデプロイします。設定の name がサイト名（サブドメイン）になります。" }),
+      h("div", { class: "row" }, h("div", { class: "grow" }, input), create),
+      error,
+    ),
+  );
+  page.append(h("div", { class: "section-head" }, h("h2", { text: "リポジトリ一覧" }), h("span", { class: "muted", text: `${repos.length} 件` })));
+  const list = h("div", { class: "list" });
+  for (const repo of repos) {
+    list.append(
+      h(
+        "div",
+        { class: "list-item" },
+        h(
+          "a",
+          { class: "list-row repo-row", href: `#/repos/${encodeURIComponent(repo.name)}` },
+          h("div", { class: "grow" }, h("div", { class: "title mono", text: repo.name }), h("div", { class: "sub mono", text: repo.cloneUrl })),
+          h(
+            "div",
+            { class: "side" },
+            repo.site ? h("span", { class: "tag", text: `→ ${repo.site}` }) : null,
+            h("div", { text: repo.lastPush ? `push ${fmtAgo(repo.lastPush)}` : "まだ push されていません" }),
+            h("div", { class: "muted", text: fmtBytes(repo.size) }),
+          ),
+        ),
+      ),
+    );
+  }
+  if (!repos.length) list.append(h("div", { class: "empty", text: "リポジトリはまだありません" }));
+  page.append(list);
+  main.replaceChildren(page);
+}
+
+const TTL_OPTIONS = [
+  ["3600", "1 時間"],
+  ["86400", "1 日"],
+  ["2592000", "30 日"],
+  ["", "無期限"],
+];
+
+async function viewRepo(main, name) {
+  const repo = await api(`/repos/${encodeURIComponent(name)}`);
+  const repoApi = (path) => `/repos/${encodeURIComponent(name)}${path}`;
+  const page = h("div", { class: "page" });
+  page.append(
+    h(
+      "div",
+      { class: "page-head" },
+      h("a", { class: "back", href: "#/repos", text: "← リポジトリ" }),
+      h("h1", { class: "mono", text: name }),
+      h("span", { class: "spacer" }),
+      repo.site ? h("a", { class: "open", href: siteHash("deployments", repo.site), text: `サイト ${repo.site} →` }) : null,
+    ),
+  );
+
+  const commands = `git remote add kanzume ${repo.cloneUrl}\ngit push kanzume ${repo.defaultBranch}`;
+  page.append(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "push してデプロイ" }),
+      h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
+      h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
+      h("pre", { class: "log", text: commands }),
+      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには設定の KANZUME_TOKEN か、下で発行したトークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+    ),
+  );
+
+  // 中身（ブランチ・コミット・ファイル）
+  if (repo.refs.length) {
+    const branch = h("select", { "aria-label": "ブランチ" }, ...repo.refs.map((r) => h("option", { value: r.branch, text: r.branch })));
+    const current = repo.refs.some((r) => r.branch === state.repoRef) ? state.repoRef : repo.defaultBranch;
+    branch.value = repo.refs.some((r) => r.branch === current) ? current : repo.refs[0].branch;
+    const commits = h("div", { class: "list repo-commits" });
+    const tree = h("nav", { class: "tree" });
+    const mobile = h("select", { class: "mobile-file", "aria-label": "ファイル" });
+    const viewer = h("div", { class: "viewer" });
+    let selected = null;
+    const showRepoFile = async (path, buttons) => {
+      selected = path;
+      for (const b of buttons) b.classList.toggle("current", b.dataset.path === path);
+      mobile.value = path;
+      viewer.replaceChildren(h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })), h("div", { class: "placeholder", text: "読み込み中…" }));
+      const file = await api(repoApi(`/blob?ref=${encodeURIComponent(branch.value)}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
+      if (selected === path) renderFile(viewer, path, file);
+    };
+    const load = async () => {
+      state.repoRef = branch.value;
+      const ref = encodeURIComponent(branch.value);
+      const [{ commits: log }, { files }] = await Promise.all([api(repoApi(`/log?ref=${ref}`)), api(repoApi(`/tree?ref=${ref}`))]);
+      fill(
+        commits,
+        ...log.map((c) =>
+          h(
+            "div",
+            { class: "list-item" },
+            h("div", { class: "list-row static" }, h("span", { class: "mono sha", text: c.sha.slice(0, 7) }), h("div", { class: "grow" }, h("div", { class: "title", text: c.subject }), h("div", { class: "sub", text: `${c.author} · ${fmtDate(c.date)}` }))),
+          ),
+        ),
+      );
+      const buttons = [];
+      const renderNode = (node, depth) => {
+        const out = [];
+        for (const [dir, child] of [...node.dirs].sort(([a], [b]) => a.localeCompare(b))) {
+          const details = h("details", { open: depth < 1 || undefined });
+          const summary = h("summary", { text: dir });
+          summary.style.paddingLeft = `${14 + depth * 12}px`;
+          details.append(summary, ...renderNode(child, depth + 1));
+          out.push(details);
+        }
+        for (const f of node.files) {
+          const b = h("button", { class: "file", title: f.path, "data-path": f.path, text: f.name, onclick: () => showRepoFile(f.path, buttons) });
+          b.style.paddingLeft = `${14 + depth * 12}px`;
+          buttons.push(b);
+          out.push(b);
+        }
+        return out;
+      };
+      fill(tree, ...renderNode(buildTree(files), 0));
+      fill(mobile, ...files.map((f) => h("option", { value: f.path, text: f.path })));
+      const first = files.find((f) => /^wrangler\.(jsonc|json|toml)$/.test(f.path)) ?? files.find((f) => /readme/i.test(f.path)) ?? files[0];
+      if (first) showRepoFile(first.path, buttons);
+      else viewer.replaceChildren(h("div", { class: "placeholder", text: "ファイルがありません" }));
+    };
+    branch.addEventListener("change", () => load().catch((err) => fill(commits, h("div", { class: "notice", text: err.message }))));
+    mobile.addEventListener("change", () => showRepoFile(mobile.value, [...tree.querySelectorAll(".file")]));
+    page.append(
+      h("div", { class: "section-head" }, h("h2", { text: "ファイル" }), h("label", { class: "inline" }, "ブランチ ", branch)),
+      mobile,
+      h("div", { class: "code-layout repo-code" }, tree, viewer),
+      h("div", { class: "section-head" }, h("h2", { text: "コミット" }), h("span", { class: "muted", text: "直近 50 件" })),
+      commits,
+    );
+    await load();
+  } else {
+    page.append(h("section", { class: "card empty" }, h("p", { text: "まだ push されていません。上のコマンドで push すると、ここにファイルとコミットが出ます。" })));
+  }
+
+  // トークン
+  const tokenList = h("div", { class: "list" });
+  const issued = h("div");
+  const renderTokens = (tokens) => {
+    fill(
+      tokenList,
+      ...tokens.map((t) =>
+        h(
+          "div",
+          { class: "list-item" },
+          h(
+            "div",
+            { class: "list-row static" },
+            h("span", { class: `status ${t.scope === "write" ? "bad" : "neutral"}`, text: t.scope === "write" ? "write" : "read" }),
+            h("div", { class: "grow" }, h("div", { class: "title", text: t.scope === "write" ? "clone / fetch / push" : "clone / fetch" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
+            armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
+              await api(repoApi(`/tokens/${t.id}`), { method: "DELETE" }).catch(() => {});
+              route();
+            }),
+          ),
+        ),
+      ),
+    );
+    if (!tokens.length) tokenList.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
+  };
+  renderTokens(repo.tokens);
+  const scope = h("select", { "aria-label": "権限" }, h("option", { value: "write", text: "write（push もできる）" }), h("option", { value: "read", text: "read（clone だけ）" }));
+  const ttl = h("select", { "aria-label": "期限" }, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
+  ttl.value = "86400";
+  const issueError = h("div", { class: "error" });
+  const issue = h("button", {
+    text: "発行",
+    onclick: async () => {
+      issueError.textContent = "";
+      try {
+        const t = await api(repoApi("/tokens"), { method: "POST", body: JSON.stringify({ scope: scope.value, ttl: ttl.value ? Number(ttl.value) : null }) });
+        repo.tokens.push(t);
+        renderTokens(repo.tokens);
+        fill(
+          issued,
+          h(
+            "div",
+            { class: "notice good-notice" },
+            h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
+            h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
+          ),
+        );
+      } catch (err) {
+        issueError.textContent = err.message;
+      }
+    },
+  });
+  page.append(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "このリポジトリ用のトークン" }),
+      h("p", { class: "muted", text: "このリポジトリだけに使えるトークンです。AI エージェントや CI に渡すときは、権限と期限を絞ったものを発行してください。" }),
+      h("div", { class: "row wrap" }, scope, ttl, issue),
+      issueError,
+      issued,
+      tokenList,
+    ),
+  );
+
+  const delError = h("div", { class: "error" });
+  page.append(
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "リポジトリの削除" }),
+      h("p", { class: "muted", text: "リポジトリとトークンを削除します。デプロイ済みのサイトは残ります。" }),
+      armed(h("button", { class: "danger" }), "リポジトリを削除", "もう一度押すと削除", async () => {
+        try {
+          await api(repoApi(""), { method: "DELETE" });
+          location.hash = "#/repos";
         } catch (err) {
           delError.textContent = err.message;
         }

@@ -12,6 +12,8 @@ import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
 import { Runtime } from "./runtime/runtime.ts";
 import { Sites } from "./sites.ts";
+import { Repos } from "./git/repos.ts";
+import { createGitHandler, installHooks } from "./git/server.ts";
 import { closeAllSiteDbs } from "./bindings/db.ts";
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions> } = {}) {
@@ -27,13 +29,18 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const resources = new ResourceMonitor();
 
   const deployer = new Deployer(sites, runtime, history);
-  const deps = { config, state, sites, runtime, history, observability, resources, deployer, github: options.github };
+  const repos = new Repos(config.dataDir, config.maxUploadBytes);
+  await repos.init();
+  const { handleGit, handleHook } = createGitHandler({ config, state, repos, sites, deployer }, await installHooks(config.dataDir));
+  const deps = { config, state, sites, repos, runtime, history, observability, resources, deployer, github: options.github };
   const { handleDeploy, handleReport } = createDeployHandler(deps);
   const handle = createRouter({
     ...deps,
     handleAdmin: createAdminHandler(deps),
     handleDeploy,
     handleReport,
+    handleGit,
+    handleHook,
   });
 
   const server = http.createServer((req, res) => {
@@ -54,7 +61,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
     metaDb.close();
     closeAllSiteDbs();
   });
-  return { server, sites, state, runtime, history, observability, resources, deployer };
+  return { server, sites, repos, state, runtime, history, observability, resources, deployer };
 }
 
 if (import.meta.main) {

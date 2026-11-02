@@ -18,12 +18,25 @@ export interface StoredCredential {
   lastUsedAt?: string;
 }
 
+export type RepoScope = "read" | "write";
+
+/** リポジトリ単位のトークン。値はハッシュだけを保存し、発行したときに 1 回だけ見せる */
+export interface RepoToken {
+  id: string;
+  repo: string;
+  scope: RepoScope;
+  hash: string;
+  createdAt: string;
+  expiresAt: string | null;
+}
+
 interface StateFile {
   userId: string;
   teamId: string;
   // ハッシュにしないのは、管理画面でいつでも再表示してコピーできるようにするため
   deployToken: string;
   credentials: StoredCredential[];
+  repoTokens?: RepoToken[];
 }
 
 interface StoredFile extends StateFile {
@@ -156,6 +169,47 @@ export class AdminState {
     this.#state.deployToken = newToken();
     await this.#save();
     return this.#state.deployToken;
+  }
+
+  repoTokens(repo: string): RepoToken[] {
+    const now = Date.now();
+    return (this.#state.repoTokens ?? []).filter((t) => t.repo === repo && (!t.expiresAt || Date.parse(t.expiresAt) > now));
+  }
+
+  async createRepoToken(repo: string, scope: RepoScope, ttlSeconds: number | null): Promise<{ token: string; info: RepoToken }> {
+    const token = `kzr_${randomBytes(24).toString("base64url")}`;
+    const info: RepoToken = {
+      id: randomBytes(6).toString("hex"),
+      repo,
+      scope,
+      hash: createHash("sha256").update(token).digest("hex"),
+      createdAt: new Date().toISOString(),
+      expiresAt: ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null,
+    };
+    const now = Date.now();
+    // 期限切れのトークンはこのときに掃除する
+    this.#state.repoTokens = [...(this.#state.repoTokens ?? []).filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now), info];
+    await this.#save();
+    return { token, info };
+  }
+
+  async revokeRepoTokens(repo: string, id?: string): Promise<boolean> {
+    const before = this.#state.repoTokens ?? [];
+    const after = before.filter((t) => t.repo !== repo || (id !== undefined && t.id !== id));
+    if (after.length === before.length) return false;
+    this.#state.repoTokens = after;
+    await this.#save();
+    return true;
+  }
+
+  /** 全体の Token はすべてのリポジトリに書き込める。リポジトリのトークンはそのリポジトリだけ */
+  repoAccess(repo: string, token: string): RepoScope | null {
+    if (!token) return null;
+    if (this.checkDeployToken(token)) return "write";
+    const hash = createHash("sha256").update(token).digest("hex");
+    const now = Date.now();
+    const found = (this.#state.repoTokens ?? []).find((t) => t.repo === repo && safeEqual(t.hash, hash) && (!t.expiresAt || Date.parse(t.expiresAt) > now));
+    return found?.scope ?? null;
   }
 
   async addCredential(credential: StoredCredential): Promise<void> {

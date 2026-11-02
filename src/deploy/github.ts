@@ -153,10 +153,9 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
   const api = options.apiBase ?? "https://api.github.com";
   const codeload = options.codeloadBase ?? "https://codeload.github.com";
   const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
-  const buildLog: string[] = [];
   let source: DeploySource = {};
-  let name: string | null = null;
-  const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-github-")));
+  let files: UploadedFile[];
+  let dir = "";
 
   try {
     const repo = parseGitHubUrl(input);
@@ -169,28 +168,59 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
       actor: resolved.author,
       serverUrl: "https://github.com",
     };
-    const dir = resolved.dir.join("/");
+    dir = resolved.dir.join("/");
     log.add(`${source.repository}@${resolved.ref}${resolved.sha ? `（${resolved.sha.slice(0, 7)}）` : ""} ${dir ? `の ${dir}/ ` : ""}をダウンロードします`);
 
     const archive = await download(fetcher, `${codeload}/${repo.owner}/${repo.repo}/tar.gz/${encodeURIComponent(resolved.sha ?? resolved.ref)}`, options.maxBytes);
     if (!archive) throw new GitHubError("リポジトリをダウンロードできません（public リポジトリのみ対応しています）");
     const entries = readTar(gunzipSync(archive, { maxOutputLength: options.maxBytes * 4 }), { skipLinks: true });
     const prefix = dir ? `${dir}/` : "";
-    const files = entries
+    files = entries
       .map((f) => ({ path: f.path.split("/").slice(1).join("/"), data: f.data }))
       .filter((f) => f.path.startsWith(prefix))
       .map((f) => ({ path: f.path.slice(prefix.length), data: f.data }))
       .filter((f) => f.path && !f.path.startsWith(".git/"));
     log.add(`ダウンロード: ${(archive.length / 1024).toFixed(1)} KiB、${files.length} ファイル`);
+  } catch (err) {
+    return fail(deployer, null, err, { source, buildLog: [], log }, "GitHub からのデプロイ");
+  }
+  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ" });
+}
 
+export interface BuildContext {
+  source: DeploySource;
+  log: DeployLog;
+  buildLog: string[];
+  /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
+  where?: string;
+}
+
+function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
+  const known = err instanceof GitHubError || err instanceof ConfigError || err instanceof TarError;
+  if (!known) console.error(`[deploy] ${label}で例外:`, err);
+  const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error)?.message ?? err}`;
+  deployer.recordFailure(name, message, { source: ctx.source, buildLog: ctx.buildLog.join("\n"), log: ctx.log });
+  return { ok: false, error: message };
+}
+
+/**
+ * リポジトリのファイル（wrangler の設定があるディレクトリからの相対パス）を、wrangler と同じ解釈でバンドルしてデプロイする。
+ * GitHub の URL からのデプロイと、Kanzume への git push の両方で使う。
+ */
+export async function deployFromFiles(files: UploadedFile[], deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
+  const { log, buildLog } = ctx;
+  let name: string | null = null;
+  const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-build-")));
+
+  try {
     const configFile = CONFIG_FILES.find((c) => files.some((f) => f.path === c));
-    if (!configFile) throw new GitHubError(`${dir ? `${dir}/ ` : "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
+    if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
     for (const f of files) {
       const dest = path.join(work, f.path);
+      if (!inside(work, dest)) continue;
       await fs.mkdir(path.dirname(dest), { recursive: true });
       await fs.writeFile(dest, f.data);
     }
-
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
     if (typeof config.name === "string") name = config.name;
@@ -261,13 +291,9 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
     }
 
-    return await deployer.deploy({ files: out, sources, source, buildLog: buildLog.join("\n"), log });
+    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log });
   } catch (err) {
-    const known = err instanceof GitHubError || err instanceof ConfigError || err instanceof TarError;
-    if (!known) console.error("[deploy] GitHub からのデプロイで例外:", err);
-    const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error)?.message ?? err}`;
-    deployer.recordFailure(name, message, { source, buildLog: buildLog.join("\n"), log });
-    return { ok: false, error: message };
+    return fail(deployer, name, err, ctx, "デプロイ");
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }

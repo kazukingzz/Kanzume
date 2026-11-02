@@ -11,12 +11,18 @@ export class DeployLog {
   readonly lines: string[] = [];
   readonly started = performance.now();
 
-  constructor(first: string) {
+  readonly onLine?: (message: string) => void;
+
+  /** onLine を渡すと、行が増えるたびに呼ぶ（git push の出力に流すため） */
+  constructor(first: string, onLine?: (message: string) => void) {
+    this.onLine = onLine;
     this.lines.push(`${new Date().toISOString()} ${first}`);
+    onLine?.(first);
   }
 
   add(message: string): void {
     this.lines.push(`[${String(Math.round(performance.now() - this.started)).padStart(5)}ms] ${message}`);
+    this.onLine?.(message);
   }
 
   get elapsed(): number {

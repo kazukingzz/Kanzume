@@ -388,3 +388,21 @@ td.num, th.num { text-align: right; }
 .urls { display: flex; flex-direction: column; gap: 2px; }
 .urls .muted { font-size: 12px; }
 .urls .muted a { color: inherit; }
+
+.repo-code { height: min(70vh, 560px); flex: none; margin-bottom: 8px; }
+.back { font-size: 13px; color: var(--muted); text-decoration: none; margin-right: 8px; }
+.back:hover { color: var(--accent); }
+.list-row.static { cursor: default; }
+.list-row.static:hover { background: transparent; }
+a.list-row { color: inherit; text-decoration: none; }
+.sha { font-size: 12px; color: var(--muted); flex: none; }
+.row.wrap { flex-wrap: wrap; }
+label.inline { display: flex; align-items: center; gap: 8px; margin: 0; font-size: 13px; }
+label.inline select, .row select { width: auto; }
+.good-notice { border-left-color: var(--good); margin: 12px 0; display: flex; flex-direction: column; gap: 8px; }
+.list-row.repo-row { grid-template-columns: minmax(0, 1fr) auto; }
+.repo-commits { margin-bottom: 16px; }
+@media (max-width: 760px) {
+  .list-row.repo-row { grid-template-columns: minmax(0, 1fr); }
+  .list-row.repo-row .side { grid-column: 1; }
+}

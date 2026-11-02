@@ -5,7 +5,8 @@ RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 
 # node:24-alpine をそのまま使わないのは、npm / yarn / corepack（約 25MB）を最終イメージに含めないため
 FROM alpine:3.24
-RUN apk add --no-cache libstdc++ \
+# git と git-daemon（git-http-backend が入っている）は Kanzume を Git のリモートにするため
+RUN apk add --no-cache libstdc++ git git-daemon \
   && addgroup -S kanzume && adduser -S -G kanzume kanzume \
   && mkdir -p /data && chown kanzume:kanzume /data
 COPY --from=deps /usr/local/bin/node /usr/local/bin/node

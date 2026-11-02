@@ -5,6 +5,7 @@ import type { Config } from "./config.ts";
 import { clientIp, requestOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
 import { Invocation, runInvocation, type Observability } from "./observability/events.ts";
 import type { Runtime } from "./runtime/runtime.ts";
+import { GIT_PATH, HOOK_PATH } from "./git/server.ts";
 import { matchHost, parentHost, type Sites } from "./sites.ts";
 import type { Release } from "./store.ts";
 
@@ -15,6 +16,8 @@ interface Deps {
   handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void>;
   handleDeploy(req: IncomingMessage, res: ServerResponse): Promise<void>;
   handleReport(req: IncomingMessage, res: ServerResponse): Promise<void>;
+  handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void>;
+  handleHook(req: IncomingMessage, res: ServerResponse): Promise<void>;
   observability: Observability;
 }
 
@@ -50,7 +53,7 @@ function workerFailure(release: Release, error: unknown): Response {
   return new Response("Worker threw exception", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy, handleReport, observability }: Deps) {
+export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability }: Deps) {
   const rootHost = config.origin ? new URL(config.origin).host : undefined;
 
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
@@ -127,6 +130,8 @@ export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy
     }
 
     if (pathname === "/_api/deploy") return handleDeploy(req, res);
+    if (pathname === HOOK_PATH) return handleHook(req, res);
+    if (pathname.startsWith(`${GIT_PATH}/`)) return handleGit(req, res, pathname, search);
     if (pathname === "/_api/deploy/report") return handleReport(req, res);
     if (isAdmin) return handleAdmin(req, res, pathname);
     if (pathname.startsWith("/_api/")) return sendText(res, 404, "Not Found");

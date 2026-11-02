@@ -16,6 +16,8 @@ import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import type { Sites } from "../sites.ts";
+import { RepoError, type Repos } from "../git/repos.ts";
+import { GIT_PATH } from "../git/server.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
 import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
@@ -36,6 +38,7 @@ interface Deps {
   config: Config;
   state: AdminState;
   sites: Sites;
+  repos: Repos;
   runtime: Runtime;
   history: DeployHistory;
   observability: Observability;
@@ -44,7 +47,7 @@ interface Deps {
   github?: Partial<GitHubOptions>;
 }
 
-export function createAdminHandler({ config, state, sites, runtime, history, observability, resources, deployer, github }: Deps) {
+export function createAdminHandler({ config, state, sites, repos, runtime, history, observability, resources, deployer, github }: Deps) {
   const challenges = new Challenges();
   let githubDeploying = false;
 
@@ -229,6 +232,75 @@ export function createAdminHandler({ config, state, sites, runtime, history, obs
       if (!name) return sendJson(res, 400, { error: "名前を入力してください" });
       const ok = await state.renameCredential(String(body?.id ?? ""), name);
       return ok ? sendJson(res, 200, { name }) : sendJson(res, 404, { error: "パスキーが見つかりません" });
+    }
+
+    // ---------- Git リポジトリ ----------
+
+    const repoInfo = async (name: string) => {
+      const deployed = history.list().find((d) => d.source.repository === name && !d.source.serverUrl);
+      return {
+        ...(await repos.summary(name)),
+        cloneUrl: `${origin}${GIT_PATH}/${name}.git`,
+        site: deployed?.name || null,
+      };
+    };
+
+    if (route === "GET /api/repos") {
+      return sendJson(res, 200, { repos: await Promise.all((await repos.names()).map(repoInfo)) });
+    }
+
+    if (route === "POST /api/repos") {
+      const body = await readJson(req);
+      const name = String(body?.name ?? "").trim();
+      try {
+        await repos.create(name);
+      } catch (err) {
+        if (err instanceof RepoError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+      return sendJson(res, 200, await repoInfo(name));
+    }
+
+    const repoRoute = /^(GET|POST|DELETE) \/api\/repos\/([a-z0-9-]+)(\/.*)?$/.exec(route);
+    if (repoRoute) {
+      const [, , name, rest = ""] = repoRoute;
+      if (!(await repos.exists(name))) return sendJson(res, 404, { error: "リポジトリが見つかりません" });
+      const key = `${method} ${rest}`;
+      const ref = query.get("ref") || (await repos.defaultBranch(name));
+      const tokenInfo = (t: { id: string; scope: string; createdAt: string; expiresAt: string | null }) => ({ id: t.id, scope: t.scope, createdAt: t.createdAt, expiresAt: t.expiresAt });
+      try {
+        if (key === "GET ") {
+          return sendJson(res, 200, { ...(await repoInfo(name)), refs: await repos.refs(name), tokens: state.repoTokens(name).map(tokenInfo) });
+        }
+        if (key === "DELETE ") {
+          await repos.remove(name);
+          await state.revokeRepoTokens(name);
+          return sendJson(res, 200, { ok: true });
+        }
+        if (key === "GET /log") return sendJson(res, 200, { ref, commits: await repos.log(name, ref) });
+        if (key === "GET /tree") return sendJson(res, 200, { ref, files: await repos.tree(name, ref) });
+        if (key === "GET /blob") {
+          const blob = await repos.blob(name, ref, query.get("path") ?? "");
+          return blob ? sendJson(res, 200, blob) : sendJson(res, 404, { error: "ファイルが見つかりません" });
+        }
+        if (key === "POST /tokens") {
+          const body = await readJson(req);
+          const scope = body?.scope === "read" ? "read" : body?.scope === "write" ? "write" : null;
+          const ttl = body?.ttl === null ? null : Number(body?.ttl);
+          if (!scope) return sendJson(res, 400, { error: "権限は read か write を選んでください" });
+          if (ttl !== null && !(ttl > 0 && ttl <= 365 * 86400)) return sendJson(res, 400, { error: "期限が不正です" });
+          const { token, info } = await state.createRepoToken(name, scope, ttl);
+          return sendJson(res, 200, { token, ...tokenInfo(info) });
+        }
+        const revoke = /^DELETE \/tokens\/([0-9a-f]+)$/.exec(key);
+        if (revoke) {
+          return (await state.revokeRepoTokens(name, revoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
+        }
+      } catch (err) {
+        if (err instanceof RepoError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+      return sendJson(res, 404, { error: "Not Found" });
     }
 
     if (route === "GET /api/samples") {
