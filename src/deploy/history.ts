@@ -131,6 +131,20 @@ export class DeployHistory {
     return row ? summary(row) : null;
   }
 
+  /** git push でデプロイしたサイトを、リポジトリごとに 1 回のクエリで引く（GitHub からのデプロイは serverUrl があるので除く） */
+  sitesByRepository(): Map<string, string> {
+    const rows = this.#db
+      .prepare(
+        `SELECT json_extract(meta, '$.repository') AS repo, name FROM deployments
+         WHERE json_extract(meta, '$.serverUrl') IS NULL AND json_extract(meta, '$.repository') IS NOT NULL AND name != ''
+         ORDER BY created_at DESC`,
+      )
+      .all() as { repo: string; name: string }[];
+    const out = new Map<string, string>();
+    for (const r of rows) if (!out.has(r.repo)) out.set(r.repo, r.name);
+    return out;
+  }
+
   forRelease(release: string) {
     const row = this.#db.prepare("SELECT * FROM deployments WHERE release = ?").get(release) as Row | undefined;
     return row ? summary(row) : null;

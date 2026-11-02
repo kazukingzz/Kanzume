@@ -193,6 +193,8 @@ export interface BuildContext {
   buildLog: string[];
   /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
   where?: string;
+  /** 指定すると、wrangler の name がこれと違うときはデプロイしない（リポジトリ用のトークンで別のサイトを上書きさせないため） */
+  expectedName?: string;
 }
 
 function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
@@ -223,6 +225,11 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
     }
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
+    if (ctx.expectedName !== undefined && config.name !== ctx.expectedName) {
+      // 失敗の記録も、別のサイトの履歴ではなくこのリポジトリ名のほうに残す
+      name = ctx.expectedName;
+      throw new GitHubError(`wrangler の name（${String(config.name ?? "未設定")}）がリポジトリ名（${ctx.expectedName}）と違うのでデプロイしません。name をリポジトリ名にそろえてください`);
+    }
     if (typeof config.name === "string") name = config.name;
     const build = config.build as { command?: string } | undefined;
     if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);

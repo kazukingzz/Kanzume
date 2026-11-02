@@ -29,16 +29,6 @@ function safePath(p: string): string {
   return clean;
 }
 
-async function dirSize(dir: string): Promise<number> {
-  let total = 0;
-  for (const entry of await fs.readdir(dir, { withFileTypes: true })) {
-    const p = path.join(dir, entry.name);
-    if (entry.isDirectory()) total += await dirSize(p);
-    else if (entry.isFile()) total += (await fs.stat(p)).size;
-  }
-  return total;
-}
-
 /**
  * Kanzume が持つ Git のリモートリポジトリ（bare）。push は `git http-backend` が受け、読み取りは git コマンドで行う。
  * 置き場所は `<dataDir>/repos/<name>.git`。
@@ -90,7 +80,6 @@ export class Repos {
     if (await this.exists(name)) throw new RepoError("同じ名前のリポジトリがあります");
     await run("git", ["init", "--quiet", "--bare", "--initial-branch=main", this.path(name)]);
     await this.git(name, ["config", "http.receivepack", "true"]);
-    await this.git(name, ["config", "receive.maxInputSize", String(this.maxInputBytes)]);
   }
 
   async remove(name: string): Promise<void> {
@@ -104,12 +93,14 @@ export class Repos {
   }
 
   async summary(name: string): Promise<RepoSummary> {
-    const [defaultBranch, { stdout }, size] = await Promise.all([
+    const [defaultBranch, { stdout }, { stdout: counts }] = await Promise.all([
       this.defaultBranch(name),
       this.git(name, ["for-each-ref", "--sort=-committerdate", "--count=1", "--format=%(committerdate:iso-strict)", "refs/heads"]),
-      dirSize(this.path(name)),
+      this.git(name, ["count-objects", "-v"]),
     ]);
-    return { name, defaultBranch, lastPush: String(stdout).trim() || null, size };
+    // ディレクトリをたどらずに、オブジェクトの大きさ（KiB）だけを足す
+    const kib = (key: string) => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(String(counts))?.[1] ?? 0);
+    return { name, defaultBranch, lastPush: String(stdout).trim() || null, size: (kib("size") + kib("size-pack")) * 1024 };
   }
 
   async refs(name: string) {
@@ -139,6 +130,11 @@ export class Repos {
       });
   }
 
+  async resolve(name: string, ref: string): Promise<string | null> {
+    const out = await this.git(name, ["rev-parse", "--verify", "--quiet", `${safeRef(ref)}^{commit}`]).catch(() => null);
+    return out ? String(out.stdout).trim() : null;
+  }
+
   async commit(name: string, sha: string) {
     const { stdout } = await this.git(name, ["log", "-1", "--format=%H%x00%an%x00%s", safeRef(sha), "--"]);
     const [full, author, subject] = String(stdout).trim().split("\0");
@@ -160,7 +156,11 @@ export class Repos {
   }
 
   async blob(name: string, ref: string, file: string): Promise<{ path: string; size: number; text: string | null; binary: boolean } | null> {
-    const spec = `${safeRef(ref)}:${safePath(file)}`;
+    const clean = safePath(file);
+    if (!clean) return null;
+    const spec = `${safeRef(ref)}:${clean}`;
+    const type = await this.git(name, ["cat-file", "-t", spec]).catch(() => null);
+    if (!type || String(type.stdout).trim() !== "blob") return null;
     const out = await this.git(name, ["cat-file", "-s", spec]).catch(() => null);
     const size = out ? Number(String(out.stdout).trim()) : NaN;
     if (!Number.isFinite(size)) return null;

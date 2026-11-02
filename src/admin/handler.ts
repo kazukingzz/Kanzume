@@ -236,17 +236,15 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     // ---------- Git リポジトリ ----------
 
-    const repoInfo = async (name: string) => {
-      const deployed = history.list().find((d) => d.source.repository === name && !d.source.serverUrl);
-      return {
-        ...(await repos.summary(name)),
-        cloneUrl: `${origin}${GIT_PATH}/${name}.git`,
-        site: deployed?.name || null,
-      };
-    };
+    const repoInfo = async (name: string, deployed = history.sitesByRepository()) => ({
+      ...(await repos.summary(name)),
+      cloneUrl: `${origin}${GIT_PATH}/${name}.git`,
+      site: deployed.get(name) ?? null,
+    });
 
     if (route === "GET /api/repos") {
-      return sendJson(res, 200, { repos: await Promise.all((await repos.names()).map(repoInfo)) });
+      const deployed = history.sitesByRepository();
+      return sendJson(res, 200, { repos: await Promise.all((await repos.names()).map((name) => repoInfo(name, deployed))) });
     }
 
     if (route === "POST /api/repos") {

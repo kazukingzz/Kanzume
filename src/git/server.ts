@@ -4,6 +4,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { safeEqual, type AdminState, type RepoScope } from "../admin/state.ts";
 import type { Config } from "../config.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
@@ -16,7 +17,8 @@ import { Repos, ZERO_SHA } from "./repos.ts";
 export const GIT_PATH = "/_git";
 export const HOOK_PATH = "/_api/git/hook";
 
-const HOOK_SCRIPT = new URL("./hook.ts", import.meta.url).pathname;
+// pathname ではなく fileURLToPath にするのは、パスに空白や日本語があると %20 などのままになるため
+const HOOK_SCRIPT = fileURLToPath(new URL("./hook.ts", import.meta.url));
 const SERVICES: Record<string, RepoScope> = { "git-upload-pack": "read", "git-receive-pack": "write" };
 
 interface Deps {
@@ -52,9 +54,22 @@ export async function installHooks(dataDir: string): Promise<string> {
   return dir;
 }
 
+function hookHost(address: string | undefined): string {
+  if (!address) return "127.0.0.1";
+  const v4 = address.replace(/^::ffff:/, "");
+  return v4.includes(":") ? `[${v4}]` : v4;
+}
+
 export function createGitHandler({ config, state, repos, sites, deployer }: Deps, hooksDir: string) {
   // フックから Kanzume に戻ってくるときの合言葉。起動のたびに変わる
   const hookSecret = randomBytes(24).toString("base64url");
+  // push の順番どおりにデプロイするため、リポジトリごとに直列にする
+  const queues = new Map<string, Promise<unknown>>();
+  const serialize = <T>(name: string, fn: () => Promise<T>): Promise<T> => {
+    const run = (queues.get(name) ?? Promise.resolve()).then(fn, fn);
+    queues.set(name, run.catch(() => {}));
+    return run;
+  };
 
   async function handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void> {
     const m = /^\/_git\/([a-z0-9-]+)\.git(\/.*)$/.exec(pathname);
@@ -88,13 +103,19 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       CONTENT_TYPE: req.headers["content-type"] ?? "",
       REMOTE_USER: "kanzume",
       REMOTE_ADDR: req.socket.remoteAddress ?? "",
-      GIT_CONFIG_COUNT: "2",
+      // リポジトリの設定ファイルではなく毎回ここで渡すので、KANZUME_MAX_UPLOAD_MB を変えれば既存のリポジトリにも効く
+      GIT_CONFIG_COUNT: "4",
       GIT_CONFIG_KEY_0: "core.hooksPath",
       GIT_CONFIG_VALUE_0: hooksDir,
       GIT_CONFIG_KEY_1: "http.receivepack",
       GIT_CONFIG_VALUE_1: "true",
-      // フックに渡す情報
-      KANZUME_HOOK_URL: `http://127.0.0.1:${req.socket.localPort}${HOOK_PATH}`,
+      GIT_CONFIG_KEY_2: "receive.maxInputSize",
+      GIT_CONFIG_VALUE_2: String(repos.maxInputBytes),
+      // ブランチの削除は受け付けない（main を消すとデプロイ元がなくなるため）
+      GIT_CONFIG_KEY_3: "receive.denyDeletes",
+      GIT_CONFIG_VALUE_3: "true",
+      // フックに渡す情報。戻り先は、この接続を受けたアドレス（待ち受けているアドレス）にする
+      KANZUME_HOOK_URL: `http://${hookHost(req.socket.localAddress)}:${req.socket.localPort}${HOOK_PATH}`,
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
       KANZUME_ORIGIN_URL: origin,
@@ -179,16 +200,23 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
         say(`${branch} 以外への push なので、保存だけしてデプロイはしません`);
         return;
       }
-      const commit = await repos.commit(name, update.new);
-      const log = new DeployLog(`git push（${name}@${branch} ${commit.sha.slice(0, 7)}）からデプロイします`, say);
-      const files = readTar(await repos.archive(name, update.new), { skipLinks: true }).filter((f) => f.path && !f.path.startsWith(".git/"));
-      log.add(`ファイル: ${files.length} 件`);
-      const result = await deployFromFiles(files, deployer, {
-        source: { repository: name, ref: branch, sha: commit.sha, commitMessage: commit.subject, actor: commit.author },
-        log,
-        buildLog: [],
+      const result = await serialize(name, async () => {
+        // 待っている間に新しい push があれば、古いコミットはデプロイしない
+        if ((await repos.resolve(name, `refs/heads/${branch}`)) !== update.new) return null;
+        const commit = await repos.commit(name, update.new);
+        const log = new DeployLog(`git push（${name}@${branch} ${commit.sha.slice(0, 7)}）からデプロイします`, say);
+        const files = readTar(await repos.archive(name, update.new), { skipLinks: true }).filter((f) => f.path && !f.path.startsWith(".git/"));
+        log.add(`ファイル: ${files.length} 件`);
+        return deployFromFiles(files, deployer, {
+          source: { repository: name, ref: branch, sha: commit.sha, commitMessage: commit.subject, actor: commit.author },
+          log,
+          buildLog: [],
+          expectedName: name,
+        });
       });
-      if (result.ok) {
+      if (!result) {
+        say(`${branch} に新しい push があるので、このコミットのデプロイは飛ばします`);
+      } else if (result.ok) {
         const site = result.release.manifest.name;
         say(`デプロイしました: ${sites.urls(String(body.origin || externalOrigin(req, config.origin)), site).url}`);
       } else {

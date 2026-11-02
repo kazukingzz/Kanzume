@@ -174,3 +174,43 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.equal((await api("/repos/blog", { method: "DELETE" })).status, 200);
   assert.deepEqual((await api("/repos")).body.repos, []);
 });
+
+test("リポジトリ名と違う name のコミットはデプロイせず、ほかのサイトを上書きできない", async (t) => {
+  const { base, remote, repos, sites, state, history } = await start(t);
+  await repos.create("blog");
+  await repos.create("sample");
+  assert.equal((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).status, 0);
+
+  const { token } = await state.createRepoToken("sample", "write", 3600);
+  const evil = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "blog", main: "src/index.js", vars: { GREETING: "乗っ取り" } }) });
+  const push = await git(evil, ["push", remote("sample", token), "main"]);
+  assert.equal(push.status, 0, push.output);
+  assert.match(push.output, /remote: デプロイに失敗しました: wrangler の name（blog）がリポジトリ名（sample）と違う/);
+  assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git", "blog はそのまま");
+  assert.deepEqual(sites.list().map((s) => s.name), ["blog"]);
+  assert.equal(history.list("blog").length, 1, "失敗の記録は blog の履歴に入らない");
+  assert.equal(history.list("sample")[0].status, "failed");
+});
+
+test("ブランチの削除は拒否し、続けて push したときは新しいコミットが残る", async (t) => {
+  const { base, remote, repos, state } = await start(t);
+  await repos.create("blog");
+  const dir = workTree(t, WORKER);
+  assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
+  const del = await git(dir, ["push", remote("blog"), ":main"]);
+  assert.notEqual(del.status, 0, del.output);
+  assert.ok(await repos.resolve("blog", "refs/heads/main"));
+
+  for (const v of ["v2", "v3"]) {
+    writeTree(dir, { "src/label.js": `export const label = (g) => \`\${g} ${v}\`;` });
+    execFileSync("git", ["commit", "-qam", v], { cwd: dir, env: GIT_ENV });
+    assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
+  }
+  assert.equal(await (await fetch(`${base}/x`)).text(), "hi v3");
+
+  const cookie = `kanzume_session=${await state.createSession()}`;
+  const blob = (p: string) => fetch(`${base}/_admin/kanzume/api/repos/blog/blob?path=${encodeURIComponent(p)}`, { headers: { cookie } });
+  assert.equal((await blob("")).status, 404);
+  assert.equal((await blob("src")).status, 404, "ディレクトリは 404");
+  assert.equal((await blob("src/label.js")).status, 200);
+});

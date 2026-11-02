@@ -1537,7 +1537,7 @@ async function viewRepos(main) {
       "section",
       { class: "card" },
       h("h2", { text: "新しいリポジトリ" }),
-      h("p", { class: "muted", text: "Kanzume を Git のリモートとして使えます。デフォルトブランチ（main）に push すると、wrangler の設定どおりにデプロイします。設定の name がサイト名（サブドメイン）になります。" }),
+      h("p", { class: "muted", text: "Kanzume を Git のリモートとして使えます。デフォルトブランチ（main）に push すると、wrangler の設定どおりにデプロイします。リポジトリ名は wrangler の name（＝サイト名・サブドメイン）と同じにしてください。違う name のコミットはデプロイしません。" }),
       h("div", { class: "row" }, h("div", { class: "grow" }, input), create),
       error,
     ),
@@ -1600,7 +1600,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには設定の KANZUME_TOKEN か、下で発行したトークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには設定の KANZUME_TOKEN か、下で発行したトークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
     ),
   );
 
