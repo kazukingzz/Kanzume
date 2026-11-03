@@ -111,6 +111,8 @@ export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy
     const search = q === -1 ? "" : raw.slice(q);
 
     if (pathname === "/_health") return sendText(res, 200, "ok");
+    // git のフックからの内部の呼び出し。ホスト名でサイトを選ぶ前に受ける（IP アドレスの先頭の数字と同じ名前のサイトに横取りさせない）
+    if (pathname === HOOK_PATH) return handleHook(req, res);
 
     const isAdmin = pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`);
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
@@ -130,7 +132,6 @@ export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy
     }
 
     if (pathname === "/_api/deploy") return handleDeploy(req, res);
-    if (pathname === HOOK_PATH) return handleHook(req, res);
     if (pathname.startsWith(`${GIT_PATH}/`)) return handleGit(req, res, pathname, search);
     if (pathname === "/_api/deploy/report") return handleReport(req, res);
     if (isAdmin) return handleAdmin(req, res, pathname);

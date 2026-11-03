@@ -54,6 +54,8 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     const meta = parseJson(files.find((f) => f.path === `${META_DIR}meta.json`)) as { source?: unknown } | undefined;
     const sources = parseJson(files.find((f) => f.path === `${META_DIR}sources.json`));
     const result = await deployer.deploy({
+      // /_api/deploy は全体の Token でしか呼べないので、最初のサイトはルートにしてよい
+      autoRoot: true,
       files: files.filter((f) => !f.path.startsWith(META_DIR)),
       sources: Array.isArray(sources) ? sources : null,
       source: sanitizeSource(meta?.source),

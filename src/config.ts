@@ -11,6 +11,8 @@ export interface Config {
   setupToken: string;
   setupTokenGenerated: boolean;
   maxUploadBytes: number;
+  /** リポジトリ 1 つあたりの容量の上限 */
+  repoQuotaBytes: number;
   workerIdleMs: number;
   cpuTimeoutMs: number;
   maxWorkers: number;
@@ -31,7 +33,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     publicUrl: publicUrl || undefined,
     setupToken: setupToken || randomBytes(16).toString("hex"),
     setupTokenGenerated: !setupToken,
-    maxUploadBytes: Number(env.KANZUME_MAX_UPLOAD_MB || 50) * 1024 * 1024,
+    // git の設定は整数しか受け付けないので切り捨てる
+    maxUploadBytes: Math.floor(Number(env.KANZUME_MAX_UPLOAD_MB || 50) * 1024 * 1024),
+    repoQuotaBytes: Math.floor(Number(env.KANZUME_REPO_QUOTA_MB || 200) * 1024 * 1024),
     workerIdleMs: Number(env.KANZUME_WORKER_IDLE_SEC || 600) * 1000,
     // vm の timeout は実時間で測るので、0.1 CPU で混んでいるときに正常なリクエストを打ち切らないよう長めにする
     cpuTimeoutMs: Number(env.KANZUME_CPU_TIMEOUT_MS || 5000),

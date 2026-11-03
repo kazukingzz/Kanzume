@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
 import type { AddressInfo } from "node:net";
+import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { loadConfig } from "../src/config.ts";
@@ -57,9 +58,13 @@ const WORKER = {
   "public/robots.txt": "User-agent: *",
 };
 
-if (spawnSync("git", ["--version"]).status !== 0) test.skip("git がない環境では動かさない");
+// git（と git-http-backend）がない環境では、このファイルのテストはすべて飛ばす
+const NO_GIT = (() => {
+  const exec = spawnSync("git", ["--exec-path"], { encoding: "utf8" });
+  return exec.status !== 0 || !existsSync(path.join(exec.stdout.trim(), "git-http-backend")) ? "git と git-http-backend が必要" : false;
+})();
 
-test("Kanzume のリポジトリに main を push すると、wrangler の設定どおりにデプロイされる", async (t) => {
+test("Kanzume のリポジトリに main を push すると、wrangler の設定どおりにデプロイされる", { skip: NO_GIT }, async (t) => {
   const { base, remote, repos, sites, history } = await start(t);
   await repos.create("blog");
   const dir = workTree(t, WORKER);
@@ -99,7 +104,7 @@ test("Kanzume のリポジトリに main を push すると、wrangler の設定
   assert.equal(history.list("blog")[0].source.commitMessage, "書き換え");
 });
 
-test("トークンがないと clone も push もできず、read トークンは clone だけ、期限切れは使えない", async (t) => {
+test("トークンがないと clone も push もできず、read トークンは clone だけ、期限切れは使えない", { skip: NO_GIT }, async (t) => {
   const { remote, repos, state } = await start(t);
   await repos.create("blog");
   const dir = workTree(t, WORKER);
@@ -125,7 +130,7 @@ test("トークンがないと clone も push もできず、read トークン�
   assert.equal(state.repoAccess("blog", state.deployToken), "write");
 });
 
-test("npm パッケージを import したリポジトリは、push は受け付けてデプロイの失敗理由を返す", async (t) => {
+test("npm パッケージを import したリポジトリは、push は受け付けてデプロイの失敗理由を返す", { skip: NO_GIT }, async (t) => {
   const { remote, repos, history } = await start(t);
   await repos.create("app");
   const dir = workTree(t, {
@@ -140,7 +145,7 @@ test("npm パッケージを import したリポジトリは、push は受け付
   assert.equal(path.basename(repos.path("app")), "app.git");
 });
 
-test("管理 API でリポジトリを作り、ブランチ・コミット・ファイルを読み、トークンを発行・取り消しできる", async (t) => {
+test("管理 API でリポジトリを作り、ブランチ・コミット・ファイルを読み、トークンを発行・取り消しできる", { skip: NO_GIT }, async (t) => {
   const { base, remote, state } = await start(t);
   const cookie = `kanzume_session=${await state.createSession()}`;
   const api = async (p: string, init: RequestInit = {}) => {
@@ -175,7 +180,7 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.deepEqual((await api("/repos")).body.repos, []);
 });
 
-test("リポジトリ名と違う name のコミットはデプロイせず、ほかのサイトを上書きできない", async (t) => {
+test("リポジトリ名と違う name のコミットはデプロイせず、ほかのサイトを上書きできない", { skip: NO_GIT }, async (t) => {
   const { base, remote, repos, sites, state, history } = await start(t);
   await repos.create("blog");
   await repos.create("sample");
@@ -192,14 +197,19 @@ test("リポジトリ名と違う name のコミットはデプロイせず、�
   assert.equal(history.list("sample")[0].status, "failed");
 });
 
-test("ブランチの削除は拒否し、続けて push したときは新しいコミットが残る", async (t) => {
+test("main の削除は拒否し（ほかのブランチは消せる）、続けて push したときは新しいコミットが残る", { skip: NO_GIT }, async (t) => {
   const { base, remote, repos, state } = await start(t);
   await repos.create("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
   const del = await git(dir, ["push", remote("blog"), ":main"]);
   assert.notEqual(del.status, 0, del.output);
-  assert.ok(await repos.resolve("blog", "refs/heads/main"));
+  assert.match(del.output, /main はデプロイ元なので削除できません/);
+  assert.deepEqual((await repos.refs("blog")).map((r) => r.branch), ["main"]);
+  // main 以外のブランチは削除できる
+  assert.equal((await git(dir, ["push", remote("blog"), "main:feature"])).status, 0);
+  assert.equal((await git(dir, ["push", remote("blog"), ":feature"])).status, 0);
+  assert.deepEqual((await repos.refs("blog")).map((r) => r.branch), ["main"]);
 
   for (const v of ["v2", "v3"]) {
     writeTree(dir, { "src/label.js": `export const label = (g) => \`\${g} ${v}\`;` });
@@ -213,4 +223,139 @@ test("ブランチの削除は拒否し、続けて push したときは新し�
   assert.equal((await blob("")).status, 404);
   assert.equal((await blob("src")).status, 404, "ディレクトリは 404");
   assert.equal((await blob("src/label.js")).status, 200);
+});
+
+test("git を起動できなくてもサーバーは落ちず、500 を返す", { skip: NO_GIT }, async (t) => {
+  const { base, repos, state } = await start(t);
+  await repos.create("blog");
+  const path0 = process.env.PATH;
+  process.env.PATH = "/nonexistent";
+  t.after(() => (process.env.PATH = path0));
+  const res = await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, {
+    headers: { authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}` },
+  });
+  process.env.PATH = path0;
+  assert.equal(res.status, 500);
+  await new Promise((r) => setTimeout(r, 100));
+  assert.equal((await fetch(`${base}/_health`)).status, 200, "サーバーは動き続けている");
+});
+
+test("途中で切れた push の git プロセスは残らない", { skip: NO_GIT }, async (t) => {
+  const { base, repos, state } = await start(t);
+  await repos.create("blog");
+  const children = () =>
+    execFileSync("ps", ["-o", "pid=,ppid=,args=", "-e"], { encoding: "utf8" })
+      .split("\n")
+      .filter((l) => l.includes("http-backend") && l.trim().split(/\s+/)[1] === String(process.pid));
+  const { request } = await import("node:http");
+  const url = new URL(`${base}/_git/blog.git/git-receive-pack`);
+  const req = request({
+    host: url.hostname,
+    port: url.port,
+    path: url.pathname,
+    method: "POST",
+    headers: { "content-type": "application/x-git-receive-pack-request", "transfer-encoding": "chunked", authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}` },
+  });
+  req.on("error", () => {});
+  // 長さだけを送って中身を送らない（git は続きを待ち続ける）
+  req.write("0090");
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(children().length, 1, "送信中は http-backend が動いている");
+  req.destroy();
+  await new Promise((r) => setTimeout(r, 500));
+  assert.deepEqual(children(), [], "切れたら止まる");
+});
+
+test("IP アドレスの先頭の数字と同じ名前のサイトがあっても、フックは Kanzume に届く", { skip: NO_GIT }, async (t) => {
+  const { remote, repos, sites } = await start(t);
+  for (const name of ["127", "blog"]) await repos.create(name);
+  const evil = workTree(t, { "wrangler.json": JSON.stringify({ name: "127", main: "i.js" }), "i.js": `export default { fetch() { return new Response("site 127 でフックを横取り"); } };` });
+  assert.equal((await git(evil, ["push", remote("127"), "main"])).status, 0);
+  const push = await git(workTree(t, WORKER), ["push", remote("blog"), "main"]);
+  assert.doesNotMatch(push.output, /横取り/);
+  assert.match(push.output, /remote: デプロイしました/);
+  assert.ok(sites.get("blog")?.get());
+});
+
+test("main という名前のタグがあっても、main への push はデプロイされる", { skip: NO_GIT }, async (t) => {
+  const { base, remote, repos } = await start(t);
+  await repos.create("blog");
+  const dir = workTree(t, WORKER);
+  assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
+  assert.equal((await git(dir, ["push", remote("blog"), "main:refs/tags/main"])).status, 0);
+  writeTree(dir, { "src/label.js": `export const label = (g) => \`\${g} after tag\`;` });
+  execFileSync("git", ["commit", "-qam", "タグのあと"], { cwd: dir, env: GIT_ENV });
+  const push = await git(dir, ["push", remote("blog"), "main"]);
+  assert.match(push.output, /remote: デプロイしました/, push.output);
+  assert.equal(await (await fetch(`${base}/x`)).text(), "hi after tag");
+  assert.equal(await repos.defaultBranch("blog"), "main");
+});
+
+test("リポジトリの容量の上限を超える push は受け付けない", { skip: NO_GIT }, async (t) => {
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", KANZUME_REPO_QUOTA_MB: "0.05" }));
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise((resolve) => app.server.close(resolve)));
+  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  await app.repos.create("blog");
+  const { randomBytes } = await import("node:crypto");
+  const dir = workTree(t, { ...WORKER, "public/big.bin": randomBytes(200 * 1024).toString("base64") });
+  const push = await git(dir, ["push", `${base.replace("://", `://x:${app.state.deployToken}@`)}/_git/blog.git`, "main"]);
+  assert.notEqual(push.status, 0);
+  assert.match(push.output, /容量の上限/);
+  assert.deepEqual(await app.repos.refs("blog"), []);
+});
+
+test("リポジトリ用のトークンでの push はルートにならず、全体の Token での push はルートになる", { skip: NO_GIT }, async (t) => {
+  const { remote, repos, sites, state } = await start(t);
+  for (const name of ["blog", "shop"]) await repos.create(name);
+  const { token } = await state.createRepoToken("shop", "write", 3600);
+  const shop = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "shop", main: "src/index.js" }) });
+  assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
+  assert.equal(sites.root, null, "リポジトリ用のトークンでは自動でルートにしない");
+  assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
+  assert.equal(sites.root, "blog");
+});
+
+test("name が違う push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {
+  const { remote, repos, history } = await start(t);
+  await repos.create("sample");
+  const tmp = (await import("node:os")).tmpdir();
+  const { readdirSync } = await import("node:fs");
+  const before = readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length;
+  const push = await git(workTree(t, WORKER), ["push", remote("sample"), "main"]);
+  assert.match(push.output, /wrangler の name（blog）がリポジトリ名（sample）と違う/);
+  assert.equal(readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length, before, "作業ディレクトリを作っていない");
+  const noConfig = await git(workTree(t, { "index.js": "x" }), ["push", "--force", remote("sample"), "main"]);
+  assert.match(noConfig.output, /wrangler\.jsonc \/ wrangler\.json \/ wrangler\.toml がありません/);
+  assert.deepEqual(history.list("sample").map((d) => d.status), ["failed", "failed"], "設定がない失敗もリポジトリの履歴に入る");
+});
+
+test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、同じ名前のサイトがあれば確認を求める", { skip: NO_GIT }, async (t) => {
+  const { base, remote, repos, state } = await start(t);
+  await repos.create("blog");
+  mkdirSync(path.join(repos.dir, "broken.git"));
+  const cookie = `kanzume_session=${await state.createSession()}`;
+  const api = async (p: string, init: RequestInit = {}) => {
+    const res = await fetch(`${base}/_admin/kanzume/api${p}`, { ...init, headers: { cookie, origin: base, "content-type": "application/json" } });
+    return { status: res.status, body: (await res.json()) as Record<string, any> };
+  };
+  const list = await api("/repos");
+  assert.equal(list.status, 200);
+  assert.deepEqual(list.body.repos.map((r: { name: string }) => r.name), ["blog"], "HEAD のないディレクトリは一覧に出さない");
+
+  const { token } = await state.createRepoToken("blog", "read", 3600);
+  const auth = { authorization: `Basic ${Buffer.from(`x:${token}`).toString("base64")}` };
+  assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack&service=git-receive-pack`, { headers: auth })).status, 404);
+  assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, { headers: auth })).status, 200);
+
+  assert.match((await git(workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "blog2", assets: { directory: "public" } }) }), ["push", remote("blog"), "main"])).output, /違う/);
+  // サイト shop を（GitHub からなどで）先に作っておく
+  await repos.create("shop");
+  const shop = workTree(t, { "wrangler.json": JSON.stringify({ name: "shop", assets: { directory: "p" } }), "p/index.html": "shop" });
+  assert.equal((await git(shop, ["push", remote("shop"), "main"])).status, 0);
+  await repos.remove("shop");
+  const conflict = await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop" }) });
+  assert.equal(conflict.status, 409);
+  assert.equal(conflict.body.needsConfirm, true);
+  assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop", confirm: true }) })).status, 200);
 });

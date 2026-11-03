@@ -17,6 +17,8 @@ const state = {
   obs: { view: "overview", range: "24h", result: "", kind: "", q: "", live: false },
   code: { group: null, path: null },
   github: { url: "", error: "" },
+  // リポジトリごとに、最後に見ていたブランチ
+  repoRefs: {},
 };
 
 // ---------- utilities ----------
@@ -1481,8 +1483,8 @@ async function viewSite(main) {
       h("p", {
         class: "muted",
         text: detail.root
-          ? `このサイトは ${rootOrigin}/ でも配信しています。`
-          : `${rootOrigin}/ で配信するサイトを 1 つ選べます。${otherRoot ? `今は ${otherRoot} を配信しています。` : "今は何も配信していません。"}`,
+          ? `このサイトは ${rootOrigin}/ でも配信しています。ルートのサイトは管理画面と同じオリジンで動くので、このサイトにデプロイできる人は管理者と同等です。`
+          : `${rootOrigin}/ で配信するサイトを 1 つ選べます。${otherRoot ? `今は ${otherRoot} を配信しています。` : "今は何も配信していません。"}ルートのサイトは管理画面と同じオリジンで動くので、そのサイトにデプロイできる人は管理者と同等になります。`,
       }),
       rootToggle,
       rootError,
@@ -1522,8 +1524,17 @@ async function viewRepos(main) {
     if (create.disabled) return;
     error.textContent = "";
     create.disabled = true;
+    const name = input.value.trim();
+    const post = (confirm) => api("/repos", { method: "POST", body: JSON.stringify({ name, confirm }) });
     try {
-      const repo = await api("/repos", { method: "POST", body: JSON.stringify({ name: input.value.trim() }) });
+      let repo;
+      try {
+        repo = await post(false);
+      } catch (err) {
+        // 同じ名前のサイトがあるときは、上書きになることを確かめてから作る
+        if (!/同じ名前のサイト/.test(err.message) || !window.confirm(`${err.message}\n\nそれでも作りますか？`)) throw err;
+        repo = await post(true);
+      }
       location.hash = `#/repos/${encodeURIComponent(repo.name)}`;
     } catch (err) {
       error.textContent = err.message;
@@ -1557,7 +1568,7 @@ async function viewRepos(main) {
             "div",
             { class: "side" },
             repo.site ? h("span", { class: "tag", text: `→ ${repo.site}` }) : null,
-            h("div", { text: repo.lastPush ? `push ${fmtAgo(repo.lastPush)}` : "まだ push されていません" }),
+            h("div", { text: repo.broken ? "読み込めません" : repo.lastPush ? `push ${fmtAgo(repo.lastPush)}` : "まだ push されていません" }),
             h("div", { class: "muted", text: fmtBytes(repo.size) }),
           ),
         ),
@@ -1607,7 +1618,8 @@ async function viewRepo(main, name) {
   // 中身（ブランチ・コミット・ファイル）
   if (repo.refs.length) {
     const branch = h("select", { "aria-label": "ブランチ" }, ...repo.refs.map((r) => h("option", { value: r.branch, text: r.branch })));
-    const current = repo.refs.some((r) => r.branch === state.repoRef) ? state.repoRef : repo.defaultBranch;
+    const remembered = state.repoRefs[name];
+    const current = repo.refs.some((r) => r.branch === remembered) ? remembered : repo.defaultBranch;
     branch.value = repo.refs.some((r) => r.branch === current) ? current : repo.refs[0].branch;
     const commits = h("div", { class: "list repo-commits" });
     const tree = h("nav", { class: "tree" });
@@ -1619,13 +1631,19 @@ async function viewRepo(main, name) {
       for (const b of buttons) b.classList.toggle("current", b.dataset.path === path);
       mobile.value = path;
       viewer.replaceChildren(h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })), h("div", { class: "placeholder", text: "読み込み中…" }));
-      const file = await api(repoApi(`/blob?ref=${encodeURIComponent(branch.value)}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
-      if (selected === path) renderFile(viewer, path, file);
+      const ref = branch.value;
+      const file = await api(repoApi(`/blob?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
+      // 待っている間に別のファイルやブランチに切り替わっていたら捨てる
+      if (selected === path && branch.value === ref) renderFile(viewer, path, file);
     };
+    let loading = 0;
     const load = async () => {
-      state.repoRef = branch.value;
+      state.repoRefs[name] = branch.value;
+      const ticket = ++loading;
       const ref = encodeURIComponent(branch.value);
       const [{ commits: log }, { files }] = await Promise.all([api(repoApi(`/log?ref=${ref}`)), api(repoApi(`/tree?ref=${ref}`))]);
+      // ブランチを続けて切り替えたとき、古い応答で上書きしない
+      if (ticket !== loading) return;
       fill(
         commits,
         ...log.map((c) =>
@@ -1690,8 +1708,14 @@ async function viewRepo(main, name) {
             h("span", { class: `status ${t.scope === "write" ? "bad" : "neutral"}`, text: t.scope === "write" ? "write" : "read" }),
             h("div", { class: "grow" }, h("div", { class: "title", text: t.scope === "write" ? "clone / fetch / push" : "clone / fetch" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
             armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
-              await api(repoApi(`/tokens/${t.id}`), { method: "DELETE" }).catch(() => {});
-              route();
+              try {
+                await api(repoApi(`/tokens/${t.id}`), { method: "DELETE" });
+                // 一覧だけを描き直す（発行したばかりのトークンの表示は消さない）
+                repo.tokens = repo.tokens.filter((x) => x.id !== t.id);
+                renderTokens(repo.tokens);
+              } catch (err) {
+                issueError.textContent = err.message;
+              }
             }),
           ),
         ),
@@ -1700,7 +1724,12 @@ async function viewRepo(main, name) {
     if (!tokens.length) tokenList.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
   };
   renderTokens(repo.tokens);
-  const scope = h("select", {}, h("option", { value: "write", text: "write（push もできる）" }), h("option", { value: "read", text: "read（clone だけ）" }));
+  const scope = h("select", {}, h("option", { value: "write", text: "write（push もできる・管理者と同等）" }), h("option", { value: "read", text: "read（clone だけ）" }));
+  const writeWarning = h("p", {
+    class: "notice warn-notice",
+    text: "write トークンは全体の Token と同じ強さです。Worker は Kanzume と同じプロセスで動くため、push できる人はサーバー上のすべて（ほかのサイトや管理画面の Token を含む）にアクセスできます。信頼できる相手にだけ渡してください。",
+  });
+  scope.addEventListener("change", () => (writeWarning.hidden = scope.value !== "write"));
   const ttl = h("select", {}, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
   ttl.value = "86400";
   const issueError = h("div", { class: "error" });
@@ -1708,7 +1737,9 @@ async function viewRepo(main, name) {
     class: "primary",
     text: "発行",
     onclick: async () => {
+      if (issue.disabled) return;
       issueError.textContent = "";
+      issue.disabled = true;
       try {
         const t = await api(repoApi("/tokens"), { method: "POST", body: JSON.stringify({ scope: scope.value, ttl: ttl.value ? Number(ttl.value) : null }) });
         repo.tokens.push(t);
@@ -1724,6 +1755,8 @@ async function viewRepo(main, name) {
         );
       } catch (err) {
         issueError.textContent = err.message;
+      } finally {
+        issue.disabled = false;
       }
     },
   });
@@ -1732,7 +1765,7 @@ async function viewRepo(main, name) {
       "section",
       { class: "card" },
       h("h2", { text: "このリポジトリ用のトークン" }),
-      h("p", { class: "muted", text: "このリポジトリだけに使えるトークンです。AI エージェントや CI に渡すときは、権限と期限を絞ったものを発行してください。" }),
+      h("p", { class: "muted", text: "このリポジトリ用のトークンです。read はこのリポジトリの clone だけに使えます。AI エージェントや CI に渡すときは、できるだけ read で、期限を短くして発行してください。" }),
       h(
         "div",
         { class: "token-form" },
@@ -1740,6 +1773,7 @@ async function viewRepo(main, name) {
         h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl),
         issue,
       ),
+      writeWarning,
       issueError,
       issued,
       tokenList,

@@ -424,3 +424,4 @@ label.inline select, .row select { width: auto; }
   .token-form > button { flex: none; }
   .token-list .list-row > button { grid-column: 2; justify-self: start; }
 }
+.warn-notice { border-left-color: var(--warning); margin: 0 0 12px; max-width: 720px; }

@@ -184,7 +184,8 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
   } catch (err) {
     return fail(deployer, null, err, { source, buildLog: [], log }, "GitHub からのデプロイ");
   }
-  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ" });
+  // GitHub の URL からのデプロイは管理画面（管理者）からしか呼べないので、最初のサイトはルートにしてよい
+  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: true });
 }
 
 export interface BuildContext {
@@ -193,8 +194,10 @@ export interface BuildContext {
   buildLog: string[];
   /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
   where?: string;
-  /** 指定すると、wrangler の name がこれと違うときはデプロイしない（リポジトリ用のトークンで別のサイトを上書きさせないため） */
+  /** 指定すると、wrangler の name がこれと違うときはデプロイしない。失敗もこの名前の履歴に残す（git push 用） */
   expectedName?: string;
+  /** Deployer の autoRoot（全体の Token によるデプロイのときだけ true） */
+  autoRoot?: boolean;
 }
 
 function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
@@ -205,32 +208,53 @@ function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildC
   return { ok: false, error: message };
 }
 
+/** wrangler の name を確かめる（git push では、ファイルを取り出す前に設定だけを読んで照合する） */
+export function checkExpectedName(config: Record<string, unknown>, expected: string): void {
+  if (config.name !== expected) {
+    throw new GitHubError(`wrangler の name（${String(config.name ?? "未設定")}）がリポジトリ名（${expected}）と違うのでデプロイしません。name をリポジトリ名にそろえてください`);
+  }
+}
+
 /**
  * リポジトリのファイル（wrangler の設定があるディレクトリからの相対パス）を、wrangler と同じ解釈でバンドルしてデプロイする。
- * GitHub の URL からのデプロイと、Kanzume への git push の両方で使う。
+ * GitHub の URL からのデプロイで使う。
  */
 export async function deployFromFiles(files: UploadedFile[], deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
-  const { log, buildLog } = ctx;
-  let name: string | null = null;
   const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-build-")));
-
   try {
-    const configFile = CONFIG_FILES.find((c) => files.some((f) => f.path === c));
-    if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
     for (const f of files) {
       const dest = path.join(work, f.path);
       if (!inside(work, dest)) continue;
       await fs.mkdir(path.dirname(dest), { recursive: true });
       await fs.writeFile(dest, f.data);
     }
+    return await deployFromDirectory(work, deployer, ctx);
+  } catch (err) {
+    return fail(deployer, ctx.expectedName ?? null, err, ctx, "デプロイ");
+  } finally {
+    await fs.rm(work, { recursive: true, force: true });
+  }
+}
+
+/** 取り出し済みのディレクトリ（git push では git が直接書き出す）からビルドしてデプロイする。ディレクトリの後片付けは呼び出し側 */
+export async function deployFromDirectory(work: string, deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
+  const { log, buildLog } = ctx;
+  // 名前が分かる前に失敗しても、git push ならリポジトリ名の履歴に残す
+  let name: string | null = ctx.expectedName ?? null;
+
+  try {
+    let configFile: (typeof CONFIG_FILES)[number] | undefined;
+    for (const c of CONFIG_FILES) {
+      if (await fs.stat(path.join(work, c)).then((st) => st.isFile()).catch(() => false)) {
+        configFile = c;
+        break;
+      }
+    }
+    if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
-    if (ctx.expectedName !== undefined && config.name !== ctx.expectedName) {
-      // 失敗の記録も、別のサイトの履歴ではなくこのリポジトリ名のほうに残す
-      name = ctx.expectedName;
-      throw new GitHubError(`wrangler の name（${String(config.name ?? "未設定")}）がリポジトリ名（${ctx.expectedName}）と違うのでデプロイしません。name をリポジトリ名にそろえてください`);
-    }
-    if (typeof config.name === "string") name = config.name;
+    if (ctx.expectedName !== undefined) checkExpectedName(config, ctx.expectedName);
+    else if (typeof config.name === "string") name = config.name;
     const build = config.build as { command?: string } | undefined;
     if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);
 
@@ -298,10 +322,8 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
     }
 
-    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log });
+    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log, autoRoot: ctx.autoRoot });
   } catch (err) {
     return fail(deployer, name, err, ctx, "デプロイ");
-  } finally {
-    await fs.rm(work, { recursive: true, force: true });
   }
 }

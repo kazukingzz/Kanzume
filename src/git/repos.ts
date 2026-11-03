@@ -6,7 +6,6 @@ import { PROJECT_NAME } from "../store.ts";
 
 const run = promisify(execFile);
 const MAX_BLOB = 1024 * 1024;
-export const ZERO_SHA = "0000000000000000000000000000000000000000";
 
 export class RepoError extends Error {}
 
@@ -29,6 +28,25 @@ function safePath(p: string): string {
   return clean;
 }
 
+/** `ls-tree -l -z` の 1 件（`<mode> <type> <sha> <size>\t<path>`）。パスにタブがあっても最初のタブで分ける */
+function parseTreeEntry(entry: string) {
+  const tab = entry.indexOf("\t");
+  const [, type, sha, size] = entry.slice(0, tab).split(/\s+/);
+  return { path: entry.slice(tab + 1), type, sha, size: Number(size) || 0 };
+}
+
+/** ディレクトリの中身の合計サイズ（バイト） */
+export async function dirSize(dir: string): Promise<number> {
+  let total = 0;
+  const entries = await fs.readdir(dir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
+    const p = path.join(dir, entry.name);
+    if (entry.isDirectory()) total += await dirSize(p);
+    else if (entry.isFile()) total += (await fs.stat(p).catch(() => ({ size: 0 }))).size;
+  }
+  return total;
+}
+
 /**
  * Kanzume が持つ Git のリモートリポジトリ（bare）。push は `git http-backend` が受け、読み取りは git コマンドで行う。
  * 置き場所は `<dataDir>/repos/<name>.git`。
@@ -36,10 +54,12 @@ function safePath(p: string): string {
 export class Repos {
   readonly dir: string;
   readonly maxInputBytes: number;
+  readonly quotaBytes: number;
 
-  constructor(dataDir: string, maxInputBytes: number) {
+  constructor(dataDir: string, maxInputBytes: number, quotaBytes = maxInputBytes * 4) {
     this.dir = path.join(dataDir, "repos");
     this.maxInputBytes = maxInputBytes;
+    this.quotaBytes = quotaBytes;
   }
 
   async init(): Promise<void> {
@@ -50,11 +70,11 @@ export class Repos {
     return path.join(this.dir, `${name}.git`);
   }
 
-  git(name: string, args: string[], options: { maxBuffer?: number; encoding?: "buffer" } = {}) {
+  git(name: string, args: string[], options: { maxBuffer?: number; encoding?: "buffer"; env?: Record<string, string> } = {}) {
     return run("git", ["--git-dir", this.path(name), ...args], {
       maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024,
       encoding: (options.encoding ?? "utf8") as BufferEncoding,
-      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
+      env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", ...options.env },
     });
   }
 
@@ -66,20 +86,21 @@ export class Repos {
       .catch(() => false);
   }
 
+  /** リポジトリとして使えるもの（HEAD があるもの）だけ。作りかけや消しかけのディレクトリは含めない */
   async names(): Promise<string[]> {
     const entries = await fs.readdir(this.dir).catch(() => [] as string[]);
-    return entries
+    const names = entries
       .filter((e) => e.endsWith(".git"))
       .map((e) => e.slice(0, -4))
-      .filter((n) => PROJECT_NAME.test(n))
-      .sort();
+      .filter((n) => PROJECT_NAME.test(n));
+    const ok = await Promise.all(names.map((n) => this.exists(n)));
+    return names.filter((_, i) => ok[i]).sort();
   }
 
   async create(name: string): Promise<void> {
     if (!PROJECT_NAME.test(name)) throw new RepoError("名前は英小文字・数字・ハイフンで 63 文字以内にしてください");
     if (await this.exists(name)) throw new RepoError("同じ名前のリポジトリがあります");
     await run("git", ["init", "--quiet", "--bare", "--initial-branch=main", this.path(name)]);
-    await this.git(name, ["config", "http.receivepack", "true"]);
   }
 
   async remove(name: string): Promise<void> {
@@ -87,20 +108,20 @@ export class Repos {
     await fs.rm(this.path(name), { recursive: true, force: true });
   }
 
+  /** HEAD が指すブランチ。--short を使わないのは、同じ名前のタグがあると heads/main のように返るため */
   async defaultBranch(name: string): Promise<string> {
-    const { stdout } = await this.git(name, ["symbolic-ref", "--short", "HEAD"]).catch(() => ({ stdout: "main" }));
-    return String(stdout).trim() || "main";
+    const head = await fs.readFile(path.join(this.path(name), "HEAD"), "utf8").catch(() => "");
+    const m = /^ref: refs\/heads\/(.+)$/m.exec(head);
+    return m?.[1].trim() || "main";
   }
 
   async summary(name: string): Promise<RepoSummary> {
-    const [defaultBranch, { stdout }, { stdout: counts }] = await Promise.all([
+    const [defaultBranch, { stdout }, size] = await Promise.all([
       this.defaultBranch(name),
       this.git(name, ["for-each-ref", "--sort=-committerdate", "--count=1", "--format=%(committerdate:iso-strict)", "refs/heads"]),
-      this.git(name, ["count-objects", "-v"]),
+      dirSize(path.join(this.path(name), "objects")),
     ]);
-    // ディレクトリをたどらずに、オブジェクトの大きさ（KiB）だけを足す
-    const kib = (key: string) => Number(new RegExp(`^${key}: (\\d+)$`, "m").exec(String(counts))?.[1] ?? 0);
-    return { name, defaultBranch, lastPush: String(stdout).trim() || null, size: (kib("size") + kib("size-pack")) * 1024 };
+    return { name, defaultBranch, lastPush: String(stdout).trim() || null, size };
   }
 
   async refs(name: string) {
@@ -130,14 +151,11 @@ export class Repos {
       });
   }
 
-  async resolve(name: string, ref: string): Promise<string | null> {
-    const out = await this.git(name, ["rev-parse", "--verify", "--quiet", `${safeRef(ref)}^{commit}`]).catch(() => null);
-    return out ? String(out.stdout).trim() : null;
-  }
-
-  async commit(name: string, sha: string) {
-    const { stdout } = await this.git(name, ["log", "-1", "--format=%H%x00%an%x00%s", safeRef(sha), "--"]);
+  /** ブランチ名やコミットからコミットの情報を引く。見つからなければ例外 */
+  async commit(name: string, ref: string) {
+    const { stdout } = await this.git(name, ["log", "-1", "--format=%H%x00%an%x00%s", safeRef(ref), "--"]);
     const [full, author, subject] = String(stdout).trim().split("\0");
+    if (!full) throw new RepoError(`${ref} が見つかりません`);
     return { sha: full, author, subject };
   }
 
@@ -147,33 +165,47 @@ export class Repos {
     return String(stdout)
       .split("\0")
       .filter(Boolean)
-      .map((entry) => {
-        const [meta, file] = entry.split("\t");
-        const [, type, , size] = meta.split(/\s+/);
-        return { path: file, type, size: Number(size) || 0 };
-      })
-      .filter((f) => f.type === "blob");
+      .map(parseTreeEntry)
+      .filter((f) => f.type === "blob")
+      .map(({ path: p, type, size }) => ({ path: p, type, size }));
+  }
+
+  /** あるコミットの全ファイルの合計サイズ */
+  async treeSize(name: string, ref: string): Promise<number> {
+    return (await this.tree(name, ref)).reduce((n, f) => n + f.size, 0);
   }
 
   async blob(name: string, ref: string, file: string): Promise<{ path: string; size: number; text: string | null; binary: boolean } | null> {
     const clean = safePath(file);
     if (!clean) return null;
-    const spec = `${safeRef(ref)}:${clean}`;
-    const type = await this.git(name, ["cat-file", "-t", spec]).catch(() => null);
-    if (!type || String(type.stdout).trim() !== "blob") return null;
-    const out = await this.git(name, ["cat-file", "-s", spec]).catch(() => null);
-    const size = out ? Number(String(out.stdout).trim()) : NaN;
-    if (!Number.isFinite(size)) return null;
-    if (size > MAX_BLOB) return { path: file, size, text: null, binary: true };
-    const { stdout } = await this.git(name, ["cat-file", "blob", spec], { encoding: "buffer" });
+    // 1 回の ls-tree で種類・大きさ・オブジェクトを決めてから中身を読む（途中で push されても同じオブジェクトを読む）
+    const out = await this.git(name, ["ls-tree", "-l", "-z", "--full-tree", safeRef(ref), "--", clean]).catch(() => null);
+    const entry = out ? String(out.stdout).split("\0").filter(Boolean).map(parseTreeEntry)[0] : undefined;
+    if (!entry || entry.type !== "blob" || entry.path !== clean) return null;
+    if (entry.size > MAX_BLOB) return { path: file, size: entry.size, text: null, binary: true };
+    const { stdout } = await this.git(name, ["cat-file", "blob", entry.sha], { encoding: "buffer" });
     const data = stdout as unknown as Buffer;
     const binary = data.includes(0);
-    return { path: file, size, text: binary ? null : data.toString("utf8"), binary };
+    return { path: file, size: entry.size, text: binary ? null : data.toString("utf8"), binary };
   }
 
-  /** あるコミットのファイル一式を tar で取り出す */
-  async archive(name: string, sha: string): Promise<Buffer> {
-    const { stdout } = await this.git(name, ["archive", "--format=tar", safeRef(sha)], { encoding: "buffer", maxBuffer: this.maxInputBytes * 4 });
-    return stdout as unknown as Buffer;
+  /** あるコミットの 1 ファイルを読む（なければ null）。git push で、全体を取り出す前に wrangler の設定だけを読むため */
+  async readFile(name: string, sha: string, file: string): Promise<string | null> {
+    const out = await this.git(name, ["cat-file", "blob", `${safeRef(sha)}:${safePath(file)}`]).catch(() => null);
+    return out ? String(out.stdout) : null;
+  }
+
+  /**
+   * あるコミットのファイル一式を、メモリに載せずに dest へ直接書き出す。
+   * シンボリックリンクは中身（リンク先の文字列）のファイルとして書く（dest の外を指させないため）
+   */
+  async checkout(name: string, sha: string, dest: string): Promise<void> {
+    const index = path.join(dest, "..", `${path.basename(dest)}.index`);
+    try {
+      await this.git(name, ["read-tree", safeRef(sha)], { env: { GIT_INDEX_FILE: index } });
+      await this.git(name, ["-c", "core.symlinks=false", "--work-tree", dest, "checkout-index", "--all", "--force"], { env: { GIT_INDEX_FILE: index } });
+    } finally {
+      await fs.rm(index, { force: true });
+    }
   }
 }

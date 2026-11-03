@@ -1,24 +1,25 @@
 import { execFileSync, spawn } from "node:child_process";
-import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
+import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { pipeline } from "node:stream/promises";
 import { safeEqual, type AdminState, type RepoScope } from "../admin/state.ts";
 import type { Config } from "../config.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
-import { deployFromFiles } from "../deploy/github.ts";
-import { readTar } from "../deploy/tar.ts";
+import { checkExpectedName, deployFromDirectory, GitHubError } from "../deploy/github.ts";
+import { CONFIG_FILES, ConfigError, parseWranglerConfig } from "../deploy/wrangler.ts";
 import { externalOrigin, readBody, sendText } from "../http.ts";
+import { SerialQueue } from "../serial.ts";
 import type { Sites } from "../sites.ts";
-import { Repos, ZERO_SHA } from "./repos.ts";
+import type { Repos } from "./repos.ts";
 
 export const GIT_PATH = "/_git";
 export const HOOK_PATH = "/_api/git/hook";
 
-// pathname ではなく fileURLToPath にするのは、パスに空白や日本語があると %20 などのままになるため
-const HOOK_SCRIPT = fileURLToPath(new URL("./hook.ts", import.meta.url));
+const HOOKS = { "post-receive": "hook.ts", "pre-receive": "pre-receive.ts" };
 const SERVICES: Record<string, RepoScope> = { "git-upload-pack": "read", "git-receive-pack": "write" };
 
 interface Deps {
@@ -39,12 +40,17 @@ function basicToken(req: IncomingMessage): string {
   return i === -1 ? decoded : decoded.slice(i + 1) || decoded.slice(0, i);
 }
 
-/** post-receive フックの置き場所。core.hooksPath で全リポジトリから使う */
+/** sh の単一引用符で囲む（パスに " $ ` \ があっても展開させない） */
+const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
+
+/** フックの置き場所。core.hooksPath で全リポジトリから使う */
 export async function installHooks(dataDir: string): Promise<string> {
   const dir = path.join(dataDir, "git-hooks");
   await fs.mkdir(dir, { recursive: true });
-  const script = `#!/bin/sh\nexec "${process.execPath}" --disable-warning=ExperimentalWarning "${HOOK_SCRIPT}"\n`;
-  await fs.writeFile(path.join(dir, "post-receive"), script, { mode: 0o755 });
+  for (const [hook, file] of Object.entries(HOOKS)) {
+    const script = `#!/bin/sh\nexec ${shQuote(process.execPath)} --disable-warning=ExperimentalWarning ${shQuote(path.join(import.meta.dirname, file))}\n`;
+    await fs.writeFile(path.join(dir, hook), script, { mode: 0o755 });
+  }
   try {
     const exec = execFileSync("git", ["--exec-path"], { encoding: "utf8" }).trim();
     if (!existsSync(path.join(exec, "git-http-backend"))) console.warn("[git] git-http-backend がないため、git push を受け付けられません");
@@ -54,33 +60,39 @@ export async function installHooks(dataDir: string): Promise<string> {
   return dir;
 }
 
-function hookHost(address: string | undefined): string {
-  if (!address) return "127.0.0.1";
-  const v4 = address.replace(/^::ffff:/, "");
-  return v4.includes(":") ? `[${v4}]` : v4;
+/** GIT_CONFIG_COUNT / KEY_n / VALUE_n を組み立てる（番号を手で振らない） */
+function gitConfigEnv(entries: [string, string][]): Record<string, string> {
+  const env: Record<string, string> = { GIT_CONFIG_COUNT: String(entries.length) };
+  entries.forEach(([key, value], i) => {
+    env[`GIT_CONFIG_KEY_${i}`] = key;
+    env[`GIT_CONFIG_VALUE_${i}`] = value;
+  });
+  return env;
 }
 
 export function createGitHandler({ config, state, repos, sites, deployer }: Deps, hooksDir: string) {
   // フックから Kanzume に戻ってくるときの合言葉。起動のたびに変わる
   const hookSecret = randomBytes(24).toString("base64url");
   // push の順番どおりにデプロイするため、リポジトリごとに直列にする
-  const queues = new Map<string, Promise<unknown>>();
-  const serialize = <T>(name: string, fn: () => Promise<T>): Promise<T> => {
-    const run = (queues.get(name) ?? Promise.resolve()).then(fn, fn);
-    queues.set(name, run.catch(() => {}));
-    return run;
-  };
+  const queue = new SerialQueue();
 
   async function handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void> {
     const m = /^\/_git\/([a-z0-9-]+)\.git(\/.*)$/.exec(pathname);
-    const query = new URLSearchParams(search.replace(/^\?/, ""));
     const rest = m?.[2] ?? "";
+    let service: string | null;
+    if (rest === "/info/refs") {
+      // service を複数付けられると、確認した値と http-backend が使う値が食い違うので 1 つだけ受ける
+      const values = new URLSearchParams(search.replace(/^\?/, "")).getAll("service");
+      service = values.length === 1 ? values[0] : null;
+    } else {
+      service = rest.slice(1);
+    }
     // Smart HTTP だけを受ける（dumb HTTP でリポジトリの中身をそのまま見せない）
-    const service = rest === "/info/refs" ? query.get("service") : rest.slice(1);
     if (!m || !service || !(service in SERVICES)) return sendText(res, 404, "Not Found");
     const name = m[1];
 
-    const access = state.repoAccess(name, basicToken(req));
+    const token = basicToken(req);
+    const access = state.repoAccess(name, token);
     if (!access) {
       res.writeHead(401, { "www-authenticate": 'Basic realm="Kanzume"', "content-type": "text/plain; charset=utf-8" });
       res.end("トークンが必要です（パスワードに Token を入力してください）\n");
@@ -89,7 +101,6 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
     if (SERVICES[service] === "write" && access !== "write") return sendText(res, 403, "このトークンでは push できません（read 専用）\n");
     if (!(await repos.exists(name))) return sendText(res, 404, "リポジトリが見つかりません\n");
 
-    const origin = externalOrigin(req, config.origin);
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
       HOME: repos.dir,
@@ -99,53 +110,79 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       GIT_HTTP_MAX_REQUEST_BUFFER: String(repos.maxInputBytes),
       PATH_INFO: `/${name}.git${rest}`,
       REQUEST_METHOD: req.method ?? "GET",
-      QUERY_STRING: search.replace(/^\?/, ""),
+      QUERY_STRING: rest === "/info/refs" ? `service=${service}` : "",
       CONTENT_TYPE: req.headers["content-type"] ?? "",
       REMOTE_USER: "kanzume",
       REMOTE_ADDR: req.socket.remoteAddress ?? "",
-      // リポジトリの設定ファイルではなく毎回ここで渡すので、KANZUME_MAX_UPLOAD_MB を変えれば既存のリポジトリにも効く
-      GIT_CONFIG_COUNT: "4",
-      GIT_CONFIG_KEY_0: "core.hooksPath",
-      GIT_CONFIG_VALUE_0: hooksDir,
-      GIT_CONFIG_KEY_1: "http.receivepack",
-      GIT_CONFIG_VALUE_1: "true",
-      GIT_CONFIG_KEY_2: "receive.maxInputSize",
-      GIT_CONFIG_VALUE_2: String(repos.maxInputBytes),
-      // ブランチの削除は受け付けない（main を消すとデプロイ元がなくなるため）
-      GIT_CONFIG_KEY_3: "receive.denyDeletes",
-      GIT_CONFIG_VALUE_3: "true",
-      // フックに渡す情報。戻り先は、この接続を受けたアドレス（待ち受けているアドレス）にする
-      KANZUME_HOOK_URL: `http://${hookHost(req.socket.localAddress)}:${req.socket.localPort}${HOOK_PATH}`,
+      // リポジトリの設定ファイルではなく毎回ここで渡すので、設定を変えれば既存のリポジトリにも効く
+      ...gitConfigEnv([
+        ["core.hooksPath", hooksDir],
+        ["http.receivepack", "true"],
+        ["receive.maxInputSize", String(repos.maxInputBytes)],
+      ]),
+      // フックに渡す情報。戻り先はループバック（listen() はすべてのアドレスで待ち受けている）
+      KANZUME_HOOK_URL: `http://127.0.0.1:${req.socket.localPort}${HOOK_PATH}`,
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
-      KANZUME_ORIGIN_URL: origin,
+      KANZUME_ORIGIN_URL: externalOrigin(req, config.origin),
+      // 全体の Token での push かどうか（リポジトリ用のトークンでは、最初のサイトをルートにしない）
+      KANZUME_PUSH_SCOPE: state.checkDeployToken(token) ? "global" : "repo",
+      KANZUME_REPO_QUOTA_BYTES: String(repos.quotaBytes),
     };
     if (req.headers["content-encoding"]) env.HTTP_CONTENT_ENCODING = String(req.headers["content-encoding"]);
     if (req.headers["git-protocol"]) env.GIT_PROTOCOL = String(req.headers["git-protocol"]);
 
+    const fail = (status: number, message: string) => {
+      if (!res.headersSent) sendText(res, status, message);
+      else res.destroy();
+    };
+
     const child = spawn("git", ["http-backend"], { env, stdio: ["pipe", "pipe", "pipe"] });
+    if (!child.stdin || !child.stdout || !child.stderr) {
+      // EMFILE などで子プロセスの stdio を作れなかった
+      child.on("error", () => {});
+      return fail(500, "git を起動できませんでした\n");
+    }
+    const { stdin, stdout, stderr } = child;
+
+    // 途中で切れたら git も止める（止めないと stdin を待ったまま残り続ける）
+    let tooLarge = false;
+    const kill = () => {
+      if (child.exitCode === null && child.signalCode === null) child.kill();
+    };
+    req.on("close", () => {
+      if (!req.complete) kill();
+    });
+    res.on("close", () => {
+      if (!res.writableFinished) kill();
+    });
     let received = 0;
     req.on("data", (chunk: Buffer) => {
       received += chunk.length;
       if (received > repos.maxInputBytes) {
-        child.kill();
+        tooLarge = true;
+        kill();
         req.destroy();
       }
     });
-    req.pipe(child.stdin);
-    child.stdin.on("error", () => {});
-    child.stderr.on("data", (d: Buffer) => console.error(`[git] ${d.toString().trimEnd()}`));
+    pipeline(req, stdin).catch(() => {});
+    stderr.on("data", (d: Buffer) => console.error(`[git] ${d.toString().trimEnd()}`));
 
     await new Promise<void>((resolve) => {
-      let head = Buffer.alloc(0);
-      let headersSent = false;
-      child.stdout.on("data", (chunk: Buffer) => {
-        if (headersSent) {
-          res.write(chunk);
-          return;
+      let head: Buffer | null = Buffer.alloc(0);
+      const write = (chunk: Buffer) => {
+        // 受け手が遅いときは git の出力を止めて、メモリに溜め込まない
+        if (!res.write(chunk)) {
+          stdout.pause();
+          res.once("drain", () => stdout.resume());
         }
+      };
+      stdout.on("data", (chunk: Buffer) => {
+        if (head === null) return write(chunk);
         head = Buffer.concat([head, chunk]);
-        const end = head.indexOf("\r\n\r\n") !== -1 ? head.indexOf("\r\n\r\n") + 4 : head.indexOf("\n\n") !== -1 ? head.indexOf("\n\n") + 2 : -1;
+        const crlf = head.indexOf("\r\n\r\n");
+        const lf = head.indexOf("\n\n");
+        const end = crlf !== -1 ? crlf + 4 : lf !== -1 ? lf + 2 : -1;
         if (end === -1) return;
         let status = 200;
         const headers: Record<string, string> = { "cache-control": "no-store" };
@@ -157,22 +194,22 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
           if (key === "status") status = Number.parseInt(value, 10) || 200;
           else headers[key] = value;
         }
+        const body = head.subarray(end);
+        head = null;
         res.writeHead(status, headers);
-        headersSent = true;
-        res.write(head.subarray(end));
+        write(body);
+      });
+      // 応答は close でだけ返す（error のあとにも close は来るので、ここで二重に返さない）
+      let spawnError: Error | null = null;
+      child.on("error", (err) => {
+        spawnError = err;
+        console.error("[git] git http-backend を起動できません:", err);
       });
       child.on("close", (code) => {
-        if (!headersSent) {
-          if (received > repos.maxInputBytes) sendText(res, 413, `push は ${Math.round(repos.maxInputBytes / 1024 / 1024)} MB までです\n`);
-          else sendText(res, 500, `git http-backend が失敗しました（終了コード ${code}）\n`);
-        } else {
-          res.end();
-        }
-        resolve();
-      });
-      child.on("error", (err) => {
-        console.error("[git] git http-backend を起動できません:", err);
-        if (!headersSent) sendText(res, 500, "サーバーに git がありません\n");
+        if (res.headersSent) res.end();
+        else if (tooLarge) fail(413, `push は ${Math.round(repos.maxInputBytes / 1024 / 1024)} MB までです\n`);
+        else if (spawnError) fail(500, "サーバーで git を起動できませんでした\n");
+        else fail(500, `git http-backend が失敗しました（終了コード ${code}）\n`);
         resolve();
       });
     });
@@ -182,7 +219,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
   async function handleHook(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST" || !safeEqual(String(req.headers["x-kanzume-hook"] ?? ""), hookSecret)) return sendText(res, 403, "Forbidden");
     const raw = await readBody(req, 1024 * 1024);
-    let body: { repo?: string; origin?: string; updates?: { old: string; new: string; ref: string }[] };
+    let body: { repo?: string; origin?: string; scope?: string; updates?: { old: string; new: string; ref: string }[] };
     try {
       body = JSON.parse(raw?.toString("utf8") ?? "");
     } catch {
@@ -195,36 +232,78 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
     const say = (line: string) => res.write(`${line}\n`);
     try {
       const branch = await repos.defaultBranch(name);
-      const update = (body.updates ?? []).find((u) => u.ref === `refs/heads/${branch}` && u.new !== ZERO_SHA);
+      const update = (body.updates ?? []).find((u) => u.ref === `refs/heads/${branch}`);
       if (!update) {
         say(`${branch} 以外への push なので、保存だけしてデプロイはしません`);
         return;
       }
-      const result = await serialize(name, async () => {
-        // 待っている間に新しい push があれば、古いコミットはデプロイしない
-        if ((await repos.resolve(name, `refs/heads/${branch}`)) !== update.new) return null;
-        const commit = await repos.commit(name, update.new);
-        const log = new DeployLog(`git push（${name}@${branch} ${commit.sha.slice(0, 7)}）からデプロイします`, say);
-        const files = readTar(await repos.archive(name, update.new), { skipLinks: true }).filter((f) => f.path && !f.path.startsWith(".git/"));
-        log.add(`ファイル: ${files.length} 件`);
-        return deployFromFiles(files, deployer, {
-          source: { repository: name, ref: branch, sha: commit.sha, commitMessage: commit.subject, actor: commit.author },
-          log,
-          buildLog: [],
-          expectedName: name,
-        });
+      // すぐに 1 行返してヘッダーを送る（前のデプロイを待つ間に、フック側の待ち時間の上限に当たらないように）
+      say("デプロイの順番を待っています…");
+      await queue.run(name, async () => {
+        const log = new DeployLog(`git push（${name}@${branch} ${update.new.slice(0, 7)}）からデプロイします`, say);
+        const source = { repository: name, ref: branch, sha: update.new };
+        try {
+          // 待っている間に新しい push があれば、古いコミットはデプロイしない
+          const head = await repos.commit(name, `refs/heads/${branch}`);
+          if (head.sha !== update.new) {
+            say(`${branch} に新しい push（${head.sha.slice(0, 7)}）があるので、このコミットのデプロイは飛ばします`);
+            return;
+          }
+          Object.assign(source, { commitMessage: head.subject, actor: head.author });
+
+          // 取り出す前に、設定の name と大きさだけを確かめる（名前が違う push で全体を書き出さない）
+          let configText: string | null = null;
+          let configFile: string | undefined;
+          for (const c of CONFIG_FILES) {
+            configText = await repos.readFile(name, head.sha, c);
+            if (configText !== null) {
+              configFile = c;
+              break;
+            }
+          }
+          if (!configFile || configText === null) throw new GitHubError(`リポジトリのトップに ${CONFIG_FILES.join(" / ")} がありません`);
+          checkExpectedName(parseWranglerConfig(configFile, configText), name);
+          const size = await repos.treeSize(name, head.sha);
+          const limit = config.maxUploadBytes * 4;
+          if (size > limit) throw new GitHubError(`ファイルの合計（${Math.round(size / 1024 / 1024)} MB）が上限（${Math.round(limit / 1024 / 1024)} MB）を超えています`);
+
+          const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-push-")));
+          try {
+            await repos.checkout(name, head.sha, work);
+            log.add(`取り出し: ${(size / 1024).toFixed(1)} KiB`);
+            const result = await deployFromDirectory(work, deployer, {
+              source,
+              log,
+              buildLog: [],
+              expectedName: name,
+              autoRoot: body.scope === "global",
+            });
+            if (result.ok) {
+              let url = "";
+              try {
+                url = sites.urls(String(body.origin || externalOrigin(req, config.origin)), name).url;
+              } catch {
+                // オリジンが壊れていても、デプロイ自体は成功している
+              }
+              say(`デプロイしました${url ? `: ${url}` : ""}`);
+            } else {
+              say(`デプロイに失敗しました: ${result.error}`);
+              say("（push したコミットは保存されています。直して push し直してください）");
+            }
+          } finally {
+            await fs.rm(work, { recursive: true, force: true });
+          }
+        } catch (err) {
+          const known = err instanceof GitHubError || err instanceof ConfigError;
+          if (!known) console.error("[git] push 後のデプロイで例外:", err);
+          const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error).message}`;
+          // 取り出しの前に失敗しても、リポジトリ名の履歴に残す
+          deployer.recordFailure(name, message, { source, buildLog: "", log });
+          say(`デプロイに失敗しました: ${message}`);
+        }
       });
-      if (!result) {
-        say(`${branch} に新しい push があるので、このコミットのデプロイは飛ばします`);
-      } else if (result.ok) {
-        const site = result.release.manifest.name;
-        say(`デプロイしました: ${sites.urls(String(body.origin || externalOrigin(req, config.origin)), site).url}`);
-      } else {
-        say(`デプロイに失敗しました: ${result.error}`);
-        say("（push したコミットは保存されています。直して push し直してください）");
-      }
     } catch (err) {
-      console.error("[git] push 後のデプロイで例外:", err);
+      console.error("[git] push 後の処理で例外:", err);
       say(`デプロイに失敗しました: ${(err as Error).message}`);
     } finally {
       res.end();

@@ -50,11 +50,11 @@ git push kanzume main
 - △ `nodejs_compat`（fs・net・child_process などは不可）
 - × Cron Triggers / D1 / Durable Objects / Queues / WebSocket / HTMLRewriter / secrets / Service Worker 形式
 
-Worker は `node:vm` で動かします。セキュリティ境界ではないので、デプロイできる人は信頼する前提です。
+Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします。セキュリティ境界ではないので、デプロイできる人（全体の Token・リポジトリ用の write トークンを持つ人）は管理者と同等で、サーバー上のすべてにアクセスできます。ルートドメインで配信するサイトも管理画面と同じオリジンで動くので同様です。信頼できる相手にだけ渡してください。
 
 ## 環境変数
 
-`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。未設定ならアクセスされたドメイン。設定すると存在しないサブドメインを 404 にできる）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
+`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。未設定ならアクセスされたドメイン。設定すると存在しないサブドメインを 404 にできる）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
 
 ## 開発
 

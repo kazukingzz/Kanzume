@@ -98,6 +98,8 @@ export type HostMatch = { kind: "root" } | { kind: "site"; name: string } | { ki
  */
 export function matchHost(host: string, has: (name: string) => boolean, rootHost?: string): HostMatch {
   const h = hostname(host);
+  // IP アドレス（192.0.2.1 や [::1]）はサブドメインを持たないので、先頭の数字をサイト名として扱わない
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) return { kind: "root" };
   if (rootHost) {
     const root = hostname(rootHost);
     if (h === root) return { kind: "root" };

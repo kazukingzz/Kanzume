@@ -29,7 +29,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const resources = new ResourceMonitor();
 
   const deployer = new Deployer(sites, runtime, history);
-  const repos = new Repos(config.dataDir, config.maxUploadBytes);
+  const repos = new Repos(config.dataDir, config.maxUploadBytes, config.repoQuotaBytes);
   await repos.init();
   const { handleGit, handleHook } = createGitHandler({ config, state, repos, sites, deployer }, await installHooks(config.dataDir));
   const deps = { config, state, sites, repos, runtime, history, observability, resources, deployer, github: options.github };

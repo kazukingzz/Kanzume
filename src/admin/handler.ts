@@ -236,20 +236,36 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     // ---------- Git リポジトリ ----------
 
-    const repoInfo = async (name: string, deployed = history.sitesByRepository()) => ({
+    // push 先のサイトはリポジトリと同じ名前（name が違う push はデプロイしない）なので、そのサイトがあるかだけを見る
+    const repoInfo = async (name: string) => ({
       ...(await repos.summary(name)),
       cloneUrl: `${origin}${GIT_PATH}/${name}.git`,
-      site: deployed.get(name) ?? null,
+      site: sites.get(name)?.get() ? name : null,
     });
 
     if (route === "GET /api/repos") {
-      const deployed = history.sitesByRepository();
-      return sendJson(res, 200, { repos: await Promise.all((await repos.names()).map((name) => repoInfo(name, deployed))) });
+      // 1 つ読めないリポジトリがあっても、一覧全体は返す
+      const list = await Promise.all(
+        (await repos.names()).map((name) =>
+          repoInfo(name).catch((err) => {
+            console.error(`[git] リポジトリ ${name} を読めません:`, err);
+            return { name, broken: true, cloneUrl: `${origin}${GIT_PATH}/${name}.git`, site: null, defaultBranch: "main", lastPush: null, size: 0 };
+          }),
+        ),
+      );
+      return sendJson(res, 200, { repos: list });
     }
 
     if (route === "POST /api/repos") {
       const body = await readJson(req);
       const name = String(body?.name ?? "").trim();
+      // 同じ名前のサイトがあると、このリポジトリへの push でそのサイトを上書きすることになるので、確認を求める
+      if (sites.get(name)?.get() && body?.confirm !== true) {
+        return sendJson(res, 409, {
+          error: `同じ名前のサイト（${name}）があります。このリポジトリに push すると、そのサイトを上書きします`,
+          needsConfirm: true,
+        });
+      }
       try {
         await repos.create(name);
       } catch (err) {

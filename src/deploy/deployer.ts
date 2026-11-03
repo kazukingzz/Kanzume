@@ -1,5 +1,6 @@
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
+import { SerialQueue } from "../serial.ts";
 import type { Sites } from "../sites.ts";
 import { PROJECT_NAME, type Manifest, type Release, type UploadedFile } from "../store.ts";
 import type { DeployHistory, DeploySource } from "./history.ts";
@@ -40,6 +41,11 @@ export interface DeployInput {
   source: DeploySource;
   buildLog: string;
   log: DeployLog;
+  /**
+   * ルートドメインで配信するサイトがまだないとき、このサイトをルートにするか。
+   * ルートは管理画面と同じオリジンなので、全体の Token（管理者）によるデプロイのときだけ true にする
+   */
+  autoRoot?: boolean;
 }
 
 export type DeployResult = { ok: true; release: Release } | { ok: false; error: string };
@@ -71,7 +77,7 @@ export class Deployer {
   #sites: Sites;
   #runtime: Runtime;
   #history: DeployHistory;
-  #queue: Promise<unknown> = Promise.resolve();
+  #queue = new SerialQueue();
 
   constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
     this.#sites = sites;
@@ -80,9 +86,7 @@ export class Deployer {
   }
 
   #serialize<T>(fn: () => Promise<T>): Promise<T> {
-    const run = this.#queue.then(fn, fn);
-    this.#queue = run.catch(() => {});
-    return run;
+    return this.#queue.run("deploy", fn);
   }
 
   recordFailure(name: string | null, error: string, input: Omit<DeployInput, "files" | "sources">, size = 0, files = 0): void {
@@ -151,7 +155,7 @@ export class Deployer {
       }
       await store.activate(release);
       // 最初のサイトはルートドメインでも配信する（1 サイトだけなら今までどおり / で開ける）
-      if (this.#sites.root === null) await this.#sites.setRoot(manifest.name);
+      if (input.autoRoot && this.#sites.root === null) await this.#sites.setRoot(manifest.name);
       if (worker) this.#runtime.install(worker);
       else this.#runtime.evict(store.siteDir);
       log.add("新しいリリースに切り替えました");

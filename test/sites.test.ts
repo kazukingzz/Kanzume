@@ -15,6 +15,8 @@ test("Host のサブドメインが既存のサイト名ならそのサイト、
   assert.deepEqual(matchHost("blog.localhost:8080", has), { kind: "site", name: "blog" });
   assert.deepEqual(matchHost("localhost:8080", has), { kind: "root" });
   assert.deepEqual(matchHost("127.0.0.1:8080", has), { kind: "root" });
+  assert.deepEqual(matchHost("127.0.0.1", (n) => n === "127"), { kind: "root" }, "IP アドレスの先頭の数字はサイト名にしない");
+  assert.deepEqual(matchHost("[::1]:8080", has), { kind: "root" });
 
   assert.deepEqual(matchHost("blog.tekitou.app", has, "tekitou.app"), { kind: "site", name: "blog" });
   assert.deepEqual(matchHost("tekitou.app", has, "tekitou.app"), { kind: "root" });
