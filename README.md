@@ -9,11 +9,17 @@ Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書
 ## 立てる
 
 ```sh
+docker compose up -d
+```
+
+`/_admin/kanzume` を開き、起動ログ（`docker compose logs`）に出るセットアップトークンでパスキーを登録します。`KANZUME_ORIGIN`・`KANZUME_SETUP_TOKEN`・`KANZUME_PORT`（公開するポート、既定 8080）は `.env` か環境変数で渡せます。
+
+compose を使わない場合:
+
+```sh
 docker build -t kanzume .
 docker run -d -p 8080:8080 -v kanzume-data:/data kanzume
 ```
-
-`/_admin/kanzume` を開き、起動ログに出るセットアップトークンでパスキーを登録します。
 
 ## デプロイする
 
