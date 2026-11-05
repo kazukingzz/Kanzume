@@ -557,7 +557,7 @@ function samplesCard(urls) {
       h(
         "div",
         { class: "grow" },
-        h("div", { class: "sample-title" }, h("b", { text: sample.title }), h("span", { class: "muted mono", text: `${sample.name}.${location.host}` }), exists ? h("span", { class: "tag", text: "デプロイ済み" }) : null),
+        h("div", { class: "sample-title" }, h("b", { text: sample.title }), h("span", { class: "muted mono", text: `${sample.name}.${state.overview.domain?.effective ?? location.host}` }), exists ? h("span", { class: "tag", text: "デプロイ済み" }) : null),
         h("p", { class: "muted", text: sample.description }),
         h("div", { class: "tags" }, ...sample.tags.map((t) => h("span", { class: "tag", text: t })), h("a", { href: sample.url, target: "_blank", rel: "noopener", text: "コードを見る ↗" })),
       ),
@@ -1487,7 +1487,7 @@ async function viewSite(main) {
   const vars = Object.entries(r.vars);
 
   const rootError = h("div", { class: "error" });
-  const rootOrigin = location.origin;
+  const rootOrigin = `${location.protocol}//${state.overview.domain?.effective ?? location.host}`;
   const rootToggle = h("button", {
     class: detail.root ? "" : "primary",
     text: detail.root ? "ルートドメインでの配信をやめる" : "ルートドメインで配信する",
