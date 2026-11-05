@@ -1385,8 +1385,46 @@ function passkeyItem(p, i, reload) {
   return item;
 }
 
+function domainCard() {
+  const d = state.overview.domain;
+  const input = h("input", { value: d.value ?? "", placeholder: "example.com", spellcheck: "false", autocomplete: "off", "aria-label": "ルートドメイン", disabled: d.fromEnv || undefined });
+  const error = h("div", { class: "error" });
+  const save = h("button", { class: "primary", text: "保存", disabled: d.fromEnv || undefined });
+  const run = async () => {
+    if (save.disabled) return;
+    error.textContent = "";
+    save.disabled = true;
+    try {
+      await api("/domain", { method: "POST", body: JSON.stringify({ domain: input.value }) });
+      // サイトの URL が新しいドメインになるので読み直す
+      await loadOverview();
+      route();
+    } catch (err) {
+      error.textContent = err.message;
+      save.disabled = false;
+    }
+  };
+  save.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
+  const now = d.value || d.fromEnv ? d.effective : null;
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "ドメイン" }),
+    h("p", {
+      class: "muted",
+      text: "サイトは <サイト名>.<ドメイン>、ルートのサイトは <ドメイン> で配信します。DNS はドメイン本体とワイルドカード（*.<ドメイン>）を Kanzume に向けてください。空にすると、管理画面を開いたホストをドメインとして使います。",
+    }),
+    h("div", { class: "field" }, h("label", { text: "ルートドメイン" }), h("div", { class: "row" }, h("div", { class: "grow" }, input), save)),
+    d.fromEnv ? h("p", { class: "muted hint", text: `環境変数 KANZUME_ORIGIN で ${d.effective} に決まっています。変えるには環境変数を変更してください。` }) : null,
+    !d.fromEnv && !d.value ? h("p", { class: "muted hint", text: `今は自動です（この画面を開いている ${d.current} をドメインとして使っています）。` }) : null,
+    now && now !== d.current ? h("p", { class: "muted hint", text: `この管理画面は ${d.current} で開いています。サイトは ${now} とそのサブドメインで配信されます。` }) : null,
+    error,
+  );
+}
+
 async function viewSettings(main) {
-  const page = h("div", { class: "page" }, pageHead("設定"));
+  const page = h("div", { class: "page" }, pageHead("設定"), domainCard());
   const tokenView = h("code", { class: "value grow", text: state.showToken ? state.token : "••••••••••••••••" });
   const toggle = h("button", { text: state.showToken ? "隠す" : "表示" });
   toggle.addEventListener("click", () => {

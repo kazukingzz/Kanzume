@@ -20,8 +20,10 @@ test("Host のサブドメインが既存のサイト名ならそのサイト、
 
   assert.deepEqual(matchHost("blog.tekitou.app", has, "tekitou.app"), { kind: "site", name: "blog" });
   assert.deepEqual(matchHost("tekitou.app", has, "tekitou.app"), { kind: "root" });
-  assert.deepEqual(matchHost("shop.tekitou.app", has, "tekitou.app"), { kind: "unknown" }, "KANZUME_ORIGIN があれば存在しないサブドメインは区別できる");
-  assert.deepEqual(matchHost("a.blog.tekitou.app", has, "tekitou.app"), { kind: "unknown" });
+  assert.deepEqual(matchHost("shop.tekitou.app", has, "tekitou.app"), { kind: "other" }, "ルートドメインが決まっていれば、存在しないサブドメインはサイトでもルートでもない");
+  assert.deepEqual(matchHost("a.blog.tekitou.app", has, "tekitou.app"), { kind: "other" });
+  assert.deepEqual(matchHost("fa.tekitou.app", has, "tekitou.app"), { kind: "other" });
+  assert.deepEqual(matchHost("kanzume-abcd.onrender.com", has, "tekitou.app"), { kind: "other" });
   assert.equal(parentHost("blog.tekitou.app:8080"), "tekitou.app:8080");
 });
 
@@ -124,4 +126,46 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   assert.equal(observability.events("blog").length, 1);
   assert.equal(history.list("blog").length, 1);
   assert.equal((await site("shop.localhost")).status, 200, "消したサイトのサブドメインはルートドメイン扱い（空のページ）");
+});
+
+test("ルートドメインを管理画面で設定すると、サイトはそのサブドメインになり、管理画面はサイト以外のホストで開ける", async (t) => {
+  const { base, deploy, site, state, sites } = await start(t);
+  const cookie = `kanzume_session=${await state.createSession()}`;
+  // fa.tekitou.app で管理画面を開いている（Origin も fa.tekitou.app）
+  const admin = (p: string, init: RequestInit = {}, host = "fa.tekitou.app") =>
+    fetch(`${base}/_admin/kanzume/api${p}`, {
+      ...init,
+      headers: { cookie, origin: `https://${host}`, "x-forwarded-host": host, "x-forwarded-proto": "https", "content-type": "application/json" },
+    });
+  const setDomain = (domain: string) => admin("/domain", { method: "POST", body: JSON.stringify({ domain }) });
+
+  assert.equal((await setDomain("not a domain")).status, 400);
+  assert.equal((await setDomain("https://Tekitou.app/")).status, 200);
+  assert.equal(state.domain, "tekitou.app", "スキームと末尾の / を外し、小文字にそろえる");
+
+  const res = await deploy(counter(t, "blog"));
+  assert.equal(((await res.json()) as { url: string }).url, `${base.split("://")[0]}://tekitou.app/`, "最初のサイトはルートなので、ルートドメインの URL");
+  await deploy(counter(t, "shop"));
+  const overview = (await (await admin("/overview")).json()) as { domain: { value: string; effective: string; current: string } };
+  assert.deepEqual(overview.domain, { value: "tekitou.app", fromEnv: false, effective: "tekitou.app", current: "fa.tekitou.app" });
+  const list = (await (await admin("/sites")).json()) as { sites: { name: string; url: string }[] };
+  assert.deepEqual(list.sites.map((s) => s.url), ["https://tekitou.app/", "https://shop.tekitou.app/"]);
+
+  assert.equal(((await (await site("tekitou.app")).json()) as { site: string }).site, "blog", "ルートドメインでルートのサイト");
+  assert.equal(((await (await site("shop.tekitou.app")).json()) as { site: string }).site, "shop");
+  assert.equal((await site("fa.tekitou.app")).status, 404, "サイトでもルートでもないホストではサイトを出さない");
+  assert.equal((await site("fa.tekitou.app", "/_admin/kanzume")).status, 200, "管理画面はそのホストでも開ける");
+  assert.equal((await site("nope.tekitou.app")).status, 404);
+  assert.equal((await site("shop.tekitou.app", "/_admin/kanzume")).headers.get("location"), "http://tekitou.app/_admin/kanzume", "サイトのサブドメインからはルートドメインの管理画面へ");
+
+  assert.equal((await setDomain("")).status, 200);
+  assert.equal(state.domain, null, "空にすると自動に戻る");
+  assert.equal(sites.root, "blog");
+});
+
+test("KANZUME_ORIGIN があるときは管理画面からドメインを変えられない", async (t) => {
+  const { base, state } = await start(t, { KANZUME_ORIGIN: "https://tekitou.app" });
+  const cookie = `kanzume_session=${await state.createSession()}`;
+  const res = await fetch(`${base}/_admin/kanzume/api/domain`, { method: "POST", headers: { cookie, origin: base, "content-type": "application/json" }, body: JSON.stringify({ domain: "x.example" }) });
+  assert.equal(res.status, 409);
 });

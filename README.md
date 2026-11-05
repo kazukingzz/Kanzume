@@ -4,7 +4,7 @@ Workers + KV + R2 だけの小さなホスティング。ハッカソン向け�
 
 Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
 
-サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`）。DNS はワイルドカード（`*.example.com`）で Kanzume に向けてください。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
+サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`）。DNS はドメイン本体とワイルドカード（`*.example.com`）を Kanzume に向けて、管理画面の「設定 > ドメイン」で `example.com` を設定してください（管理画面はサイト以外のホスト、例えば `admin.example.com` でも開けます）。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
 
 ## 立てる
 
@@ -60,7 +60,7 @@ Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします
 
 ## 環境変数
 
-`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。未設定ならアクセスされたドメイン。設定すると存在しないサブドメインを 404 にできる）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
+`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。管理画面の「設定 > ドメイン」より優先する。どちらもなければ管理画面を開いたホスト）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
 
 ## 開発
 

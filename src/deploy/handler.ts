@@ -2,7 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { gunzipSync } from "node:zlib";
 import type { AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
-import { externalOrigin, readBody, readJson, sendJson } from "../http.ts";
+import { readBody, readJson, rootOrigin, sendJson } from "../http.ts";
 import type { Sites } from "../sites.ts";
 import type { UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer } from "./deployer.ts";
@@ -63,7 +63,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
       log,
     });
     if (!result.ok) return sendJson(res, 400, { error: result.error });
-    sendJson(res, 200, { name: result.release.manifest.name, release: result.release.id, url: sites.urls(externalOrigin(req, config.origin), result.release.manifest.name).url });
+    sendJson(res, 200, { name: result.release.manifest.name, release: result.release.id, url: sites.urls(rootOrigin(req, config.origin, state.domain), result.release.manifest.name).url });
   }
 
   async function handleReport(req: IncomingMessage, res: ServerResponse): Promise<void> {

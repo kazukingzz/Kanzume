@@ -1,8 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ADMIN_PATH } from "./admin/handler.ts";
 import { matchAsset, notFoundAsset, serveAssets } from "./bindings/assets.ts";
+import type { AdminState } from "./admin/state.ts";
 import type { Config } from "./config.ts";
-import { clientIp, requestOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
+import { clientIp, configuredRootHost, requestOrigin, rootOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
 import { Invocation, runInvocation, type Observability } from "./observability/events.ts";
 import type { Runtime } from "./runtime/runtime.ts";
 import { GIT_PATH, HOOK_PATH } from "./git/server.ts";
@@ -11,6 +12,7 @@ import type { Release } from "./store.ts";
 
 interface Deps {
   config: Config;
+  state: AdminState;
   sites: Sites;
   runtime: Runtime;
   handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void>;
@@ -53,8 +55,7 @@ function workerFailure(release: Release, error: unknown): Response {
   return new Response("Worker threw exception", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability }: Deps) {
-  const rootHost = config.origin ? new URL(config.origin).host : undefined;
+export function createRouter({ config, state, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability }: Deps) {
 
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
     // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
@@ -116,13 +117,15 @@ export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy
 
     const isAdmin = pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`);
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
+    // ルートドメインは管理画面で設定でき、保存したらすぐ効くように毎回読む
+    const rootHost = configuredRootHost(config.origin, state.domain);
     const match = matchHost(host, (name) => sites.has(name), rootHost);
-    if (match.kind === "unknown") return sendText(res, 404, "Not Found");
     if (match.kind === "site") {
-      // 管理画面はサイトと別のオリジン（ルートドメイン）だけで開く
+      // 管理画面はサイトと別のオリジンだけで開く
       if (isAdmin) {
         const proto = requestOrigin(req).split("://")[0];
-        res.writeHead(302, { location: `${config.origin ?? `${proto}://${parentHost(host)}`}${ADMIN_PATH}` });
+        const admin = rootHost ? rootOrigin(req, config.origin, state.domain) : `${proto}://${parentHost(host)}`;
+        res.writeHead(302, { location: `${admin}${ADMIN_PATH}` });
         res.end();
         return;
       }
@@ -137,6 +140,8 @@ export function createRouter({ config, sites, runtime, handleAdmin, handleDeploy
     if (isAdmin) return handleAdmin(req, res, pathname);
     if (pathname.startsWith("/_api/")) return sendText(res, 404, "Not Found");
 
+    // ルートのサイトはルートドメインでだけ配信する（fa.example.com のような、サイトでもルートでもないホストでは出さない）
+    if (match.kind === "other") return sendText(res, 404, "Not Found");
     const release = sites.root ? sites.get(sites.root)?.get() : undefined;
     if (!release) {
       if (pathname !== "/") return sendText(res, 404, "Not Found");

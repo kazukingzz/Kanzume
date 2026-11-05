@@ -11,7 +11,7 @@ import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { deployFromGitHub, type GitHubOptions } from "../deploy/github.ts";
 import type { DeployHistory } from "../deploy/history.ts";
-import { externalOrigin, readJson, sendJson, sendText } from "../http.ts";
+import { configuredRootHost, readJson, requestOrigin, rootOrigin, sendJson, sendText } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -21,7 +21,7 @@ import { GIT_PATH } from "../git/server.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
 import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
-import { safeEqual, type AdminState } from "./state.ts";
+import { DomainError, safeEqual, type AdminState } from "./state.ts";
 
 export const ADMIN_PATH = "/_admin/kanzume";
 
@@ -67,8 +67,12 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
   };
 
   return async function handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
-    const origin = externalOrigin(req, config.origin);
+    // 管理画面自身のオリジン（Origin の照合とパスキー）は、開いているホストから決める。
+    // サイト以外のホストならどこでも開けるので、ルートドメインの設定とは別にする
+    const origin = requestOrigin(req);
     const rpID = new URL(origin).hostname;
+    // サイトの URL を作る基準
+    const siteRoot = rootOrigin(req, config.origin, state.domain);
     const sub = pathname.slice(ADMIN_PATH.length) || "/";
     const query = new URL(req.url ?? "/", "http://admin").searchParams;
     const method = req.method ?? "GET";
@@ -210,7 +214,24 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         token: state.deployToken,
         teamId: state.teamId,
         members: state.credentials.length,
+        domain: {
+          value: state.domain,
+          fromEnv: Boolean(config.origin),
+          effective: configuredRootHost(config.origin, state.domain) ?? new URL(origin).host,
+          current: new URL(origin).host,
+        },
       });
+    }
+
+    if (route === "POST /api/domain") {
+      if (config.origin) return sendJson(res, 409, { error: "環境変数 KANZUME_ORIGIN が優先されています。変えるには環境変数を変更してください" });
+      const body = await readJson(req);
+      try {
+        return sendJson(res, 200, { domain: await state.setDomain(String(body?.domain ?? "")) });
+      } catch (err) {
+        if (err instanceof DomainError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
     }
 
     if (route === "GET /api/passkeys") {
@@ -328,7 +349,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, { token: await state.rotateDeployToken() });
     }
 
-    const siteUrls = (name: string) => sites.urls(origin, name);
+    const siteUrls = (name: string) => sites.urls(siteRoot, name);
 
     if (route === "GET /api/sites") {
       const listed = sites.list();

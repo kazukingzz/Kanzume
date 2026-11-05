@@ -89,11 +89,16 @@ export class Sites {
 
 const hostname = (host: string) => host.toLowerCase().replace(/:\d+$/, "").replace(/\.$/, "");
 
-export type HostMatch = { kind: "root" } | { kind: "site"; name: string } | { kind: "unknown" };
+/**
+ * root: ルートドメイン（ルートのサイトを配信し、管理画面も開く）
+ * site: サイトのサブドメイン
+ * other: ルートドメインが決まっているときの、それ以外のホスト（管理画面と API だけ開く。サイトは配信しない）
+ */
+export type HostMatch = { kind: "root" } | { kind: "site"; name: string } | { kind: "other" };
 
 /**
  * Host からサイトを決める。
- * - `rootHost`（KANZUME_ORIGIN のホスト）があれば、そのサブドメインだけをサイトとみなす
+ * - `rootHost`（KANZUME_ORIGIN か管理画面で設定したドメイン）があれば、そのサブドメインだけをサイトとみなす
  * - なければ、先頭のラベルが既存のサイト名で、残りがドメインに見える（ドットを含むか localhost）ときだけサイトとみなす
  */
 export function matchHost(host: string, has: (name: string) => boolean, rootHost?: string): HostMatch {
@@ -105,9 +110,10 @@ export function matchHost(host: string, has: (name: string) => boolean, rootHost
     if (h === root) return { kind: "root" };
     if (h.endsWith(`.${root}`)) {
       const label = h.slice(0, -root.length - 1);
-      return !label.includes(".") && has(label) ? { kind: "site", name: label } : { kind: "unknown" };
+      if (!label.includes(".") && has(label)) return { kind: "site", name: label };
     }
-    return { kind: "root" };
+    // fa.example.com や xxx.onrender.com など。管理画面はここでも開けるが、サイトは配信しない
+    return { kind: "other" };
   }
   const dot = h.indexOf(".");
   if (dot === -1) return { kind: "root" };

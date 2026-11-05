@@ -8,9 +8,19 @@ export function requestOrigin(req: IncomingMessage): string {
   return `${proto}://${req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"}`;
 }
 
-/** ルートドメイン（管理画面）のオリジン。KANZUME_ORIGIN があればそれを使う */
-export function externalOrigin(req: IncomingMessage, configured: string | undefined): string {
-  return configured ?? requestOrigin(req);
+/**
+ * ルートドメインのオリジン（サイトの URL を作る基準）。
+ * KANZUME_ORIGIN → 管理画面で設定したドメイン → リクエストされたホストの順に決める
+ */
+export function rootOrigin(req: IncomingMessage, configured: string | undefined, domain: string | null): string {
+  if (configured) return configured;
+  if (domain) return `${requestOrigin(req).split("://")[0]}://${domain}`;
+  return requestOrigin(req);
+}
+
+/** 決まっているルートドメインのホスト（KANZUME_ORIGIN か管理画面の設定）。どちらもなければ undefined（ホスト名から推測する） */
+export function configuredRootHost(configured: string | undefined, domain: string | null): string | undefined {
+  return configured ? new URL(configured).host : (domain ?? undefined);
 }
 
 /** サイトのオリジン（`https://<name>.<ルートドメイン>`） */

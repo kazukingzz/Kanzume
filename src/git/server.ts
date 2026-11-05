@@ -11,7 +11,7 @@ import type { Config } from "../config.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
 import { checkExpectedName, deployFromDirectory, GitHubError } from "../deploy/github.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig } from "../deploy/wrangler.ts";
-import { externalOrigin, readBody, sendText } from "../http.ts";
+import { readBody, rootOrigin, sendText } from "../http.ts";
 import { SerialQueue } from "../serial.ts";
 import type { Sites } from "../sites.ts";
 import type { Repos } from "./repos.ts";
@@ -124,7 +124,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       KANZUME_HOOK_URL: `http://127.0.0.1:${req.socket.localPort}${HOOK_PATH}`,
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
-      KANZUME_ORIGIN_URL: externalOrigin(req, config.origin),
+      KANZUME_ORIGIN_URL: rootOrigin(req, config.origin, state.domain),
       // 全体の Token での push かどうか（リポジトリ用のトークンでは、最初のサイトをルートにしない）
       KANZUME_PUSH_SCOPE: state.checkDeployToken(token) ? "global" : "repo",
       KANZUME_REPO_QUOTA_BYTES: String(repos.quotaBytes),
@@ -281,7 +281,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
             if (result.ok) {
               let url = "";
               try {
-                url = sites.urls(String(body.origin || externalOrigin(req, config.origin)), name).url;
+                url = sites.urls(String(body.origin || rootOrigin(req, config.origin, state.domain)), name).url;
               } catch {
                 // オリジンが壊れていても、デプロイ自体は成功している
               }

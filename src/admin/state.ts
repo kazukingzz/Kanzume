@@ -37,6 +37,8 @@ interface StateFile {
   deployToken: string;
   credentials: StoredCredential[];
   repoTokens?: RepoToken[];
+  /** ルートドメイン（例: example.com）。サイトは <name>.<domain> で配信する。未設定なら管理画面を開いたホストを使う */
+  domain?: string;
 }
 
 interface StoredFile extends StateFile {
@@ -68,6 +70,19 @@ export function normalizeTeamId(input: string): string {
 
 export function formatTeamId(id: string): string {
   return id.match(/.{1,4}/g)!.join("-");
+}
+
+export class DomainError extends Error {}
+
+const HOST_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
+const DOMAIN = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*(?::\\d{1,5})?$`);
+
+/** 入力されたドメインを example.com の形にそろえる。空なら null（自動）。https:// や末尾の / は外す */
+export function normalizeDomain(input: string): string | null {
+  const v = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  if (!v) return null;
+  if (v.length > 253 || !DOMAIN.test(v)) throw new DomainError("ドメインの形式が正しくありません（例: example.com）");
+  return v;
 }
 
 export function safeEqual(a: string, b: string): boolean {
@@ -151,6 +166,24 @@ export class AdminState {
 
   checkTeamId(input: string): boolean {
     return safeEqual(normalizeTeamId(input), this.#state.teamId);
+  }
+
+  get domain(): string | null {
+    return this.#state.domain ?? null;
+  }
+
+  async setDomain(input: string): Promise<string | null> {
+    const domain = normalizeDomain(input);
+    const before = this.#state.domain;
+    if (domain) this.#state.domain = domain;
+    else delete this.#state.domain;
+    try {
+      await this.#save();
+    } catch (err) {
+      this.#state.domain = before;
+      throw err;
+    }
+    return domain;
   }
 
   get deployToken(): string {
