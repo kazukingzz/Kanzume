@@ -8,7 +8,7 @@ services:
     volumes:
       - kanzume-data:/data
     environment:
-      # ルートドメインの URL（例: https://example.com）。未設定ならアクセスされたドメインを使う
+      # ルートドメインの URL（例: https://example.com）。未設定なら管理画面で設定したドメイン（それもなければアクセスされたドメイン）を使う
       KANZUME_ORIGIN: ${KANZUME_ORIGIN:-}
       # 最初のパスキー登録に使う。未設定なら起動ログに出る
       KANZUME_SETUP_TOKEN: ${KANZUME_SETUP_TOKEN:-}
