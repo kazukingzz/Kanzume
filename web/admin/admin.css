@@ -239,6 +239,31 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 .list-row .side { color: var(--muted); font-size: 12px; text-align: right; }
 .list-detail { padding: 0 16px 16px; }
 .log-title { font-size: 12px; color: var(--muted); margin: 12px 0 6px; font-weight: 600; }
+
+/* 環境変数・シークレット・サブドメイン */
+.suffix-input { display: flex; align-items: stretch; max-width: 720px; }
+.suffix-input input { border-top-right-radius: 0; border-bottom-right-radius: 0; min-width: 0; flex: 1; }
+.suffix-input .suffix { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; background: var(--code); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.hint.warn { color: var(--danger); }
+.row.narrow { max-width: 720px; }
+.env-rows { display: grid; gap: 8px; max-width: 720px; }
+.env-row { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 3fr) auto; gap: 8px; align-items: center; }
+button.icon { padding: 6px 10px; color: var(--muted); }
+button.add-row { margin-top: 8px; }
+.actions { display: flex; gap: 8px; margin-top: 16px; }
+.wrangler-vars { max-width: 720px; }
+.wrangler-vars td { padding: 4px 8px 4px 0; color: var(--muted); }
+.wrangler-vars tr.overridden td:not(:last-child) { text-decoration: line-through; }
+.secrets { list-style: none; margin: 0 0 4px; padding: 0; border: 1px solid var(--line); border-radius: 10px; max-width: 720px; }
+.secret { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-top: 1px solid var(--line); }
+.secret:first-child { border-top: 0; }
+.secret > .grow { flex: 1; min-width: 0; }
+@media (max-width: 600px) {
+  .env-row { grid-template-columns: minmax(0, 1fr) auto; }
+  .env-row > input:nth-child(2) { grid-row: 2; }
+  .env-row > button { grid-row: 1 / span 2; grid-column: 2; }
+  .secret { flex-wrap: wrap; }
+}
 .log { background: var(--code); border-radius: 8px; padding: 10px 12px; margin: 0; max-height: 360px; overflow: auto; white-space: pre-wrap; word-break: break-all; }
 
 /* コード */

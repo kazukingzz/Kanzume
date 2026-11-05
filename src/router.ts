@@ -119,7 +119,7 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
     // ルートドメインは管理画面で設定でき、保存したらすぐ効くように毎回読む
     const rootHost = configuredRootHost(config.origin, state.domain);
-    const match = matchHost(host, (name) => sites.has(name), rootHost);
+    const match = matchHost(host, (label) => sites.resolve(label), rootHost);
     if (match.kind === "site") {
       // 管理画面はサイトと別のオリジンだけで開く
       if (isAdmin) {

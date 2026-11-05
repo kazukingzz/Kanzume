@@ -1,3 +1,4 @@
+import { readSiteSettings } from "../sites.ts";
 import fs from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
@@ -136,9 +137,15 @@ export class LoadedWorker {
   }
 }
 
-function buildEnv(release: Release, siteDir: string): Record<string, unknown> {
+/** wrangler の vars に、管理画面で設定した環境変数とシークレットを上書きしたもの */
+function siteVars(release: Release, siteDir: string): Record<string, unknown> {
+  const settings = readSiteSettings(siteDir);
+  return { ...release.manifest.vars, ...settings.vars, ...settings.secrets };
+}
+
+function buildEnv(release: Release, siteDir: string, vars: Record<string, unknown>): Record<string, unknown> {
   const { manifest } = release;
-  const env: Record<string, unknown> = { ...manifest.vars };
+  const env: Record<string, unknown> = { ...vars };
   if (manifest.kvNamespaces.length || manifest.r2Buckets.length) {
     const db = siteDb(siteDir);
     for (const kv of manifest.kvNamespaces) env[kv.binding] = new KVNamespace(db, kv.binding);
@@ -161,8 +168,9 @@ export async function loadWorker(release: Release, siteDir: string, timeout: num
   const { manifest } = release;
   if (!manifest.main) throw new WorkerError("Worker がありません");
   const workerDir = path.join(release.dir, "worker");
-  const env = buildEnv(release, siteDir);
-  const context = vm.createContext(createGlobals(manifest.name, manifest.compatibilityFlags, manifest.vars), {
+  const vars = siteVars(release, siteDir);
+  const env = buildEnv(release, siteDir, vars);
+  const context = vm.createContext(createGlobals(manifest.name, manifest.compatibilityFlags, vars), {
     name: `kanzume:${manifest.name}`,
   });
   vm.runInContext("globalThis.self = globalThis", context);

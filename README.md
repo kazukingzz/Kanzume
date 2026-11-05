@@ -4,7 +4,7 @@ Workers + KV + R2 だけの小さなホスティング。ハッカソン向け�
 
 Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
 
-サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`）。DNS はドメイン本体とワイルドカード（`*.example.com`）を Kanzume に向けて、管理画面の「設定 > ドメイン」で `example.com` を設定してください（管理画面はサイト以外のホスト、例えば `admin.example.com` でも開けます）。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
+サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`。管理画面で変更可）。DNS はドメイン本体とワイルドカード（`*.example.com`）を Kanzume に向けて、初回のパスキー登録時か管理画面の「設定 > ドメイン」で `example.com` を設定してください（管理画面はサイト以外のホスト、例えば `admin.example.com` でも開けます）。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
 
 ## 立てる
 
@@ -48,13 +48,13 @@ git remote add kanzume https://example.com/_git/my-app.git
 git push kanzume main
 ```
 
-**GitHub の URL**: 管理画面の「サイトを追加」から、public リポジトリの URL を指定してデプロイできます。サンプル（[`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio)）もそこからワンクリックで追加できます。git push と GitHub の URL からのデプロイは Kanzume の中でバンドルするので、npm パッケージの import・ビルドが必要なものは Actions を使ってください。
+**GitHub の URL**: 管理画面の「サイトを追加」から、public リポジトリの URL を指定してデプロイできます。URL を入れると、サイト名（サブドメイン）・環境変数・シークレットを決める画面になります（デプロイ後も「サイト設定」で変えられ、再デプロイなしで反映されます）。サンプル（[`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio)）もそこからワンクリックで追加できます。git push と GitHub の URL からのデプロイは Kanzume の中でバンドルするので、npm パッケージの import・ビルドが必要なものは Actions を使ってください。
 
 ## 対応している機能
 
-- ○ fetch ハンドラ（ES Modules / `WorkerEntrypoint`）、`ctx.waitUntil`、`vars`、Static Assets、KV、R2、Web 標準 API
+- ○ fetch ハンドラ（ES Modules / `WorkerEntrypoint`）、`ctx.waitUntil`、`vars`・シークレット（管理画面で設定）、Static Assets、KV、R2、Web 標準 API
 - △ `nodejs_compat`（fs・net・child_process などは不可）
-- × Cron Triggers / D1 / Durable Objects / Queues / WebSocket / HTMLRewriter / secrets / Service Worker 形式
+- × Cron Triggers / D1 / Durable Objects / Queues / WebSocket / HTMLRewriter / Service Worker 形式
 
 Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします。セキュリティ境界ではないので、デプロイできる人（全体の Token・リポジトリ用の write トークンを持つ人）は管理者と同等で、サーバー上のすべてにアクセスできます。ルートドメインで配信するサイトも管理画面と同じオリジンで動くので同様です。信頼できる相手にだけ渡してください。
 

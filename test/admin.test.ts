@@ -81,7 +81,7 @@ test("チーム ID や管理 API はログインしないと見えない", async
   assert.equal((await post("/site/deploy-github", { url: "https://github.com/a/b" })).status, 401);
   const noOrigin = await fetch(`${base}/_admin/kanzume/api/token/rotate`, { method: "POST" });
   assert.equal(noOrigin.status, 403);
-  assert.deepEqual(await (await fetch(`${base}/_admin/kanzume/api/state`)).json(), { registered: false, authenticated: false });
+  assert.deepEqual(await (await fetch(`${base}/_admin/kanzume/api/state`)).json(), { registered: false, authenticated: false, domainFromEnv: false });
 });
 
 test("ログインのセッションはサーバーを再起動しても残り、ログアウトで消える", async (t) => {
@@ -93,7 +93,7 @@ test("ログインのセッションはサーバーを再起動しても残り�
 
   const second = await start(t, dataDir);
   const state = await fetch(`${second.base}/_admin/kanzume/api/state`, { headers: { cookie } });
-  assert.deepEqual(await state.json(), { registered: false, authenticated: true });
+  assert.deepEqual(await state.json(), { registered: false, authenticated: true, domainFromEnv: false });
   assert.match(state.headers.get("set-cookie") ?? "", /Max-Age=34560000/);
   assert.equal((await fetch(`${second.base}/_admin/kanzume/api/overview`, { headers: { cookie } })).status, 200);
   const resources = await fetch(`${second.base}/_admin/kanzume/api/resources`, { headers: { cookie } });
@@ -203,7 +203,7 @@ test("壊れた Cookie があっても管理 API は 500 にならない", async
   const { base } = await start(t);
   const res = await fetch(`${base}/_admin/kanzume/api/state`, { headers: { cookie: "kanzume_session=%E0" } });
   assert.equal(res.status, 200);
-  assert.deepEqual(await res.json(), { registered: false, authenticated: false });
+  assert.deepEqual(await res.json(), { registered: false, authenticated: false, domainFromEnv: false });
 });
 
 const b64 = (bytes: Uint8Array) => Buffer.from(bytes).toString("base64url");

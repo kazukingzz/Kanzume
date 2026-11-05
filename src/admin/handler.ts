@@ -9,13 +9,16 @@ import {
 } from "@simplewebauthn/server";
 import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
-import { deployFromGitHub, type GitHubOptions } from "../deploy/github.ts";
+import { DeployLog } from "../deploy/deployer.ts";
+import { deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
+import { ConfigError } from "../deploy/wrangler.ts";
 import type { DeployHistory } from "../deploy/history.ts";
-import { configuredRootHost, readJson, requestOrigin, rootOrigin, sendJson, sendText } from "../http.ts";
+import { configuredRootHost, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import type { Sites } from "../sites.ts";
+import { SettingsError, type SettingsPatch, type Sites } from "../sites.ts";
+import { PROJECT_NAME } from "../store.ts";
 import { RepoError, type Repos } from "../git/repos.ts";
 import { GIT_PATH } from "../git/server.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
@@ -45,6 +48,16 @@ interface Deps {
   resources: ResourceMonitor;
   deployer: Deployer;
   github?: Partial<GitHubOptions>;
+}
+
+const isRecord = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/** リクエストの vars / secrets を設定の変更にする。値が文字列でないものは文字列にし、シークレットの null は削除 */
+function envPatch(body: Record<string, unknown> | null): SettingsPatch {
+  const patch: SettingsPatch = {};
+  if (isRecord(body?.vars)) patch.vars = Object.fromEntries(Object.entries(body.vars).map(([k, v]) => [k, String(v ?? "")]));
+  if (isRecord(body?.secrets)) patch.secrets = Object.fromEntries(Object.entries(body.secrets).map(([k, v]) => [k, v === null ? null : String(v)]));
+  return patch;
 }
 
 export function createAdminHandler({ config, state, sites, repos, runtime, history, observability, resources, deployer, github }: Deps) {
@@ -102,7 +115,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     if (route === "GET /api/state") {
       const renew: Record<string, string> = authenticated ? { "set-cookie": sessionCookie(origin, sessionId!, SESSION_COOKIE_MAX_AGE) } : {};
-      return sendJson(res, 200, { registered: state.credentials.length > 0, authenticated }, renew);
+      return sendJson(res, 200, { registered: state.credentials.length > 0, authenticated, domainFromEnv: !!config.origin }, renew);
     }
 
     if (route === "POST /api/register/options") {
@@ -351,6 +364,21 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     const siteUrls = (name: string) => sites.urls(siteRoot, name);
 
+    /** デプロイ前の設定画面で使う: その名前のサイトがあるか、サブドメインがほかのサイトに使われていないか、今の設定 */
+    const siteInfo = (name: string) => {
+      const valid = PROJECT_NAME.test(name);
+      const exists = valid && !!sites.get(name)?.get();
+      const owner = valid ? sites.resolve(name) : undefined;
+      const settings = exists ? sites.settings(name) : null;
+      return {
+        valid,
+        exists,
+        takenBy: owner && owner !== name ? owner : null,
+        url: valid ? `${siteOrigin(siteRoot, exists ? sites.subdomain(name) : name)}/` : null,
+        current: settings ? { vars: settings.vars, secretKeys: Object.keys(settings.secrets).sort() } : null,
+      };
+    };
+
     if (route === "GET /api/sites") {
       const listed = sites.list();
       const names = new Set(listed.map((x) => x.name));
@@ -382,23 +410,67 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
     }
 
+    if (route === "POST /api/deploy-github/inspect") {
+      const body = await readJson(req);
+      const url = typeof body?.url === "string" ? body.url.trim() : "";
+      if (!url) return sendJson(res, 400, { error: "GitHub の URL を入力してください" });
+      try {
+        const fetched = await fetchFromGitHub(url, { maxBytes: config.maxUploadBytes, ...github }, new DeployLog("inspect"));
+        const { name, vars } = inspectFiles(fetched);
+        return sendJson(res, 200, { name, vars, ...siteInfo(name) });
+      } catch (err) {
+        if (err instanceof GitHubError || err instanceof ConfigError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+    }
+
+    if (route === "GET /api/site-name") {
+      const name = query.get("name") ?? "";
+      return sendJson(res, 200, siteInfo(name));
+    }
+
     if (route === "POST /api/deploy-github") {
       const body = await readJson(req);
       const url = typeof body?.url === "string" ? body.url : "";
       if (!url) return sendJson(res, 400, { error: "GitHub の URL を入力してください" });
+      // name を省くと、今までどおり wrangler の name でデプロイする
+      const siteName = typeof body?.name === "string" && body.name ? body.name.trim().toLowerCase() : undefined;
+      const patch = siteName ? envPatch(body) : null;
+      if (siteName) {
+        if (!PROJECT_NAME.test(siteName)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
+        const info = siteInfo(siteName);
+        if (info.takenBy) return sendJson(res, 400, { error: `サブドメイン ${siteName} はサイト ${info.takenBy} が使っています。別の名前にしてください` });
+        if (info.exists && body?.confirm !== true) return sendJson(res, 409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
+      }
       if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
       githubDeploying = true;
+      let created = false;
       try {
-        const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github });
-        if (!result.ok) return sendJson(res, 400, { error: result.error });
+        if (siteName && patch) {
+          // 最初に読み込む Worker から新しい環境変数を使うように、デプロイの前に設定を書く
+          created = !sites.has(siteName);
+          await sites.ensure(siteName);
+          await sites.updateSettings(siteName, patch);
+          runtime.evict(sites.get(siteName)!.siteDir);
+        }
+        const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github, siteName });
+        if (!result.ok) {
+          // 新しく作ったサイトが失敗したら、設定だけが残らないように消す
+          if (created && !sites.get(siteName!)?.get()) await sites.remove(siteName!);
+          return sendJson(res, 400, { error: result.error });
+        }
         const name = result.release.manifest.name;
         return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url });
+      } catch (err) {
+        if (created && !sites.get(siteName!)?.get()) await sites.remove(siteName!);
+        if (err instanceof SettingsError) return sendJson(res, 400, { error: err.message });
+        throw err;
       } finally {
         githubDeploying = false;
       }
     }
 
-    const siteRoute = /^(GET|DELETE) \/api\/sites\/([a-z0-9-]+)(\/.*)?$/.exec(route);
+    const siteRoute = /^(GET|PUT|DELETE) \/api\/sites\/([a-z0-9-]+)(\/.*)?$/.exec(route);
     if (!siteRoute) return sendJson(res, 404, { error: "Not Found" });
     const [, , name, rest = ""] = siteRoute;
     const store = sites.get(name);
@@ -427,6 +499,32 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         },
         latest: history.latest(name),
       });
+    }
+
+    if (siteRouteKey === "GET /settings") {
+      const settings = sites.settings(name);
+      return sendJson(res, 200, {
+        subdomain: sites.subdomain(name),
+        vars: settings.vars,
+        secretKeys: Object.keys(settings.secrets).sort(),
+        wranglerVars: release.manifest.vars,
+        ...siteUrls(name),
+      });
+    }
+
+    if (siteRouteKey === "PUT /settings") {
+      const body = await readJson(req);
+      const patch: SettingsPatch = envPatch(body);
+      if (body && "subdomain" in body) patch.subdomain = body.subdomain === null ? null : String(body.subdomain ?? "");
+      try {
+        await sites.updateSettings(name, patch);
+      } catch (err) {
+        if (err instanceof SettingsError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+      // 次のリクエストから新しい値で Worker を読み込み直す
+      runtime.evict(store.siteDir);
+      return sendJson(res, 200, { ok: true, subdomain: sites.subdomain(name), ...siteUrls(name) });
     }
 
     if (siteRouteKey === "DELETE ") {

@@ -46,6 +46,8 @@ export interface DeployInput {
    * ルートは管理画面と同じオリジンなので、全体の Token（管理者）によるデプロイのときだけ true にする
    */
   autoRoot?: boolean;
+  /** 指定すると wrangler の name の代わりにこのサイト名でデプロイする（管理画面で名前を決めたとき） */
+  siteName?: string;
 }
 
 export type DeployResult = { ok: true; release: Release } | { ok: false; error: string };
@@ -122,6 +124,7 @@ export class Deployer {
     let manifest: Manifest;
     try {
       const raw = parseWranglerConfig(configFile.path, configFile.data.toString("utf8"));
+      if (input.siteName) raw.name = input.siteName;
       if (typeof raw.name === "string" && PROJECT_NAME.test(raw.name)) name = raw.name;
       manifest = toManifest(raw, files.some((f) => f.path.startsWith("worker/")));
       if (manifest.main && !files.some((f) => f.path === `worker/${manifest.main}`)) {

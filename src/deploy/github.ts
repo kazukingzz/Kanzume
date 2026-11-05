@@ -3,7 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { gunzipSync } from "node:zlib";
 import type { Plugin } from "esbuild";
-import type { UploadedFile } from "../store.ts";
+import { PROJECT_NAME, type UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer, type DeployResult } from "./deployer.ts";
 import type { DeploySource } from "./history.ts";
 import { readTar, TarError } from "./tar.ts";
@@ -148,44 +148,92 @@ function hint(message: string): string {
   return message;
 }
 
-export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions): Promise<DeployResult> {
+export interface Fetched {
+  source: DeploySource;
+  /** リポジトリの中のディレクトリ（トップなら ""） */
+  dir: string;
+  files: UploadedFile[];
+}
+
+/** GitHub の URL のリポジトリ（ディレクトリ）をダウンロードして、ファイルの一覧にする */
+export async function fetchFromGitHub(input: string, options: GitHubOptions, log: DeployLog): Promise<Fetched> {
   const fetcher = options.fetch ?? fetch;
   const api = options.apiBase ?? "https://api.github.com";
   const codeload = options.codeloadBase ?? "https://codeload.github.com";
-  const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
-  let source: DeploySource = {};
-  let files: UploadedFile[];
-  let dir = "";
+  const repo = parseGitHubUrl(input);
+  const resolved = await resolveRef(fetcher, api, repo, log);
+  const source: DeploySource = {
+    repository: `${repo.owner}/${repo.repo}`,
+    ref: resolved.ref,
+    sha: resolved.sha,
+    commitMessage: resolved.message,
+    actor: resolved.author,
+    serverUrl: "https://github.com",
+  };
+  const dir = resolved.dir.join("/");
+  log.add(`${source.repository}@${resolved.ref}${resolved.sha ? `（${resolved.sha.slice(0, 7)}）` : ""} ${dir ? `の ${dir}/ ` : ""}をダウンロードします`);
 
-  try {
-    const repo = parseGitHubUrl(input);
-    const resolved = await resolveRef(fetcher, api, repo, log);
-    source = {
-      repository: `${repo.owner}/${repo.repo}`,
-      ref: resolved.ref,
-      sha: resolved.sha,
-      commitMessage: resolved.message,
-      actor: resolved.author,
-      serverUrl: "https://github.com",
-    };
-    dir = resolved.dir.join("/");
-    log.add(`${source.repository}@${resolved.ref}${resolved.sha ? `（${resolved.sha.slice(0, 7)}）` : ""} ${dir ? `の ${dir}/ ` : ""}をダウンロードします`);
+  const archive = await download(fetcher, `${codeload}/${repo.owner}/${repo.repo}/tar.gz/${encodeURIComponent(resolved.sha ?? resolved.ref)}`, options.maxBytes);
+  if (!archive) throw new GitHubError("リポジトリをダウンロードできません（public リポジトリのみ対応しています）");
+  const entries = readTar(gunzipSync(archive, { maxOutputLength: options.maxBytes * 4 }), { skipLinks: true });
+  const prefix = dir ? `${dir}/` : "";
+  const files = entries
+    .map((f) => ({ path: f.path.split("/").slice(1).join("/"), data: f.data }))
+    .filter((f) => f.path.startsWith(prefix))
+    .map((f) => ({ path: f.path.slice(prefix.length), data: f.data }))
+    .filter((f) => f.path && !f.path.startsWith(".git/"));
+  log.add(`ダウンロード: ${(archive.length / 1024).toFixed(1)} KiB、${files.length} ファイル`);
+  return { source, dir, files };
+}
 
-    const archive = await download(fetcher, `${codeload}/${repo.owner}/${repo.repo}/tar.gz/${encodeURIComponent(resolved.sha ?? resolved.ref)}`, options.maxBytes);
-    if (!archive) throw new GitHubError("リポジトリをダウンロードできません（public リポジトリのみ対応しています）");
-    const entries = readTar(gunzipSync(archive, { maxOutputLength: options.maxBytes * 4 }), { skipLinks: true });
-    const prefix = dir ? `${dir}/` : "";
-    files = entries
-      .map((f) => ({ path: f.path.split("/").slice(1).join("/"), data: f.data }))
-      .filter((f) => f.path.startsWith(prefix))
-      .map((f) => ({ path: f.path.slice(prefix.length), data: f.data }))
-      .filter((f) => f.path && !f.path.startsWith(".git/"));
-    log.add(`ダウンロード: ${(archive.length / 1024).toFixed(1)} KiB、${files.length} ファイル`);
-  } catch (err) {
-    return fail(deployer, null, err, { source, buildLog: [], log }, "GitHub からのデプロイ");
+/** サイト名に使える形にする（英小文字・数字・ハイフン、63 文字まで） */
+export function toSiteName(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^a-z0-9-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 63)
+    .replace(/-+$/, "");
+}
+
+export interface Inspection {
+  /** wrangler の name。なければリポジトリかディレクトリの名前から作る */
+  name: string;
+  vars: Record<string, string>;
+}
+
+/** デプロイ前の設定画面のために、wrangler の設定から name と vars を読む */
+export function inspectFiles(fetched: Fetched): Inspection {
+  let config: Record<string, unknown> | null = null;
+  for (const c of CONFIG_FILES) {
+    const f = fetched.files.find((x) => x.path === c);
+    if (f) {
+      config = parseWranglerConfig(c, f.data.toString("utf8"));
+      break;
+    }
   }
+  if (!config) throw new GitHubError(`${fetched.dir ? `${fetched.dir}/ ` : "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
+  const fallback = toSiteName(fetched.dir.split("/").pop() || fetched.source.repository?.split("/")[1] || "") || "my-site";
+  const name = typeof config.name === "string" && PROJECT_NAME.test(config.name) ? config.name : fallback;
+  const vars: Record<string, string> = {};
+  if (config.vars && typeof config.vars === "object") {
+    // 文字列でない値（JSON）は wrangler の設定のまま使うので、編集できる初期値には入れない
+    for (const [k, v] of Object.entries(config.vars as Record<string, unknown>)) if (typeof v === "string") vars[k] = v;
+  }
+  return { name, vars };
+}
+
+export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName?: string }): Promise<DeployResult> {
+  const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
+  let fetched: Fetched;
+  try {
+    fetched = await fetchFromGitHub(input, options, log);
+  } catch (err) {
+    return fail(deployer, options.siteName ?? null, err, { source: {}, buildLog: [], log }, "GitHub からのデプロイ");
+  }
+  const { source, dir, files } = fetched;
   // GitHub の URL からのデプロイは管理画面（管理者）からしか呼べないので、最初のサイトはルートにしてよい
-  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: true });
+  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: true, siteName: options.siteName });
 }
 
 export interface BuildContext {
@@ -198,6 +246,8 @@ export interface BuildContext {
   expectedName?: string;
   /** Deployer の autoRoot（全体の Token によるデプロイのときだけ true） */
   autoRoot?: boolean;
+  /** Deployer の siteName（管理画面で決めたサイト名。wrangler の name より優先する） */
+  siteName?: string;
 }
 
 function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
@@ -230,7 +280,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
     }
     return await deployFromDirectory(work, deployer, ctx);
   } catch (err) {
-    return fail(deployer, ctx.expectedName ?? null, err, ctx, "デプロイ");
+    return fail(deployer, ctx.siteName ?? ctx.expectedName ?? null, err, ctx, "デプロイ");
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }
@@ -240,7 +290,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
 export async function deployFromDirectory(work: string, deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
   const { log, buildLog } = ctx;
   // 名前が分かる前に失敗しても、git push ならリポジトリ名の履歴に残す
-  let name: string | null = ctx.expectedName ?? null;
+  let name: string | null = ctx.siteName ?? ctx.expectedName ?? null;
 
   try {
     let configFile: (typeof CONFIG_FILES)[number] | undefined;
@@ -254,7 +304,7 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
     if (ctx.expectedName !== undefined) checkExpectedName(config, ctx.expectedName);
-    else if (typeof config.name === "string") name = config.name;
+    else if (!ctx.siteName && typeof config.name === "string") name = config.name;
     const build = config.build as { command?: string } | undefined;
     if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);
 
@@ -322,7 +372,7 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
     }
 
-    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log, autoRoot: ctx.autoRoot });
+    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log, autoRoot: ctx.autoRoot, siteName: ctx.siteName });
   } catch (err) {
     return fail(deployer, name, err, ctx, "デプロイ");
   }

@@ -6,24 +6,26 @@ import { createServer } from "../src/server.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
 import { tarGz, tmpDir, toCjs } from "./helpers.ts";
 
+const ids = (has: (n: string) => boolean) => (n: string) => (has(n) ? n : undefined);
+
 test("Host のサブドメインが既存のサイト名ならそのサイト、それ以外はルートドメイン", () => {
   const has = (n: string) => n === "blog" || n === "tekitou";
-  assert.deepEqual(matchHost("blog.tekitou.app", has), { kind: "site", name: "blog" });
-  assert.deepEqual(matchHost("BLOG.tekitou.app:443", has), { kind: "site", name: "blog" });
-  assert.deepEqual(matchHost("tekitou.app", has), { kind: "root" }, "サイト名と同じでもドメイン本体はルート");
-  assert.deepEqual(matchHost("shop.tekitou.app", has), { kind: "root" });
-  assert.deepEqual(matchHost("blog.localhost:8080", has), { kind: "site", name: "blog" });
-  assert.deepEqual(matchHost("localhost:8080", has), { kind: "root" });
-  assert.deepEqual(matchHost("127.0.0.1:8080", has), { kind: "root" });
-  assert.deepEqual(matchHost("127.0.0.1", (n) => n === "127"), { kind: "root" }, "IP アドレスの先頭の数字はサイト名にしない");
-  assert.deepEqual(matchHost("[::1]:8080", has), { kind: "root" });
+  assert.deepEqual(matchHost("blog.tekitou.app", ids(has)), { kind: "site", name: "blog" });
+  assert.deepEqual(matchHost("BLOG.tekitou.app:443", ids(has)), { kind: "site", name: "blog" });
+  assert.deepEqual(matchHost("tekitou.app", ids(has)), { kind: "root" }, "サイト名と同じでもドメイン本体はルート");
+  assert.deepEqual(matchHost("shop.tekitou.app", ids(has)), { kind: "root" });
+  assert.deepEqual(matchHost("blog.localhost:8080", ids(has)), { kind: "site", name: "blog" });
+  assert.deepEqual(matchHost("localhost:8080", ids(has)), { kind: "root" });
+  assert.deepEqual(matchHost("127.0.0.1:8080", ids(has)), { kind: "root" });
+  assert.deepEqual(matchHost("127.0.0.1", ids((n) => n === "127")), { kind: "root" }, "IP アドレスの先頭の数字はサイト名にしない");
+  assert.deepEqual(matchHost("[::1]:8080", ids(has)), { kind: "root" });
 
-  assert.deepEqual(matchHost("blog.tekitou.app", has, "tekitou.app"), { kind: "site", name: "blog" });
-  assert.deepEqual(matchHost("tekitou.app", has, "tekitou.app"), { kind: "root" });
-  assert.deepEqual(matchHost("shop.tekitou.app", has, "tekitou.app"), { kind: "other" }, "ルートドメインが決まっていれば、存在しないサブドメインはサイトでもルートでもない");
-  assert.deepEqual(matchHost("a.blog.tekitou.app", has, "tekitou.app"), { kind: "other" });
-  assert.deepEqual(matchHost("fa.tekitou.app", has, "tekitou.app"), { kind: "other" });
-  assert.deepEqual(matchHost("kanzume-abcd.onrender.com", has, "tekitou.app"), { kind: "other" });
+  assert.deepEqual(matchHost("blog.tekitou.app", ids(has), "tekitou.app"), { kind: "site", name: "blog" });
+  assert.deepEqual(matchHost("tekitou.app", ids(has), "tekitou.app"), { kind: "root" });
+  assert.deepEqual(matchHost("shop.tekitou.app", ids(has), "tekitou.app"), { kind: "other" }, "ルートドメインが決まっていれば、存在しないサブドメインはサイトでもルートでもない");
+  assert.deepEqual(matchHost("a.blog.tekitou.app", ids(has), "tekitou.app"), { kind: "other" });
+  assert.deepEqual(matchHost("fa.tekitou.app", ids(has), "tekitou.app"), { kind: "other" });
+  assert.deepEqual(matchHost("kanzume-abcd.onrender.com", ids(has), "tekitou.app"), { kind: "other" });
   assert.equal(parentHost("blog.tekitou.app:8080"), "tekitou.app:8080");
 });
 

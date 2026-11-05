@@ -24,6 +24,11 @@
         <label for="setup-token">セットアップトークン</label>
         <input id="setup-token" autocomplete="off" spellcheck="false">
       </div>
+      <div class="field" id="setup-domain-field">
+        <label for="setup-domain">ルートドメイン</label>
+        <input id="setup-domain" autocomplete="off" spellcheck="false" autocapitalize="off" placeholder="example.com">
+        <p class="muted hint">サイトは &lt;サイト名&gt;.&lt;ドメイン&gt; で配信します。DNS はドメイン本体と *.&lt;ドメイン&gt; を Kanzume に向けてください。あとから「設定」で変えられます。</p>
+      </div>
       <button class="primary" id="register">パスキーを登録</button>
       <div class="error" id="setup-error"></div>
     </div>

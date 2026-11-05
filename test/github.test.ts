@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
@@ -237,4 +238,70 @@ test("リポジトリの外のファイルを import・alias するリポジト�
     const full = app.history.get(d.id)!;
     assert.doesNotMatch(full.log + full.buildLog, /kz_secret_value/);
   }
+});
+
+test("管理画面: URL を読み、サイト名・環境変数・シークレットを決めてデプロイし、デプロイ後も設定を変えられる", async (t) => {
+  const worker = `export default { async fetch(request, env) { return Response.json({ GREETING: env.GREETING, API_KEY: env.API_KEY ?? null, LEVEL: env.LEVEL ?? null }); } };`;
+  const { fetcher } = fakeGitHub(
+    repoTarball(t, {
+      // name がない設定でも、管理画面でサイト名を決めればデプロイできる
+      "apps/hello/wrangler.jsonc": `{ "main": "index.js", "compatibility_date": "2026-10-01", "vars": { "GREETING": "wrangler", "LEVEL": "1", "OBJ": { "a": 1 } } }`,
+      "apps/hello/index.js": worker,
+    }),
+  );
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.server.close());
+  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  const cookie = `kanzume_session=${await app.state.createSession()}`;
+  const api = (p: string, method = "GET", body?: unknown) =>
+    fetch(`${base}/_admin/kanzume/api${p}`, { method, headers: { cookie, origin: base, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+  const site = async (host: string) => fetch(`${base}/`, { headers: { "x-forwarded-host": host } });
+  const url = "https://github.com/kazukingzz/kanzume/tree/main/apps/hello";
+
+  const inspect = await api("/deploy-github/inspect", "POST", { url });
+  assert.equal(inspect.status, 200);
+  const info = (await inspect.json()) as { name: string; vars: Record<string, string>; exists: boolean };
+  assert.equal(info.name, "hello", "name がなければディレクトリ名");
+  assert.deepEqual(info.vars, { GREETING: "wrangler", LEVEL: "1" }, "文字列でない vars は初期値に入れない");
+  assert.equal(info.exists, false);
+
+  const deploy = await api("/deploy-github", "POST", { url, name: "blog", vars: { GREETING: "settings" }, secrets: { API_KEY: "s3cret" } });
+  assert.equal(deploy.status, 200, await deploy.clone().text());
+  assert.deepEqual(await (await site("blog.localhost")).json(), { GREETING: "settings", API_KEY: "s3cret", LEVEL: "1" });
+
+  // 同じ名前で確認なしだと 409、確認すれば上書き
+  assert.equal((await api("/deploy-github", "POST", { url, name: "blog", vars: {}, secrets: {} })).status, 409);
+  assert.equal(((await (await api("/deploy-github/inspect", "POST", { url })).json()) as { exists: boolean }).exists, false, "名前が違えば存在しない");
+  assert.equal(((await (await api("/site-name?name=blog")).json()) as { exists: boolean }).exists, true);
+
+  // シークレットの値は返さない
+  const settings = (await (await api("/sites/blog/settings")).json()) as Record<string, unknown>;
+  assert.deepEqual(settings.secretKeys, ["API_KEY"]);
+  assert.ok(!JSON.stringify(settings).includes("s3cret"));
+  assert.deepEqual(settings.vars, { GREETING: "settings" });
+
+  // 再デプロイしなくても次のリクエストから反映される。null のシークレットは消え、書かなかったものは残る
+  await api("/sites/blog/settings", "PUT", { secrets: { TOKEN2: "x" } });
+  assert.equal((await api("/sites/blog/settings", "PUT", { vars: { GREETING: "changed", LEVEL: "9" }, secrets: { API_KEY: null } })).status, 200);
+  assert.deepEqual(await (await site("blog.localhost")).json(), { GREETING: "changed", API_KEY: null, LEVEL: "9" });
+  assert.deepEqual(((await (await api("/sites/blog/settings")).json()) as { secretKeys: string[] }).secretKeys, ["TOKEN2"]);
+  assert.equal((await api("/sites/blog/settings", "PUT", { vars: { "1BAD": "x" } })).status, 400);
+
+  // サブドメインを変えると新しいサブドメインで配信し、前のサブドメインでは配信しない。サイトの ID は変わらない
+  const deploy2 = await api("/deploy-github", "POST", { url, name: "shop", vars: {}, secrets: {} });
+  assert.equal(deploy2.status, 200);
+  assert.equal((await api("/sites/blog/settings", "PUT", { subdomain: "shop" })).status, 400, "ほかのサイトのサブドメインは使えない");
+  const moved = await api("/sites/blog/settings", "PUT", { subdomain: "news" });
+  assert.equal(moved.status, 200);
+  assert.match(((await moved.json()) as { subdomainUrl: string }).subdomainUrl, /^http:\/\/news\./);
+  assert.equal(((await (await site("news.localhost")).json()) as { GREETING: string }).GREETING, "changed");
+  assert.equal(app.sites.resolve("blog"), undefined, "前のサブドメインはサイトとして扱わない");
+  assert.ok(app.sites.has("blog"));
+  // 使われているサブドメインと同じ名前の新しいサイトは作らない
+  const taken = await api("/deploy-github", "POST", { url, name: "news", vars: {}, secrets: {} });
+  assert.equal(taken.status, 400);
+  // 戻せる
+  assert.equal((await api("/sites/blog/settings", "PUT", { subdomain: "" })).status, 200);
+  assert.equal(((await (await site("blog.localhost")).json()) as { GREETING: string }).GREETING, "changed");
 });
