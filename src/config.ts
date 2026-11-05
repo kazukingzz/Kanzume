@@ -1,5 +1,6 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
+import { parseBackupUrl, type BackupConfig } from "./backup/url.ts";
 
 export interface Config {
   port: number;
@@ -19,6 +20,8 @@ export interface Config {
   /** 管理画面の「サンプルからデプロイ」が使う examples の場所（fork したら自分のリポジトリにする） */
   samplesRepo: string;
   logRetentionHours: number;
+  /** KANZUME_BACKUP_URL。未設定なら null（バックアップしない） */
+  backup: BackupConfig | null;
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
@@ -43,5 +46,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     maxWorkers: Number(env.KANZUME_MAX_WORKERS || 5),
     samplesRepo: (env.KANZUME_SAMPLES_REPO || "https://github.com/kazukingzz/Kanzume/tree/main").replace(/\/+$/, ""),
     logRetentionHours: Number(env.KANZUME_LOG_RETENTION_HOURS || 72),
+    backup: parseBackupUrl(env.KANZUME_BACKUP_URL),
   };
 }

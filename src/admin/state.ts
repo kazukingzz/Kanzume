@@ -96,6 +96,8 @@ export class AdminState {
   #state: StateFile = { userId: "", teamId: "", deployToken: "", credentials: [] };
   #sessions = new Map<string, number>();
   #saving: Promise<void> = Promise.resolve();
+  /** 保存したあとに呼ぶ（バックアップのきっかけ） */
+  onChange: (() => void) | null = null;
 
   constructor(dataDir: string) {
     this.#file = path.join(dataDir, "admin.json");
@@ -140,6 +142,7 @@ export class AdminState {
       const tmp = `${this.#file}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
       await fs.rename(tmp, this.#file);
+      this.onChange?.();
     });
     this.#saving = run.catch(() => {});
     return run;

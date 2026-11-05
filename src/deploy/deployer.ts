@@ -80,6 +80,8 @@ export class Deployer {
   #runtime: Runtime;
   #history: DeployHistory;
   #queue = new SerialQueue();
+  /** デプロイが成功したあとに呼ぶ（バックアップのきっかけ） */
+  onChange: (() => void) | null = null;
 
   constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
     this.#sites = sites;
@@ -162,6 +164,7 @@ export class Deployer {
       if (worker) this.#runtime.install(worker);
       else this.#runtime.evict(store.siteDir);
       log.add("新しいリリースに切り替えました");
+      this.onChange?.();
       return { ok: true, release };
     });
 

@@ -7,6 +7,7 @@ import {
   verifyAuthenticationResponse,
   verifyRegistrationResponse,
 } from "@simplewebauthn/server";
+import type { Backup } from "../backup/backup.ts";
 import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { DeployLog } from "../deploy/deployer.ts";
@@ -47,6 +48,7 @@ interface Deps {
   observability: Observability;
   resources: ResourceMonitor;
   deployer: Deployer;
+  backup?: Backup | null;
   github?: Partial<GitHubOptions>;
 }
 
@@ -60,7 +62,7 @@ function envPatch(body: Record<string, unknown> | null): SettingsPatch {
   return patch;
 }
 
-export function createAdminHandler({ config, state, sites, repos, runtime, history, observability, resources, deployer, github }: Deps) {
+export function createAdminHandler({ config, state, sites, repos, runtime, history, observability, resources, deployer, backup, github }: Deps) {
   const challenges = new Challenges();
   let githubDeploying = false;
 
@@ -245,6 +247,14 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         if (err instanceof DomainError) return sendJson(res, 400, { error: err.message });
         throw err;
       }
+    }
+
+    if (route === "GET /api/backup") return sendJson(res, 200, backup ? backup.status() : { enabled: false });
+
+    if (route === "POST /api/backup/run") {
+      if (!backup) return sendJson(res, 400, { error: "KANZUME_BACKUP_URL が設定されていません" });
+      const run = await backup.backupNow("手動");
+      return sendJson(res, run.ok ? 200 : 502, { ...backup.status(), error: run.error });
     }
 
     if (route === "GET /api/passkeys") {

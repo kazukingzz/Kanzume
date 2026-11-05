@@ -55,6 +55,8 @@ export class Repos {
   readonly dir: string;
   readonly maxInputBytes: number;
   readonly quotaBytes: number;
+  /** 作成・削除のあとに呼ぶ（バックアップのきっかけ。push はデプロイか定期バックアップで拾う） */
+  onChange: (() => void) | null = null;
 
   constructor(dataDir: string, maxInputBytes: number, quotaBytes = maxInputBytes * 4) {
     this.dir = path.join(dataDir, "repos");
@@ -101,11 +103,13 @@ export class Repos {
     if (!PROJECT_NAME.test(name)) throw new RepoError("名前は英小文字・数字・ハイフンで 63 文字以内にしてください");
     if (await this.exists(name)) throw new RepoError("同じ名前のリポジトリがあります");
     await run("git", ["init", "--quiet", "--bare", "--initial-branch=main", this.path(name)]);
+    this.onChange?.();
   }
 
   async remove(name: string): Promise<void> {
     if (!(await this.exists(name))) return;
     await fs.rm(this.path(name), { recursive: true, force: true });
+    this.onChange?.();
   }
 
   /** HEAD が指すブランチ。--short を使わないのは、同じ名前のタグがあると heads/main のように返るため */

@@ -21,6 +21,19 @@ docker build -t kanzume .
 docker run -d -p 8080:8080 -v kanzume-data:/data kanzume
 ```
 
+## バックアップ
+
+`KANZUME_BACKUP_URL` に S3 互換ストレージ（Cloudflare R2・AWS S3・B2・MinIO）を指定すると、データ（サイト・KV・R2・パスキー・リポジトリ・ログ）を暗号化して外部に保存し、`/data` が空の状態で起動したときに最新の世代を自動で復元します（復元が終わるまでリクエストは受け付けません）。デプロイや設定の変更のあとと 1 時間ごとに、変わったファイルだけを送ります。未設定ならバックアップしません。
+
+```sh
+KANZUME_BACKUP_URL=s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>[/<PREFIX>]
+```
+
+- R2 の API トークンは「Object Read & Write」で、対象をそのバケットだけに絞って作ります
+- 鍵に `/` `+` `@` などが入るときはパーセントエンコードします
+- クエリで `keep`（残す世代数、48）・`interval`（分、60）を変えられます。`file:///path` はローカルのディレクトリに保存します（開発用）
+- 暗号化の鍵は SECRET_ACCESS_KEY から導出します。トークンを作り直したら、一度だけ `?previous=<旧 SECRET>` を付けて起動すると鍵が引き継がれ、以後は外して構いません
+
 ## デプロイする
 
 **GitHub Actions**: 管理画面に表示される `KANZUME_URL`（Variables）と `KANZUME_TOKEN`（Secrets）を登録して、次のワークフローを置きます。
@@ -60,7 +73,7 @@ Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします
 
 ## 環境変数
 
-`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。管理画面の「設定 > ドメイン」より優先する。どちらもなければ管理画面を開いたホスト）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
+`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。管理画面の「設定 > ドメイン」より優先する。どちらもなければ管理画面を開いたホスト）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_BACKUP_URL`（上記）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
 
 ## 開発
 

@@ -64,6 +64,8 @@ export class Sites {
   #stores = new Map<string, Store>();
   #settings = new Map<string, SiteSettings>();
   #root: string | null = null;
+  /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
+  onChange: (() => void) | null = null;
 
   constructor(dataDir: string) {
     this.dir = path.join(dataDir, "sites");
@@ -153,6 +155,7 @@ export class Sites {
     await fs.writeFile(`${file}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
     await fs.rename(`${file}.tmp`, file);
     this.#settings.set(id, next);
+    this.onChange?.();
     return next;
   }
 
@@ -164,6 +167,7 @@ export class Sites {
     closeSiteDb(store.siteDir);
     await fs.rm(store.siteDir, { recursive: true, force: true });
     if (this.#root === name) await this.setRoot(null);
+    this.onChange?.();
   }
 
   /** サイトの URL。ルートドメインで配信しているサイトはルートの URL を主にする（サブドメインは補足） */
@@ -183,6 +187,7 @@ export class Sites {
     if (name === null) await fs.rm(file, { force: true });
     else await fs.writeFile(file, name);
     this.#root = name;
+    this.onChange?.();
   }
 }
 

@@ -1450,8 +1450,70 @@ function domainCard() {
   );
 }
 
+function backupCard() {
+  const body = h("div", {}, h("p", { class: "muted", text: "読み込み中…" }));
+  const error = h("div", { class: "error" });
+  const run = (b) => {
+    const at = (x) => (x?.at ? `${fmtDate(x.at)}（${fmtAgo(x.at)}）` : "–");
+    const last = b.lastBackup;
+    const lastText = !last
+      ? "この起動ではまだバックアップしていません"
+      : !last.ok
+        ? `失敗: ${last.error}`
+        : last.skipped
+          ? last.skipped
+          : `世代 ${last.snapshot} を保存（${last.files} ファイル、送信 ${last.uploadedFiles} 件・${fmtBytes(last.uploadedBytes ?? 0)}）`;
+    const restore = b.lastRestore;
+    const restoreText = !restore ? "起動時に復元していません（/data にデータがあったか、バックアップがありませんでした）" : restore.ok ? `世代 ${restore.snapshot} を復元しました（${restore.files} ファイル）` : `失敗: ${restore.error}`;
+    const button = h("button", { class: "primary", text: "今すぐバックアップ" });
+    button.addEventListener("click", async () => {
+      error.textContent = "";
+      busy(button, "バックアップ中…");
+      try {
+        run(await api("/backup/run", { method: "POST", body: "{}" }));
+      } catch (err) {
+        error.textContent = err.message;
+        load();
+      }
+    });
+    fill(
+      body,
+      h(
+        "dl",
+        { class: "kv" },
+        h("dt", { text: "保存先" }),
+        h("dd", { class: "mono", text: b.target }),
+        h("dt", { text: "最新の世代" }),
+        h("dd", { text: b.latest ? `${b.latest}（全 ${b.snapshots} 世代・最大 ${b.keep}）` : b.snapshots === 0 ? "まだありません" : "–" }),
+        h("dt", { text: "最後の実行" }),
+        h("dd", {}, h("div", { text: at(last) }), h("div", { class: last && !last.ok ? "error" : "muted", text: lastText })),
+        h("dt", { text: "起動時の復元" }),
+        h("dd", {}, restore ? h("div", { text: at(restore) }) : null, h("div", { class: restore && !restore.ok ? "error" : "muted", text: restoreText })),
+        h("dt", { text: "定期実行" }),
+        h("dd", { text: `${b.intervalMinutes} 分ごと（ほかにデプロイや設定の変更のあと）` }),
+      ),
+      h("div", { class: "actions" }, button),
+    );
+  };
+  const load = async () => {
+    try {
+      const b = await api("/backup");
+      if (b.enabled) return run(b);
+      fill(
+        body,
+        h("p", { class: "muted", text: "バックアップは無効です。環境変数 KANZUME_BACKUP_URL に S3 互換ストレージ（Cloudflare R2 など）を指定すると、データを外部に保存し、/data が空の状態で起動したときに自動で復元します。" }),
+        h("code", { class: "value", text: "s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>" }),
+      );
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  };
+  load();
+  return h("section", { class: "card" }, h("h2", { text: "バックアップ" }), body, error);
+}
+
 async function viewSettings(main) {
-  const page = h("div", { class: "page" }, pageHead("設定"), domainCard());
+  const page = h("div", { class: "page" }, pageHead("設定"), domainCard(), backupCard());
   const tokenView = h("code", { class: "value grow", text: state.showToken ? state.token : "••••••••••••••••" });
   const toggle = h("button", { text: state.showToken ? "隠す" : "表示" });
   toggle.addEventListener("click", () => {

@@ -12,6 +12,8 @@ services:
       KANZUME_ORIGIN: ${KANZUME_ORIGIN:-}
       # 最初のパスキー登録に使う。未設定なら起動ログに出る
       KANZUME_SETUP_TOKEN: ${KANZUME_SETUP_TOKEN:-}
+      # バックアップ先（例: s3://<KEY>:<SECRET>@<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>）。未設定ならバックアップしない
+      KANZUME_BACKUP_URL: ${KANZUME_BACKUP_URL:-}
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8080/_health').then((r) => process.exit(r.ok ? 0 : 1), () => process.exit(1))"]
       interval: 30s
