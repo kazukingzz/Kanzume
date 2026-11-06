@@ -345,3 +345,52 @@ test("S3 互換の保存先でもバックアップと復元ができる", async
   assert.ok(fs.existsSync(path.join(c2.dataDir, "repos", "r.git", "HEAD")));
   assert.ok(fs.existsSync(path.join(c2.dataDir, "repos", "r.git", "refs", "heads")), "空のディレクトリも戻る");
 });
+
+test("アセットの .sqlite やユーザーのブランチ名はそのまま保存し、Kanzume の一時ファイルだけを除く", async (t) => {
+  const { make } = configs(t);
+  const config = make();
+  const app = await boot(t, config);
+  await setup(app);
+  const release = app.sites.get("app")!.get()!;
+  // サイトのアセットとして置かれた SQLite（Kanzume の DB ではない）
+  const assetDir = path.join(release.dir, "assets");
+  fs.mkdirSync(assetDir, { recursive: true });
+  fs.writeFileSync(path.join(assetDir, "data.sqlite"), "not a database");
+  fs.writeFileSync(path.join(assetDir, "demo.sqlite"), "user file");
+  fs.writeFileSync(path.join(assetDir, "bun.lock"), "lock");
+  const repo = app.repos.path("app");
+  fs.mkdirSync(path.join(repo, "refs", "heads"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "refs", "heads", "fix-journal"), "0".repeat(40) + "\n");
+  fs.writeFileSync(path.join(repo, "refs", "heads", "main.lock"), "x");
+  fs.writeFileSync(path.join(config.dataDir, "admin.json.tmp"), "x");
+
+  const run = await app.backup.backupNow("test");
+  assert.equal(run.ok, true, run.error);
+  assert.equal(fs.readFileSync(path.join(assetDir, "data.sqlite"), "utf8"), "not a database", "アセットを DB として開かない");
+  assert.equal(fs.existsSync(path.join(assetDir, "data.sqlite-wal")), false);
+
+  await app.close();
+  fs.rmSync(config.dataDir, { recursive: true, force: true });
+  const restored = await boot(t, config);
+  const dir = restored.sites.get("app")!.get()!.dir;
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "data.sqlite"), "utf8"), "not a database");
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "demo.sqlite"), "utf8"), "user file");
+  assert.equal(fs.readFileSync(path.join(dir, "assets", "bun.lock"), "utf8"), "lock");
+  assert.ok(fs.existsSync(path.join(restored.repos.path("app"), "refs", "heads", "fix-journal")));
+  assert.equal(fs.existsSync(path.join(restored.repos.path("app"), "refs", "heads", "main.lock")), false);
+  assert.equal(fs.existsSync(path.join(config.dataDir, "admin.json.tmp")), false);
+  assert.equal(fs.statSync(path.join(config.dataDir, "admin.json")).mode & 0o777, 0o600, "秘密を含むファイルは本人だけが読める");
+});
+
+test("ログインやセッションの更新ではバックアップを予約しない", async (t) => {
+  const { make } = configs(t);
+  const app = await boot(t, make());
+  let calls = 0;
+  app.state.onChange = () => calls++;
+  await app.state.addCredential({ ...fakeCredential, id: "c2" });
+  assert.equal(calls, 1, "パスキーの登録は予約する");
+  const id = await app.state.createSession();
+  await app.state.updateCounter("c2", 5);
+  await app.state.removeSession(id);
+  assert.equal(calls, 1);
+});

@@ -131,6 +131,13 @@ export function normalizeDomain(input: string): string | null {
   const v = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
   if (!v) return null;
   if (v.length > 253 || !DOMAIN.test(v)) throw new DomainError("ドメインの形式が正しくありません（例: example.com）");
+  // URL として使えるか（ポートの範囲、数字だけの最後のラベルなど）。サイトの URL を作るときに new URL が失敗しないようにする
+  let host: string | null = null;
+  try {
+    host = new URL(`https://${v}`).host;
+  } catch {}
+  const bare = v.replace(/:443$/, "");
+  if (host !== bare || /\.\d+(:\d+)?$/.test(v)) throw new DomainError("ドメインの形式が正しくありません（例: example.com）");
   return v;
 }
 
@@ -211,14 +218,18 @@ export class AdminState {
   }
 
   // 直列にしないと、同時ログインなどで書き込みが重なったときに一時ファイルの rename が ENOENT で失敗する
-  #save(): Promise<void> {
+  /**
+   * backup: false はログインやセッションの更新など、バックアップをすぐ取るほどではない変更（定期バックアップで拾う）。
+   * ログインのたびに世代が増えて、古い世代が押し出されないようにする
+   */
+  #save({ backup = true }: { backup?: boolean } = {}): Promise<void> {
     const run = this.#saving.then(async () => {
       const data: StoredFile = { ...this.#state, sessions: Object.fromEntries(this.#sessions) };
       await fs.mkdir(path.dirname(this.#file), { recursive: true });
       const tmp = `${this.#file}.tmp`;
       await fs.writeFile(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
       await fs.rename(tmp, this.#file);
-      this.onChange?.();
+      if (backup) this.onChange?.();
     });
     this.#saving = run.catch(() => {});
     return run;
@@ -363,7 +374,7 @@ export class AdminState {
     this.#prune(now);
     this.#sessions.set(hash, { lastSeen: now, userId });
     try {
-      await this.#save();
+      await this.#save({ backup: false });
     } catch (err) {
       this.#sessions.delete(hash);
       throw err;
@@ -390,7 +401,7 @@ export class AdminState {
     // 毎回保存しないのは、リクエストのたびに admin.json 全体を書き直すことになるため
     if (now - session.lastSeen > TOUCH_SAVE_INTERVAL_MS) {
       session.lastSeen = now;
-      this.#save().catch((err) => console.error("[kanzume] セッションの保存に失敗:", err));
+      this.#save({ backup: false }).catch((err) => console.error("[kanzume] セッションの保存に失敗:", err));
     }
     return user;
   }
@@ -402,7 +413,7 @@ export class AdminState {
     if (session === undefined) return;
     this.#sessions.delete(hash);
     try {
-      await this.#save();
+      await this.#save({ backup: false });
     } catch (err) {
       this.#sessions.set(hash, session);
       throw err;
@@ -571,7 +582,7 @@ export class AdminState {
     if (!credential) return;
     credential.counter = counter;
     credential.lastUsedAt = new Date().toISOString();
-    await this.#save();
+    await this.#save({ backup: false });
   }
 
   async renameCredential(id: string, name: string): Promise<boolean> {

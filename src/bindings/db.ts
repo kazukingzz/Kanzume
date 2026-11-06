@@ -39,6 +39,11 @@ export function siteDb(siteDir: string): DatabaseSync {
   return db;
 }
 
+/** 開いている接続があれば返す（開いていなければ開かない。バックアップがサイトを作り直さないように） */
+export function openedSiteDb(siteDir: string): DatabaseSync | undefined {
+  return open.get(siteDir);
+}
+
 export function closeAllSiteDbs(): void {
   for (const db of open.values()) db.close();
   open.clear();

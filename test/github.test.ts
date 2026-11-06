@@ -322,3 +322,23 @@ test("メンバーが管理画面の GitHub デプロイで自分のサイトを
   assert.equal(app.sites.deployed("blog"), true);
   assert.equal(app.sites.root, null, "ルートは管理画面と同じオリジンなので、メンバーのデプロイでは決めない");
 });
+
+test("既存のサイトの GitHub からの再デプロイに失敗したら、環境変数は元に戻る", async (t) => {
+  const { fetcher } = fakeGitHub(repoTarball(t, { "apps/broken/index.js": "export default {}" }));
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.server.close());
+  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  await app.sites.ensure("blog");
+  await app.sites.updateSettings("blog", { vars: { API: "old" }, secrets: { KEY: "k" } });
+  const cookie = `kanzume_session=${await app.state.createSession()}`;
+  const res = await fetch(`${base}/_admin/kanzume/api/deploy-github`, {
+    method: "POST",
+    headers: { cookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://github.com/kazukingzz/kanzume/tree/main/apps/broken", name: "blog", vars: { API: "new" }, secrets: { KEY: null } }),
+  });
+  assert.equal(res.status, 400);
+  assert.deepEqual(app.sites.settings("blog").vars, { API: "old" });
+  assert.deepEqual(app.sites.settings("blog").secrets, { KEY: "k" });
+  assert.ok(app.sites.has("blog"), "作成済みのサイトは消さない");
+});

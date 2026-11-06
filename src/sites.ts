@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { closeSiteDb } from "./bindings/db.ts";
 import { siteOrigin } from "./http.ts";
+import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 
 const ROOT_FILE = "_root";
@@ -63,6 +64,7 @@ export class Sites {
   readonly dir: string;
   #stores = new Map<string, Store>();
   #settings = new Map<string, SiteSettings>();
+  #queue = new SerialQueue();
   #root: string | null = null;
   /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
@@ -133,7 +135,21 @@ export class Sites {
     return undefined;
   }
 
-  async updateSettings(id: string, patch: SettingsPatch): Promise<SiteSettings> {
+  /** 同じサイトの設定の書き込みは 1 つずつ（同じ一時ファイルを使うのと、読んでから書くまでの間に別の変更を挟まないため） */
+  updateSettings(id: string, patch: SettingsPatch): Promise<SiteSettings> {
+    return this.#queue.run(id, () => this.#updateSettings(id, patch));
+  }
+
+  /** 設定をまるごと前の状態に戻す（デプロイに失敗したときなど） */
+  restoreSettings(id: string, settings: SiteSettings): Promise<SiteSettings> {
+    return this.#queue.run(id, async () => {
+      const store = this.#stores.get(id);
+      if (!store) throw new SettingsError("サイトが見つかりません");
+      return this.#write(id, store.siteDir, { ...settings, vars: { ...settings.vars }, secrets: { ...settings.secrets } });
+    });
+  }
+
+  async #updateSettings(id: string, patch: SettingsPatch): Promise<SiteSettings> {
     const store = this.#stores.get(id);
     if (!store) throw new SettingsError("サイトが見つかりません");
     const current = this.settings(id);
@@ -154,8 +170,13 @@ export class Sites {
       }
       next.secrets = checkEnv("シークレット", next.secrets);
     }
-    await fs.mkdir(store.siteDir, { recursive: true });
-    const file = path.join(store.siteDir, SETTINGS_FILE);
+    return this.#write(id, store.siteDir, next);
+  }
+
+  async #write(id: string, siteDir: string, next: SiteSettings): Promise<SiteSettings> {
+    // 書いている間にサイトが消されたら、ディレクトリを作り直さない
+    if (this.#stores.get(id)?.siteDir !== siteDir) throw new SettingsError("サイトが見つかりません");
+    const file = path.join(siteDir, SETTINGS_FILE);
     await fs.writeFile(`${file}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
     await fs.rename(`${file}.tmp`, file);
     this.#settings.set(id, next);

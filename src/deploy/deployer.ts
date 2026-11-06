@@ -1,3 +1,4 @@
+import { SettingsError } from "../sites.ts";
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SerialQueue } from "../serial.ts";
@@ -151,7 +152,14 @@ export class Deployer {
     if (sources) kept.push(sources);
 
     const result = await this.#serialize(async (): Promise<DeployResult> => {
-      const store = await this.#sites.ensure(manifest.name);
+      let store;
+      try {
+        store = await this.#sites.ensure(manifest.name);
+      } catch (err) {
+        // ほかのサイトがその名前をサブドメインにしているときなど
+        if (err instanceof SettingsError) return { ok: false, error: err.message } as const;
+        throw err;
+      }
       const release = await store.createRelease(manifest, kept);
       log.add(`リリース ${release.id} を保存しました`);
       let worker = null;

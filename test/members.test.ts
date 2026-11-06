@@ -375,3 +375,21 @@ test("メンバーは R2 のバケット名でサイトの外に出られず、�
   assert.equal(taken.status, 400);
   assert.equal((await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "news" })).status, 200);
 });
+
+test("URL にできないドメインは保存しない。サブドメインが重なる Actions のデプロイは 400 で履歴に残る", async (t) => {
+  const app = await start(t);
+  for (const bad of ["example.com:80800", "999.1.1.1", "example.123"]) assert.equal((await app.admin("/domain", "POST", { domain: bad })).status, 400, bad);
+  assert.equal((await app.admin("/domain", "POST", { domain: "example.com:8080" })).status, 200);
+
+  await app.deploy("blog");
+  await app.sites.updateSettings("blog", { subdomain: "news" });
+  const res = await fetch(`${app.base}/_api/deploy`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${app.state.deployToken}` },
+    body: gzipSync(rawTar([rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "news", compatibility_date: "2026-10-01", assets: { directory: "public" } }))), rawTarEntry("assets/index.html", Buffer.from("x"))])),
+  });
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as { error: string }).error, /news/);
+  assert.equal(app.history.list()[0].status, "failed");
+  assert.equal(app.history.list()[0].name, "news");
+});

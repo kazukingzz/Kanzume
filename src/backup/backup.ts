@@ -1,13 +1,14 @@
 import { randomBytes } from "node:crypto";
+import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { promisify } from "node:util";
 import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
-import { siteDb } from "../bindings/db.ts";
+import { openedSiteDb } from "../bindings/db.ts";
 import { SerialQueue } from "../serial.ts";
 import { Dek, decrypt, encrypt, KeyMismatchError, loadDek } from "./crypto.ts";
-import { LocalStore, S3Store, type BackupStore } from "./store.ts";
+import { BackupStoreError, LocalStore, S3Store, type BackupStore } from "./store.ts";
 import type { BackupConfig } from "./url.ts";
 
 const gzip = promisify(gzipCb);
@@ -15,8 +16,23 @@ const gunzip = promisify(gunzipCb);
 
 /** バックアップしないもの（トップレベル） */
 const SKIP_TOP = new Set(["git-hooks", ".restoring", ".backup-tmp"]);
-/** バックアップしないファイル（作りかけ・SQLite の WAL・git のロックなど） */
-const SKIP_FILE = /(\.tmp|-wal|-shm|-journal|\.lock|\.index)$/;
+/** Kanzume が管理する SQLite（VACUUM INTO で取る）。ほかの .sqlite（サイトのアセットなど）は普通のファイルとして扱う */
+const MANAGED_DB = /^(meta\.sqlite|sites\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/data\.sqlite)$/;
+/** 秘密を含むので、復元したときも本人だけが読めるようにするファイル */
+const PRIVATE_FILE = /^(admin\.json|sites\/[^/]+\/settings\.json)$/;
+
+/**
+ * バックアップしないもの。Kanzume 自身が作る一時ファイルと、管理している SQLite の WAL などだけ
+ * （ユーザーのファイルやブランチ名を、名前の末尾だけで落とさないようにする）
+ */
+function skipped(rel: string, isDir: boolean): boolean {
+  if (isDir) return /^sites\/[^/]+\/releases\/[^/]+\.tmp$/.test(rel); // 作りかけのリリース
+  const db = rel.replace(/-(wal|shm|journal)$/, "");
+  if (db !== rel && MANAGED_DB.test(db)) return true;
+  if (/^(admin\.json\.tmp|sites\/[^/]+\/(settings\.json\.tmp|current\.[^/]+\.tmp))$/.test(rel)) return true;
+  // git が作業中に作るロック（ref の名前は .lock で終われないので、ユーザーのブランチとは重ならない）
+  return /^repos\/[^/]+\.git\/.+\.lock$/.test(rel);
+}
 const DEBOUNCE_MS = 30_000;
 const PARALLEL = 4;
 
@@ -61,13 +77,42 @@ export function createBackupStore(config: BackupConfig): BackupStore {
   return new S3Store(config);
 }
 
+/**
+ * items を n 本ずつ並べて処理する。1 つでも失敗したら、残りは始めずに、動いているものが終わるのを待ってから失敗を投げる
+ * （失敗のあとも書き込みが続いて、次の処理と混ざらないようにする）
+ */
 async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): Promise<void> {
   let i = 0;
-  await Promise.all(
+  let failed = false;
+  const results = await Promise.allSettled(
     Array.from({ length: Math.min(n, items.length) }, async () => {
-      while (i < items.length) await fn(items[i++]);
+      while (!failed && i < items.length) {
+        try {
+          await fn(items[i++]);
+        } catch (err) {
+          failed = true;
+          throw err;
+        }
+      }
     }),
   );
+  const rejected = results.find((r) => r.status === "rejected");
+  if (rejected) throw (rejected as PromiseRejectedResult).reason;
+}
+
+/** ブロブがない・壊れている（この世代は使えない）。通信の失敗とは分けて、ひとつ前の世代を試す */
+class SnapshotBroken extends Error {}
+
+/** 一時的な失敗（保存先との通信）なら数回やり直す */
+async function retry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
+  for (let i = 1; ; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      if (!(err instanceof BackupStoreError) || i >= attempts) throw err;
+      await new Promise((r) => setTimeout(r, 500 * 2 ** i));
+    }
+  }
 }
 
 /** パスキーが登録されているか（初期セットアップが済んでいるか） */
@@ -234,8 +279,9 @@ export class Backup {
         console.log(`[backup] ${this.target} の世代 ${name} を復元しました（${files} ファイル）`);
         return this.lastRestore;
       } catch (err) {
-        if (err instanceof KeyMismatchError) {
-          this.lastRestore = { at, ok: false, error: err.message };
+        // 通信の失敗などで古い世代に戻ると、新しい変更が黙って失われるので、壊れた世代のときだけ前の世代を試す
+        if (!(err instanceof SnapshotBroken)) {
+          this.lastRestore = { at, ok: false, error: (err as Error)?.message ?? String(err) };
           throw err;
         }
         lastError = err;
@@ -248,19 +294,30 @@ export class Backup {
 
   async #restore(name: string): Promise<number> {
     const dek = await this.#ensureDek();
-    const manifest = await this.#readManifest(name);
+    let manifest: SnapshotManifest;
+    try {
+      manifest = await this.#readManifest(name);
+    } catch (err) {
+      if (err instanceof BackupStoreError) throw err;
+      throw new SnapshotBroken(`世代 ${name} のマニフェストを読めません: ${(err as Error)?.message ?? err}`);
+    }
     const staging = path.join(this.dataDir, ".restoring");
     await fs.rm(staging, { recursive: true, force: true });
     try {
       for (const d of manifest.dirs) await fs.mkdir(path.join(staging, d), { recursive: true });
       await pool(manifest.files, PARALLEL * 2, async (f) => {
-        const data = await this.store.get(`blobs/${f.blob}`);
-        if (!data) throw new Error(`${f.path} のデータ（${f.blob.slice(0, 12)}）がありません`);
-        const plain = await gunzip(decrypt(dek.key, data, `blob:${f.blob}`));
-        if (dek.blobName(plain) !== f.blob) throw new Error(`${f.path} のデータが壊れています`);
+        const data = await retry(() => this.store.get(`blobs/${f.blob}`));
+        if (!data) throw new SnapshotBroken(`${f.path} のデータ（${f.blob.slice(0, 12)}）がありません`);
+        let plain: Buffer;
+        try {
+          plain = await gunzip(decrypt(dek.key, data, `blob:${f.blob}`));
+        } catch {
+          throw new SnapshotBroken(`${f.path} のデータを復号できません`);
+        }
+        if (dek.blobName(plain) !== f.blob) throw new SnapshotBroken(`${f.path} のデータが壊れています`);
         const dest = path.join(staging, f.path);
         await fs.mkdir(path.dirname(dest), { recursive: true });
-        await fs.writeFile(dest, plain);
+        await fs.writeFile(dest, plain, { mode: PRIVATE_FILE.test(f.path) ? 0o600 : 0o644 });
       });
       // 全部そろってから、トップレベルを入れ替える（起動前で、/data は空なので上書きしてよい）
       await fs.mkdir(this.dataDir, { recursive: true });
@@ -306,6 +363,7 @@ export class Backup {
       let uploadedBytes = 0;
       const seen = new Set<string>();
 
+      const inflight = new Map<string, Promise<void>>();
       const upload = async (rel: string, sig: string, read: () => Promise<Buffer>) => {
         const cached = this.#cache.get(rel);
         if (cached && cached.sig === sig && blobs.has(cached.blob)) {
@@ -315,11 +373,19 @@ export class Backup {
         const plain = await read();
         const blob = dek.blobName(plain);
         if (!blobs.has(blob)) {
-          const body = encrypt(dek.key, await gzip(plain), `blob:${blob}`);
-          await this.store.put(`blobs/${blob}`, body);
-          blobs.add(blob);
-          uploadedFiles++;
-          uploadedBytes += body.length;
+          // 同じ中身のファイルが並んで処理されても、送るのは 1 回だけ
+          let sending = inflight.get(blob);
+          if (!sending) {
+            sending = (async () => {
+              const body = encrypt(dek.key, await gzip(plain), `blob:${blob}`);
+              await this.store.put(`blobs/${blob}`, body);
+              blobs.add(blob);
+              uploadedFiles++;
+              uploadedBytes += body.length;
+            })().finally(() => inflight.delete(blob));
+            inflight.set(blob, sending);
+          }
+          await sending;
         }
         this.#cache.set(rel, { sig, blob, size: plain.length });
         files.push({ path: rel, size: plain.length, blob });
@@ -335,18 +401,17 @@ export class Backup {
         await upload(rel, sig, async () => {
           const tmp = path.join(tmpDir, `${randomBytes(6).toString("hex")}.sqlite`);
           const quoted = tmp.replace(/'/g, "''");
-          if (rel === "meta.sqlite") {
-            if (this.#metaDb) this.#metaDb.exec(`VACUUM INTO '${quoted}'`);
-            else {
-              const db = new DatabaseSync(abs);
-              try {
-                db.exec(`VACUUM INTO '${quoted}'`);
-              } finally {
-                db.close();
-              }
+          // 動いている接続があればそれで取る。なければそのファイルだけを読み取り専用で開いて閉じる
+          // （接続を開きっぱなしにせず、消されたサイトの DB を作り直さない）
+          const live = rel === "meta.sqlite" ? this.#metaDb : openedSiteDb(path.dirname(abs));
+          if (live) live.exec(`VACUUM INTO '${quoted}'`);
+          else {
+            const db = new DatabaseSync(abs, { readOnly: true });
+            try {
+              db.exec(`VACUUM INTO '${quoted}'`);
+            } finally {
+              db.close();
             }
-          } else {
-            siteDb(path.dirname(abs)).exec(`VACUUM INTO '${quoted}'`);
           }
           try {
             return await fs.readFile(tmp);
@@ -359,18 +424,26 @@ export class Backup {
       const walk = async (rel: string) => {
         const abs = path.join(this.dataDir, rel);
         const entries = await fs.readdir(abs, { withFileTypes: true }).catch(() => []);
-        // SQLite を先に取る（R2 のメタデータを先に固めてから、オブジェクトのファイルを読む）
-        entries.sort((a, b) => Number(b.name.endsWith(".sqlite")) - Number(a.name.endsWith(".sqlite")) || a.name.localeCompare(b.name));
+        // 管理している SQLite を先に取る（R2 のメタデータを先に固めてから、オブジェクトのファイルを読む）
+        const managed = (name: string) => MANAGED_DB.test(rel ? `${rel}/${name}` : name);
+        entries.sort((a, b) => Number(managed(b.name)) - Number(managed(a.name)) || a.name.localeCompare(b.name));
         const plain: string[] = [];
         for (const e of entries) {
           const r = rel ? `${rel}/${e.name}` : e.name;
           if (!rel && SKIP_TOP.has(e.name)) continue;
+          if (skipped(r, e.isDirectory())) continue;
           if (e.isDirectory()) {
             dirs.push(r);
             await walk(r);
-          } else if (e.isFile() && !SKIP_FILE.test(e.name)) {
-            if (e.name.endsWith(".sqlite")) await snapshotDb(r, path.join(abs, e.name));
-            else plain.push(r);
+          } else if (e.isFile()) {
+            if (MANAGED_DB.test(r)) {
+              try {
+                await snapshotDb(r, path.join(abs, e.name));
+              } catch (err) {
+                // 読む前に消えた（サイトの削除と重なった）
+                if (fsSync.existsSync(path.join(abs, e.name))) throw err;
+              }
+            } else plain.push(r);
           }
         }
         await pool(plain, PARALLEL, async (r) => {
@@ -399,7 +472,10 @@ export class Backup {
       const latest = names.at(-1);
       if (latest) {
         const prev = await this.#readManifest(latest).catch(() => null);
-        if (prev && JSON.stringify([prev.dirs, prev.files]) === JSON.stringify([dirs, files])) {
+        // ログ（meta.sqlite）はリクエストのたびに変わるので、定期実行のときだけ変更として数える。
+        // ほかのきっかけ（デプロイ・設定の変更）では、ログだけの違いで世代を増やさない
+        const key = (fs: FileEntry[]) => JSON.stringify(reason === "定期" ? fs : fs.filter((f) => f.path !== "meta.sqlite"));
+        if (prev && JSON.stringify(prev.dirs) === JSON.stringify(dirs) && key(prev.files) === key(files)) {
           this.snapshotCount = names.length;
           this.latestSnapshot = latest;
           return done({ ok: true, skipped: "前回から変更がありません", snapshot: latest, files: files.length, uploadedFiles, uploadedBytes });

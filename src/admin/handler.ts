@@ -19,7 +19,7 @@ import { configuredRootHost, readBody, readJson, requestOrigin, rootOrigin, send
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
-import { SettingsError, type SettingsPatch, type Sites } from "../sites.ts";
+import { SettingsError, type SettingsPatch, type SiteSettings, type Sites } from "../sites.ts";
 import { PROJECT_NAME } from "../store.ts";
 import { RepoError, type Repos } from "../git/repos.ts";
 import { GIT_PATH } from "../git/server.ts";
@@ -621,25 +621,36 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
       githubDeploying = true;
       let created = false;
+      // 失敗したときに戻す、デプロイ前の設定（今動いているリリースは、この設定のまま動かし続ける）
+      let before: SiteSettings | null = null;
+      const rollback = async () => {
+        if (!siteName) return;
+        if (created && !sites.deployed(siteName)) await sites.remove(siteName);
+        else if (before) {
+          await sites.restoreSettings(siteName, before);
+          runtime.evict(sites.get(siteName)!.siteDir);
+        }
+      };
       try {
         if (siteName && patch) {
           // 最初に読み込む Worker から新しい環境変数を使うように、デプロイの前に設定を書く
           created = !sites.has(siteName);
           await sites.ensure(siteName);
+          before = sites.settings(siteName);
           await sites.updateSettings(siteName, patch);
           runtime.evict(sites.get(siteName)!.siteDir);
         }
         // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
         const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github, siteName, autoRoot: isAdmin });
         if (!result.ok) {
-          // 新しく作ったサイトが失敗したら、設定だけが残らないように消す
-          if (created && !sites.get(siteName!)?.get()) await sites.remove(siteName!);
+          // 新しく作ったサイトは消し、既存のサイトは設定を元に戻す
+          await rollback();
           return sendJson(res, 400, { error: result.error });
         }
         const name = result.release.manifest.name;
         return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url });
       } catch (err) {
-        if (created && !sites.get(siteName!)?.get()) await sites.remove(siteName!);
+        await rollback().catch(() => {});
         if (err instanceof SettingsError) return sendJson(res, 400, { error: err.message });
         throw err;
       } finally {

@@ -1,4 +1,4 @@
-import { createHash, createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 
@@ -29,8 +29,9 @@ export class LocalStore implements BackupStore {
   async put(key: string, body: Uint8Array): Promise<void> {
     const p = this.#path(key);
     await fs.mkdir(path.dirname(p), { recursive: true });
-    await fs.writeFile(`${p}.tmp`, body);
-    await fs.rename(`${p}.tmp`, p);
+    const tmp = `${p}.${randomBytes(6).toString("hex")}.tmp`;
+    await fs.writeFile(tmp, body);
+    await fs.rename(tmp, p);
   }
 
   async get(key: string): Promise<Uint8Array | null> {
@@ -119,6 +120,12 @@ const decodeXml = (s: string) =>
     return String.fromCodePoint(e[1].toLowerCase() === "x" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10));
   });
 
+/** 1 回のリクエストの時間制限。PUT は 60 秒 + 256 KiB/秒で送れる時間、GET は大きさが分からないので 10 分 */
+export function timeoutFor(method: string, bytes: number): number {
+  if (method === "GET") return 10 * 60_000;
+  return 60_000 + Math.ceil(bytes / (256 * 1024)) * 1000;
+}
+
 export interface S3Options {
   /** https://<account>.r2.cloudflarestorage.com */
   endpoint: string;
@@ -170,7 +177,8 @@ export class S3Store implements BackupStore {
         method,
         headers: { ...sent, authorization },
         body: body as BodyInit | undefined,
-        signal: AbortSignal.timeout(60_000),
+        // 時間制限は本文の転送にもかかるので、大きさに合わせて延ばす（遅い回線でも大きなファイルを送れるように）
+        signal: AbortSignal.timeout(timeoutFor(method, body?.byteLength ?? 0)),
       });
     } catch (err) {
       throw new BackupStoreError(this.#scrub(`保存先に接続できません（${method}）: ${(err as Error)?.message ?? err}`));
