@@ -167,7 +167,7 @@ $("register").addEventListener("click", async () => {
     }
     await enterApp();
     if (domainError) {
-      location.hash = "#/admin";
+      go("#/admin");
       alert(`パスキーは登録しましたが、ドメインを保存できませんでした: ${domainError.message}\n管理者設定のページで設定してください。`);
     }
   } catch (err) {
@@ -210,7 +210,7 @@ $("invite-join").addEventListener("click", async () => {
     const options = await api("/register/options", { method: "POST", body: JSON.stringify(join) });
     const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
     await api("/register/verify", { method: "POST", body: JSON.stringify({ ...join, response: credentialJSON(cred) }) });
-    location.hash = "#/";
+    go("#/");
     await enterApp();
   } catch (err) {
     $("invite-error").textContent = err.message;
@@ -238,7 +238,7 @@ async function viewInvite(main, token) {
       try {
         const { site } = await api("/invite/accept", { method: "POST", body: JSON.stringify({ token }) });
         await loadOverview();
-        location.hash = siteHash("deployments", site);
+        go(siteHash("deployments", site));
       } catch (err) {
         error.textContent = err.message;
         join.disabled = false;
@@ -309,13 +309,19 @@ function setMenu(open) {
 $("menu-open").addEventListener("click", () => setMenu(true));
 $("scrim").addEventListener("click", () => setMenu(false));
 
+/** 画面を移る。同じハッシュのときは hashchange が起きないので、自分で描き直す */
+function go(hash) {
+  if (location.hash === hash) route();
+  else location.hash = hash;
+}
+
 const siteHash = (tab, name = state.siteName) => (name ? `#/${encodeURIComponent(name)}/${tab}` : "#/new");
 
 for (const a of $("nav").querySelectorAll("a")) {
   a.addEventListener("click", (e) => {
     e.preventDefault();
     const tab = a.dataset.tab;
-    location.hash = SITE_TABS[tab] ? siteHash(tab) : `#/${tab}`;
+    go(SITE_TABS[tab] ? siteHash(tab) : `#/${tab}`);
     setMenu(false);
   });
 }
@@ -329,8 +335,7 @@ function chooseSite(value) {
   const tab = SITE_TABS[state.tab] ? state.tab : "deployments";
   const next = value === NEW_SITE ? "#/new" : siteHash(tab, value);
   setMenu(false);
-  if (location.hash === next) route();
-  else location.hash = next;
+  go(next);
 }
 
 const pickerItems = () => [...state.sites.sites.map((x) => x.name), ...(isAdmin() ? [NEW_SITE] : [])];
@@ -654,8 +659,7 @@ async function deployGitHub(body, onError) {
   await loadOverview().catch(() => {});
   // 同じサイトのデプロイタブからデプロイしたときは hashchange が起きないので、描き直す
   const next = siteHash("deployments", site);
-  if (location.hash === next) route();
-  else location.hash = next;
+  go(next);
 }
 
 function busy(button, label) {
@@ -1814,7 +1818,7 @@ async function viewSite(main) {
           state.siteName = null;
           await loadOverview();
           const next = state.sites.root ?? state.sites.sites[0]?.name;
-          location.hash = next ? siteHash("deployments", next) : isAdmin() ? "#/new" : "#/settings";
+          go(next ? siteHash("deployments", next) : isAdmin() ? "#/new" : "#/settings");
         } catch (err) {
           delError.textContent = err.message;
         }
@@ -2354,7 +2358,7 @@ async function viewRepo(main, name) {
         try {
           await api(repoApi(""), { method: "DELETE" });
           await loadOverview();
-          location.hash = siteHash("deployments", name);
+          go(siteHash("deployments", name));
         } catch (err) {
           delError.textContent = err.message;
         }
@@ -2563,7 +2567,7 @@ async function viewNewSite(main) {
     try {
       const { name } = await api("/sites", { method: "POST", body: JSON.stringify({ name: sub.input.value.trim() }) });
       await loadOverview();
-      location.hash = siteHash("deployments", name);
+      go(siteHash("deployments", name));
     } catch (err) {
       error.textContent = err.message;
       create.disabled = false;
@@ -2724,7 +2728,7 @@ const METHOD_VIEWS = {
         create.disabled = true;
         try {
           await api("/repos", { method: "POST", body: JSON.stringify({ name: site }) });
-          location.hash = siteHash("repo", site);
+          go(siteHash("repo", site));
         } catch (err) {
           error.textContent = err.message;
           create.disabled = false;
