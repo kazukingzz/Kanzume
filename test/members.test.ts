@@ -130,8 +130,7 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
   assert.equal((await api("/sites/blog/deployments")).status, 200);
   assert.equal((await api("/sites/blog/settings", "PUT", { vars: { A: "1" } })).status, 200);
   assert.equal((await api("/repos/blog")).status, 200);
-  assert.equal((await api("/repos/blog/tokens", "POST", { scope: "write", ttl: null })).status, 200);
-  assert.equal((await api("/sites/blog/tokens", "POST", {})).status, 200);
+  assert.equal((await api("/tokens", "POST", { name: "PC", ttl: null })).status, 200);
 
   // ほかのサイト・全体の設定
   for (const [p, method] of [
@@ -189,11 +188,12 @@ test("管理者はメンバーのロールを変え、サイトから外し、�
   assert.equal(app.state.credentialsOf(user.id).length, 0);
 });
 
-test("サイト用のトークンは、そのサイトへの /_api/deploy だけに使える", async (t) => {
+test("メンバーの個人トークンは、参加しているサイトへの /_api/deploy だけに使える", async (t) => {
   const app = await start(t);
   await app.deploy("blog");
   const { api } = await member(app, ["blog"]);
-  const { token } = (await (await api("/sites/blog/tokens", "POST", {})).json()) as { token: string };
+  const { token } = (await (await api("/tokens", "POST", { name: "Actions", ttl: null })).json()) as { token: string };
+  assert.match(token, /^kzu_/);
   const upload = (name: string) =>
     fetch(`${app.base}/_api/deploy`, {
       method: "POST",
@@ -209,9 +209,12 @@ test("サイト用のトークンは、そのサイトへの /_api/deploy だけ
   assert.equal(ok.status, 200, await ok.clone().text());
   const other = await upload("shop");
   assert.equal(other.status, 400);
-  assert.match(((await other.json()) as { error: string }).error, /blog にしかデプロイできません/);
+  assert.match(((await other.json()) as { error: string }).error, /参加しているサイト（blog）にしかデプロイできません/);
   assert.equal(app.sites.has("shop"), false);
-  assert.ok(app.history.list().every((d) => d.name === "blog"), "ほかのサイトの履歴にも残さない");
+  assert.ok(app.history.list().every((d) => d.name !== "shop"), "ほかのサイトの履歴にも残さない");
+  // 消されたユーザーのトークンは使えない
+  await app.state.removeUser(app.state.users.find((u) => u.role === "member")!.id);
+  assert.equal((await upload("blog")).status, 401);
 });
 
 test("サイトを先に作り（未デプロイ）、デプロイ前でも設定・トークン・リポジトリを扱える", async (t) => {
@@ -231,7 +234,6 @@ test("サイトを先に作り（未デプロイ）、デプロイ前でも設�
   assert.equal((await app.admin("/sites/blog/files")).status, 404);
   assert.equal((await app.admin("/sites/blog/deployments")).status, 200);
   assert.equal((await app.admin("/sites/blog/settings", "PUT", { vars: { A: "1" } })).status, 200);
-  assert.equal((await app.admin("/sites/blog/tokens", "POST", {})).status, 200);
   assert.equal((await app.admin("/sites/blog/members")).status, 200);
   // 配信はまだしない
   assert.equal((await fetch(`${app.base}/`, { headers: { "x-forwarded-host": "news.localhost" } })).status, 404);

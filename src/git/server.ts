@@ -95,7 +95,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
     const access = state.repoAccess(name, token);
     if (!access) {
       res.writeHead(401, { "www-authenticate": 'Basic realm="Kanzume"', "content-type": "text/plain; charset=utf-8" });
-      res.end("トークンが必要です（パスワードに Token を入力してください）\n");
+      res.end("トークンが必要です（パスワードに、管理画面の「設定 > トークン」で発行した個人トークンを入力してください）\n");
       return;
     }
     if (SERVICES[service] === "write" && access !== "write") return sendText(res, 403, "このトークンでは push できません（read 専用）\n");
@@ -125,8 +125,8 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
       KANZUME_ORIGIN_URL: rootOrigin(req, config.origin, state.domain),
-      // 全体の Token での push かどうか（リポジトリ用のトークンでは、最初のサイトをルートにしない）
-      KANZUME_PUSH_SCOPE: state.checkDeployToken(token) ? "global" : "repo",
+      // 全体の Token か管理者の個人トークンでの push かどうか（メンバーのトークンでは、最初のサイトをルートにしない）
+      KANZUME_PUSH_SCOPE: state.deployAccess(token)?.autoRoot ? "global" : "repo",
       KANZUME_REPO_QUOTA_BYTES: String(repos.quotaBytes),
     };
     if (req.headers["content-encoding"]) env.HTTP_CONTENT_ENCODING = String(req.headers["content-encoding"]);

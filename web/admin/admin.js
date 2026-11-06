@@ -1588,8 +1588,93 @@ async function viewSettings(main) {
         nameError,
       ),
       h("section", { class: "card" }, h("h2", { text: "参加しているサイト" }), mySites),
+      personalTokensCard(),
       h("section", { class: "card" }, h("h2", { text: "パスキー" }), h("p", { class: "muted", text: "別のデバイスからもサインインできるように、パスキーを追加できます。" }), list, h("div", { class: "actions" }, addPasskey), addError),
     ),
+  );
+}
+
+/** 個人トークン（git push のパスワードと、GitHub Actions の KANZUME_TOKEN に使う） */
+function personalTokensCard() {
+  const list = h("div", { class: "list token-list" });
+  const issued = h("div");
+  const error = h("div", { class: "error" });
+  const render = (tokens) => {
+    fill(
+      list,
+      ...tokens.map((t) =>
+        h(
+          "div",
+          { class: "list-item" },
+          h(
+            "div",
+            { class: "list-row static" },
+            h("span", { class: "status neutral", text: t.expiresAt ? "期限付き" : "無期限" }),
+            h("div", { class: "grow" }, h("div", { class: "title", text: t.name }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
+            armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
+              try {
+                await api(`/tokens/${t.id}`, { method: "DELETE" });
+                load();
+              } catch (err) {
+                error.textContent = err.message;
+              }
+            }),
+          ),
+        ),
+      ),
+    );
+    if (!tokens.length) list.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
+  };
+  const load = () =>
+    api("/tokens")
+      .then(({ tokens }) => render(tokens))
+      .catch((err) => (error.textContent = err.message));
+  const name = h("input", { placeholder: "例: ノート PC・GitHub Actions", maxlength: "40", "aria-label": "トークンの名前" });
+  const ttl = h("select", { "aria-label": "期限" }, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
+  ttl.value = "2592000";
+  const issue = h("button", { class: "primary", text: "発行" });
+  issue.addEventListener("click", async () => {
+    error.textContent = "";
+    issue.disabled = true;
+    try {
+      const t = await api("/tokens", { method: "POST", body: JSON.stringify({ name: name.value, ttl: ttl.value ? Number(ttl.value) : null }) });
+      name.value = "";
+      fill(
+        issued,
+        h(
+          "div",
+          { class: "notice good-notice" },
+          h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
+          h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
+        ),
+      );
+      load();
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      issue.disabled = false;
+    }
+  });
+  load();
+  const scope = isAdmin() ? "すべてのサイト" : "参加しているサイト";
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "トークン" }),
+    h("p", {
+      class: "muted",
+      text: `${scope}のリポジトリへの git push（パスワードに入力）と、GitHub Actions からのデプロイ（Secrets の KANZUME_TOKEN）に使える、あなた個人のトークンです。使う場所ごとに名前を付けて発行し、いらなくなったら取り消してください。`,
+    }),
+    h(
+      "div",
+      { class: "token-form" },
+      h("label", { class: "token-field grow" }, h("span", { text: "名前" }), name),
+      h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl),
+      issue,
+    ),
+    error,
+    issued,
+    list,
   );
 }
 
@@ -1722,7 +1807,6 @@ async function viewSite(main) {
     ),
     ...siteSettingsCards(settings),
     isAdmin() ? siteMembersCard() : null,
-    siteTokensCard(),
     // ルートドメインは管理画面と同じオリジンなので、切り替えは管理者だけ
     isAdmin() && r
       ? h(
@@ -1853,83 +1937,6 @@ function siteMembersCard() {
     issued,
     body,
     error,
-  );
-}
-
-/** サイト用のトークン（GitHub Actions の KANZUME_TOKEN と、同じ名前のリポジトリへの git push に使える） */
-function siteTokensCard() {
-  const list = h("div", { class: "list token-list" });
-  const issued = h("div");
-  const error = h("div", { class: "error" });
-  const site = state.siteName;
-  const render = (tokens) => {
-    fill(
-      list,
-      ...tokens.map((t) =>
-        h(
-          "div",
-          { class: "list-item" },
-          h(
-            "div",
-            { class: "list-row static" },
-            h("span", { class: "status bad", text: "write" }),
-            h("div", { class: "grow" }, h("div", { class: "title", text: "デプロイ・push" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
-            armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
-              try {
-                await api(siteApi(`/tokens/${t.id}`), { method: "DELETE" });
-                load();
-              } catch (err) {
-                error.textContent = err.message;
-              }
-            }),
-          ),
-        ),
-      ),
-    );
-    if (!tokens.length) list.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
-  };
-  const load = () =>
-    api(siteApi("/tokens"))
-      .then(({ tokens }) => render(tokens))
-      .catch((err) => (error.textContent = err.message));
-  const ttl = h("select", { "aria-label": "期限" }, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
-  ttl.value = "2592000";
-  const issue = h("button", { class: "primary", text: "発行" });
-  issue.addEventListener("click", async () => {
-    error.textContent = "";
-    issue.disabled = true;
-    try {
-      const t = await api(siteApi("/tokens"), { method: "POST", body: JSON.stringify({ ttl: ttl.value ? Number(ttl.value) : null }) });
-      fill(
-        issued,
-        h(
-          "div",
-          { class: "notice good-notice" },
-          h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
-          h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
-        ),
-      );
-      load();
-    } catch (err) {
-      error.textContent = err.message;
-    } finally {
-      issue.disabled = false;
-    }
-  });
-  load();
-  return h(
-    "section",
-    { class: "card" },
-    h("h2", { text: "デプロイ用のトークン" }),
-    h("p", {
-      class: "muted",
-      text: `このサイト（${site}）だけにデプロイできるトークンです。GitHub Actions の Secrets の KANZUME_TOKEN に登録するか、Kanzume のリポジトリ ${site} への git push のパスワードに使います。wrangler の設定の name は ${site} にしてください。`,
-    }),
-    h("div", { class: "field" }, h("label", { text: "KANZUME_URL（Variables）" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
-    h("div", { class: "token-form" }, h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl), issue),
-    error,
-    issued,
-    list,
   );
 }
 
@@ -2110,7 +2117,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」 を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+      h("p", { class: "muted hint" }, "ユーザー名は何でもよく、パスワードには「", h("a", { href: "#/settings", text: "設定 > トークン" }), `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`),
     ),
   );
 
@@ -2191,101 +2198,13 @@ async function viewRepo(main, name) {
     page.append(h("section", { class: "card empty" }, h("p", { text: "まだ push されていません。上のコマンドで push すると、ここにファイルとコミットが出ます。" })));
   }
 
-  // トークン
-  const tokenList = h("div", { class: "list token-list" });
-  const issued = h("div");
-  const renderTokens = (tokens) => {
-    fill(
-      tokenList,
-      ...tokens.map((t) =>
-        h(
-          "div",
-          { class: "list-item" },
-          h(
-            "div",
-            { class: "list-row static" },
-            h("span", { class: `status ${t.scope === "write" ? "bad" : "neutral"}`, text: t.scope === "write" ? "write" : "read" }),
-            h("div", { class: "grow" }, h("div", { class: "title", text: t.scope === "write" ? "clone / fetch / push" : "clone / fetch" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
-            armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
-              try {
-                await api(repoApi(`/tokens/${t.id}`), { method: "DELETE" });
-                // 一覧だけを描き直す（発行したばかりのトークンの表示は消さない）
-                repo.tokens = repo.tokens.filter((x) => x.id !== t.id);
-                renderTokens(repo.tokens);
-              } catch (err) {
-                issueError.textContent = err.message;
-              }
-            }),
-          ),
-        ),
-      ),
-    );
-    if (!tokens.length) tokenList.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
-  };
-  renderTokens(repo.tokens);
-  const scope = h("select", {}, h("option", { value: "write", text: "write（push もできる・管理者と同等）" }), h("option", { value: "read", text: "read（clone だけ）" }));
-  const writeWarning = h("p", {
-    class: "notice warn-notice",
-    text: "write トークンはサイトのデプロイ用のトークンと同じく push できます。Worker は Kanzume と同じプロセスで動くため、push できる人はサーバー上のすべて（ほかのサイトや管理画面の Token を含む）にアクセスできます。信頼できる相手にだけ渡してください。",
-  });
-  scope.addEventListener("change", () => (writeWarning.hidden = scope.value !== "write"));
-  const ttl = h("select", {}, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
-  ttl.value = "86400";
-  const issueError = h("div", { class: "error" });
-  const issue = h("button", {
-    class: "primary",
-    text: "発行",
-    onclick: async () => {
-      if (issue.disabled) return;
-      issueError.textContent = "";
-      issue.disabled = true;
-      try {
-        const t = await api(repoApi("/tokens"), { method: "POST", body: JSON.stringify({ scope: scope.value, ttl: ttl.value ? Number(ttl.value) : null }) });
-        repo.tokens.push(t);
-        renderTokens(repo.tokens);
-        fill(
-          issued,
-          h(
-            "div",
-            { class: "notice good-notice" },
-            h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
-            h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
-          ),
-        );
-      } catch (err) {
-        issueError.textContent = err.message;
-      } finally {
-        issue.disabled = false;
-      }
-    },
-  });
-  page.append(
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "このリポジトリ用のトークン" }),
-      h("p", { class: "muted", text: "このリポジトリ用のトークンです。read はこのリポジトリの clone だけに使えます。AI エージェントや CI に渡すときは、できるだけ read で、期限を短くして発行してください。" }),
-      h(
-        "div",
-        { class: "token-form" },
-        h("label", { class: "token-field grow" }, h("span", { text: "権限" }), scope),
-        h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl),
-        issue,
-      ),
-      writeWarning,
-      issueError,
-      issued,
-      tokenList,
-    ),
-  );
-
   const delError = h("div", { class: "error" });
   page.append(
     h(
       "section",
       { class: "card" },
       h("h2", { text: "リポジトリの削除" }),
-      h("p", { class: "muted", text: "リポジトリとトークンを削除します。サイトとデプロイ済みのリリースは残ります。" }),
+      h("p", { class: "muted", text: "リポジトリを削除します。サイトとデプロイ済みのリリースは残ります。" }),
       armed(h("button", { class: "danger" }), "リポジトリを削除", "もう一度押すと削除", async () => {
         try {
           await api(repoApi(""), { method: "DELETE" });
@@ -2646,13 +2565,14 @@ const METHOD_VIEWS = {
           "ol",
           { class: "steps muted" },
           h("li", { text: `wrangler の設定の name を ${detail.name} にします。` }),
-          h("li", { text: "下でトークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN、Variables に KANZUME_URL を登録します。" }),
+          h("li", {}, "「", h("a", { href: "#/settings", text: "設定 > トークン" }), "」で個人トークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN として登録します。"),
+          h("li", { text: "Variables に KANZUME_URL として下の URL を登録します。" }),
           h("li", { text: "次のワークフローを置いて push します。" }),
         ),
+        h("div", { class: "field" }, h("label", { text: "KANZUME_URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
         h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)),
         h("pre", { class: "log", text: WORKFLOW }),
       ),
-      siteTokensCard(),
     ];
   },
 

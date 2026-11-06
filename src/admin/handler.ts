@@ -355,6 +355,24 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       }
     }
 
+    // 個人トークン（git push と GitHub Actions に使う。扱えるサイトは自分と同じ）
+    if (route === "GET /api/tokens") {
+      return sendJson(res, 200, { tokens: state.userTokens(user.id).map((t) => ({ id: t.id, name: t.name, createdAt: t.createdAt, expiresAt: t.expiresAt })) });
+    }
+
+    if (route === "POST /api/tokens") {
+      const body = await readJson(req);
+      const ttl = body?.ttl === null || body?.ttl === undefined ? null : Number(body.ttl);
+      if (ttl !== null && !(ttl > 0 && ttl <= 365 * 86400)) return sendJson(res, 400, { error: "期限が不正です" });
+      const { token, info } = await state.createUserToken(user.id, String(body?.name ?? ""), ttl);
+      return sendJson(res, 200, { token, id: info.id, name: info.name, createdAt: info.createdAt, expiresAt: info.expiresAt });
+    }
+
+    const tokenRevoke = /^DELETE \/api\/tokens\/([0-9a-f]+)$/.exec(route);
+    if (tokenRevoke) {
+      return (await state.revokeUserToken(user.id, tokenRevoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
+    }
+
     // ログイン中に招待リンクを開いたとき: 自分をそのサイトのメンバーにする
     if (route === "POST /api/invite/accept") {
       const body = await readJson(req);
@@ -444,14 +462,12 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       if (!(await repos.exists(name))) return sendJson(res, 404, { error: "リポジトリが見つかりません" });
       const key = `${method} ${rest}`;
       const ref = query.get("ref") || (await repos.defaultBranch(name));
-      const tokenInfo = (t: { id: string; scope: string; createdAt: string; expiresAt: string | null }) => ({ id: t.id, scope: t.scope, createdAt: t.createdAt, expiresAt: t.expiresAt });
       try {
         if (key === "GET ") {
-          return sendJson(res, 200, { ...(await repoInfo(name)), refs: await repos.refs(name), tokens: state.repoTokens(name).map(tokenInfo) });
+          return sendJson(res, 200, { ...(await repoInfo(name)), refs: await repos.refs(name) });
         }
         if (key === "DELETE ") {
           await repos.remove(name);
-          await state.revokeRepoTokens(name);
           return sendJson(res, 200, { ok: true });
         }
         if (key === "GET /log") return sendJson(res, 200, { ref, commits: await repos.log(name, ref) });
@@ -459,19 +475,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         if (key === "GET /blob") {
           const blob = await repos.blob(name, ref, query.get("path") ?? "");
           return blob ? sendJson(res, 200, blob) : sendJson(res, 404, { error: "ファイルが見つかりません" });
-        }
-        if (key === "POST /tokens") {
-          const body = await readJson(req);
-          const scope = body?.scope === "read" ? "read" : body?.scope === "write" ? "write" : null;
-          const ttl = body?.ttl === null ? null : Number(body?.ttl);
-          if (!scope) return sendJson(res, 400, { error: "権限は read か write を選んでください" });
-          if (ttl !== null && !(ttl > 0 && ttl <= 365 * 86400)) return sendJson(res, 400, { error: "期限が不正です" });
-          const { token, info } = await state.createRepoToken(name, scope, ttl);
-          return sendJson(res, 200, { token, ...tokenInfo(info) });
-        }
-        const revoke = /^DELETE \/tokens\/([0-9a-f]+)$/.exec(key);
-        if (revoke) {
-          return (await state.revokeRepoTokens(name, revoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
         }
       } catch (err) {
         if (err instanceof RepoError) return sendJson(res, 400, { error: err.message });
@@ -717,26 +720,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         throw err;
       }
       return sendJson(res, 200, { ok: true });
-    }
-
-    // ---------- サイト用のトークン（GitHub Actions と、同じ名前のリポジトリへの git push） ----------
-
-    if (siteRouteKey === "GET /tokens") {
-      return sendJson(res, 200, { tokens: state.repoTokens(name).map((t) => ({ id: t.id, scope: t.scope, createdAt: t.createdAt, expiresAt: t.expiresAt })) });
-    }
-
-    if (siteRouteKey === "POST /tokens") {
-      // リポジトリのトークンと同じ形（ttl は秒、null は無期限）。Actions と git push の両方に使えるよう write にする
-      const body = await readJson(req);
-      const ttl = body?.ttl === null || body?.ttl === undefined ? null : Number(body.ttl);
-      if (ttl !== null && !(ttl > 0 && ttl <= 365 * 86400)) return sendJson(res, 400, { error: "期限が不正です" });
-      const { token, info } = await state.createRepoToken(name, "write", ttl);
-      return sendJson(res, 200, { token, id: info.id, scope: info.scope, createdAt: info.createdAt, expiresAt: info.expiresAt });
-    }
-
-    const siteTokenRevoke = /^DELETE \/tokens\/([0-9a-f]+)$/.exec(siteRouteKey);
-    if (siteTokenRevoke) {
-      return (await state.revokeRepoTokens(name, siteTokenRevoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
     }
 
     if (siteRouteKey === "DELETE ") {

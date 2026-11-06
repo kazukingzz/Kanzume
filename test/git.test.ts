@@ -104,7 +104,13 @@ test("Kanzume のリポジトリに main を push すると、wrangler の設定
   assert.equal(history.list("blog")[0].source.commitMessage, "書き換え");
 });
 
-test("トークンがないと clone も push もできず、read トークンは clone だけ、期限切れは使えない", { skip: NO_GIT }, async (t) => {
+/** そのサイトだけのメンバーを作り、個人トークンを発行する */
+async function memberToken(state: Awaited<ReturnType<typeof start>>["state"], sites: string[], ttl: number | null = 3600) {
+  const user = await state.createUser("メンバー", "member", sites);
+  return (await state.createUserToken(user.id, "test", ttl)).token;
+}
+
+test("トークンがないと clone も push もできず、個人トークンは参加しているサイトのリポジトリだけ、期限切れは使えない", { skip: NO_GIT }, async (t) => {
   const { remote, repos, state } = await start(t);
   await repos.create("blog");
   const dir = workTree(t, WORKER);
@@ -113,21 +119,21 @@ test("トークンがないと clone も push もできず、read トークン�
   const noToken = await git(tmpDir(t), ["clone", remote("blog", "").replace("x:@", ""), "c1"]);
   assert.notEqual(noToken.status, 0);
 
-  const { token: read } = await state.createRepoToken("blog", "read", 3600);
-  const cloned = await git(tmpDir(t), ["clone", remote("blog", read), "c2"]);
+  const mine = await memberToken(state, ["blog"]);
+  const cloned = await git(tmpDir(t), ["clone", remote("blog", mine), "c2"]);
   assert.equal(cloned.status, 0, cloned.output);
-  const denied = await git(dir, ["push", remote("blog", read), "main:other"]);
-  assert.notEqual(denied.status, 0);
-  assert.match(denied.output, /403/);
+  assert.equal((await git(dir, ["push", remote("blog", mine), "main:other"])).status, 0, "メンバーは自分のサイトのリポジトリに push できる");
 
-  const { token: otherRepo } = await state.createRepoToken("shop", "write", null);
-  assert.notEqual((await git(tmpDir(t), ["clone", remote("blog", otherRepo), "c3"])).status, 0, "別のリポジトリのトークンは使えない");
+  const other = await memberToken(state, ["shop"]);
+  assert.notEqual((await git(tmpDir(t), ["clone", remote("blog", other), "c3"])).status, 0, "参加していないサイトのリポジトリは使えない");
 
-  const { token: expired } = await state.createRepoToken("blog", "write", 1);
+  const expired = await memberToken(state, ["blog"], 1);
   await new Promise((r) => setTimeout(r, 1100));
   assert.equal(state.repoAccess("blog", expired), null);
-  assert.equal(state.repoAccess("blog", read), "read");
+  assert.equal(state.repoAccess("blog", mine), "write");
   assert.equal(state.repoAccess("blog", state.deployToken), "write");
+  const admin = (await state.createUserToken(state.setupUserId, "admin", null)).token;
+  assert.equal(state.repoAccess("anything", admin), "write", "管理者の個人トークンはすべてのリポジトリ");
 });
 
 test("npm パッケージを import したリポジトリは、push は受け付けてデプロイの失敗理由を返す", { skip: NO_GIT }, async (t) => {
@@ -174,11 +180,12 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.equal((await api("/repos/blog/blob?path=../../etc/passwd")).status, 400);
   assert.equal((await api("/repos/blog/log?ref=--output=/tmp/x")).status, 400, "オプションに見える ref は弾く");
 
-  const issued = (await api("/repos/blog/tokens", { method: "POST", body: JSON.stringify({ scope: "read", ttl: 3600 }) })).body;
-  assert.match(issued.token, /^kzr_/);
-  assert.equal(state.repoAccess("blog", issued.token), "read");
-  assert.equal((await api("/repos/blog")).body.tokens.length, 1);
-  assert.equal((await api(`/repos/blog/tokens/${issued.id}`, { method: "DELETE" })).status, 200);
+  // 個人トークンは「設定」で発行・取り消しする（リポジトリごとのトークンはない）
+  const issued = (await api("/tokens", { method: "POST", body: JSON.stringify({ name: "ノート PC", ttl: 3600 }) })).body;
+  assert.match(issued.token, /^kzu_/);
+  assert.equal(state.repoAccess("blog", issued.token), "write");
+  assert.deepEqual((await api("/tokens")).body.tokens.map((t: { name: string }) => t.name), ["ノート PC"]);
+  assert.equal((await api(`/tokens/${issued.id}`, { method: "DELETE" })).status, 200);
   assert.equal(state.repoAccess("blog", issued.token), null);
 
   assert.equal((await api("/repos/blog", { method: "DELETE" })).status, 200);
@@ -191,7 +198,7 @@ test("リポジトリ名と違う name のコミットはデプロイせず、�
   await repos.create("sample");
   assert.equal((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).status, 0);
 
-  const { token } = await state.createRepoToken("sample", "write", 3600);
+  const token = await memberToken(state, ["sample"]);
   const evil = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "blog", main: "src/index.js", vars: { GREETING: "乗っ取り" } }) });
   const push = await git(evil, ["push", remote("sample", token), "main"]);
   assert.equal(push.status, 0, push.output);
@@ -310,13 +317,13 @@ test("リポジトリの容量の上限を超える push は受け付けない",
   assert.deepEqual(await app.repos.refs("blog"), []);
 });
 
-test("リポジトリ用のトークンでの push はルートにならず、全体の Token での push はルートになる", { skip: NO_GIT }, async (t) => {
+test("メンバーの個人トークンでの push はルートにならず、全体の Token での push はルートになる", { skip: NO_GIT }, async (t) => {
   const { remote, repos, sites, state } = await start(t);
   for (const name of ["blog", "shop"]) await repos.create(name);
-  const { token } = await state.createRepoToken("shop", "write", 3600);
+  const token = await memberToken(state, ["shop"]);
   const shop = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "shop", main: "src/index.js" }) });
   assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, null, "リポジトリ用のトークンでは自動でルートにしない");
+  assert.equal(sites.root, null, "メンバーのトークンでは自動でルートにしない");
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
   assert.equal(sites.root, "blog");
 });
@@ -348,7 +355,7 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   assert.equal(list.status, 200);
   assert.deepEqual(list.body.repos.map((r: { name: string }) => r.name), ["blog"], "HEAD のないディレクトリは一覧に出さない");
 
-  const { token } = await state.createRepoToken("blog", "read", 3600);
+  const token = await memberToken(state, ["blog"]);
   const auth = { authorization: `Basic ${Buffer.from(`x:${token}`).toString("base64")}` };
   assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack&service=git-receive-pack`, { headers: auth })).status, 404);
   assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, { headers: auth })).status, 200);

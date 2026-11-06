@@ -48,8 +48,8 @@ export interface DeployInput {
   autoRoot?: boolean;
   /** 指定すると wrangler の name の代わりにこのサイト名でデプロイする（管理画面で名前を決めたとき） */
   siteName?: string;
-  /** 指定すると、このサイト名（wrangler の name）以外へのデプロイを断る（サイト用のトークン） */
-  onlyName?: string;
+  /** 指定すると、このサイト名（wrangler の name）以外へのデプロイを断る（メンバーの個人トークン） */
+  onlyNames?: string[];
 }
 
 export type DeployResult = { ok: true; release: Release } | { ok: false; error: string };
@@ -130,10 +130,11 @@ export class Deployer {
       const raw = parseWranglerConfig(configFile.path, configFile.data.toString("utf8"));
       if (input.siteName) raw.name = input.siteName;
       if (typeof raw.name === "string" && PROJECT_NAME.test(raw.name)) name = raw.name;
-      if (input.onlyName !== undefined && raw.name !== input.onlyName) {
+      if (input.onlyNames !== undefined && !input.onlyNames.includes(String(raw.name))) {
         // 失敗の履歴もほかのサイトに残さない
-        name = input.onlyName;
-        throw new ConfigError(`このトークンではサイト ${input.onlyName} にしかデプロイできません（wrangler の name: ${String(raw.name ?? "未設定")}）`);
+        name = null;
+        const allowed = input.onlyNames.length ? input.onlyNames.join(", ") : "なし";
+        throw new ConfigError(`このトークンでは、参加しているサイト（${allowed}）にしかデプロイできません（wrangler の name: ${String(raw.name ?? "未設定")}）`);
       }
       manifest = toManifest(raw, files.some((f) => f.path.startsWith("worker/")));
       if (manifest.main && !files.some((f) => f.path === `worker/${manifest.main}`)) {

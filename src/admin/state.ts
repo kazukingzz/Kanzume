@@ -58,11 +58,14 @@ export function normalizeUserName(input: unknown): string {
 
 export type RepoScope = "read" | "write";
 
-/** リポジトリ単位のトークン。値はハッシュだけを保存し、発行したときに 1 回だけ見せる */
-export interface RepoToken {
+/**
+ * ユーザーの個人トークン。そのユーザーが扱えるサイト（管理者ならすべて）に、git push と GitHub Actions からデプロイできる。
+ * 値はハッシュだけを保存し、発行したときに 1 回だけ見せる
+ */
+export interface UserToken {
   id: string;
-  repo: string;
-  scope: RepoScope;
+  userId: string;
+  name: string;
   hash: string;
   createdAt: string;
   expiresAt: string | null;
@@ -74,7 +77,7 @@ interface StateFile {
   // ハッシュにしないのは、管理画面でいつでも再表示してコピーできるようにするため
   deployToken: string;
   credentials: StoredCredential[];
-  repoTokens?: RepoToken[];
+  userTokens?: UserToken[];
   /** ルートドメイン（例: example.com）。サイトは <name>.<domain> で配信する。未設定なら管理画面を開いたホストを使う */
   domain?: string;
   users?: User[];
@@ -177,6 +180,12 @@ export class AdminState {
       migrated = true;
     }
     this.#state.invites ??= [];
+    this.#state.userTokens ??= [];
+    // サイト・リポジトリごとのトークンはやめた（個人トークンに置き換え）
+    if ("repoTokens" in this.#state) {
+      delete (this.#state as { repoTokens?: unknown }).repoTokens;
+      migrated = true;
+    }
     const firstAdmin = this.#state.users.find((u) => u.role === "admin")!.id;
     for (const c of this.#state.credentials) {
       if (!c.userId || !this.user(c.userId)) {
@@ -274,58 +283,66 @@ export class AdminState {
     return this.#state.deployToken;
   }
 
-  repoTokens(repo: string): RepoToken[] {
+  // ---------- 個人トークン ----------
+
+  userTokens(userId: string): UserToken[] {
     const now = Date.now();
-    return (this.#state.repoTokens ?? []).filter((t) => t.repo === repo && (!t.expiresAt || Date.parse(t.expiresAt) > now));
+    return (this.#state.userTokens ?? []).filter((t) => t.userId === userId && (!t.expiresAt || Date.parse(t.expiresAt) > now));
   }
 
-  async createRepoToken(repo: string, scope: RepoScope, ttlSeconds: number | null): Promise<{ token: string; info: RepoToken }> {
-    const token = `kzr_${randomBytes(24).toString("base64url")}`;
-    const info: RepoToken = {
-      id: randomBytes(6).toString("hex"),
-      repo,
-      scope,
-      hash: createHash("sha256").update(token).digest("hex"),
-      createdAt: new Date().toISOString(),
-      expiresAt: ttlSeconds ? new Date(Date.now() + ttlSeconds * 1000).toISOString() : null,
-    };
+  async createUserToken(userId: string, name: string, ttlSeconds: number | null): Promise<{ token: string; info: UserToken }> {
+    if (!this.user(userId)) throw new UserError("ユーザーが見つかりません");
+    const token = `kzu_${randomBytes(24).toString("base64url")}`;
     const now = Date.now();
+    const info: UserToken = {
+      id: randomBytes(6).toString("hex"),
+      userId,
+      name: normalizeUserName(name) || "トークン",
+      hash: createHash("sha256").update(token).digest("hex"),
+      createdAt: new Date(now).toISOString(),
+      expiresAt: ttlSeconds ? new Date(now + ttlSeconds * 1000).toISOString() : null,
+    };
     // 期限切れのトークンはこのときに掃除する
-    this.#state.repoTokens = [...(this.#state.repoTokens ?? []).filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now), info];
+    this.#state.userTokens = [...(this.#state.userTokens ?? []).filter((t) => !t.expiresAt || Date.parse(t.expiresAt) > now), info];
     await this.#save();
     return { token, info };
   }
 
-  async revokeRepoTokens(repo: string, id?: string): Promise<boolean> {
-    const before = this.#state.repoTokens ?? [];
-    const after = before.filter((t) => t.repo !== repo || (id !== undefined && t.id !== id));
+  async revokeUserToken(userId: string, id: string): Promise<boolean> {
+    const before = this.#state.userTokens ?? [];
+    const after = before.filter((t) => !(t.userId === userId && t.id === id));
     if (after.length === before.length) return false;
-    this.#state.repoTokens = after;
+    this.#state.userTokens = after;
     await this.#save();
     return true;
   }
 
-  /**
-   * /_api/deploy（GitHub Actions）に使えるトークンか。全体の Token はすべてのサイト、
-   * リポジトリの write トークンは同じ名前のサイトだけ（サイトのメンバーが自分で発行して使う）
-   */
-  deployAccess(token: string): { site: string | null } | null {
+  /** 個人トークンの持ち主（期限切れ・消されたユーザーなら null） */
+  tokenUser(token: string): User | null {
     if (!token) return null;
-    if (this.checkDeployToken(token)) return { site: null };
     const hash = createHash("sha256").update(token).digest("hex");
     const now = Date.now();
-    const found = (this.#state.repoTokens ?? []).find((t) => t.scope === "write" && safeEqual(t.hash, hash) && (!t.expiresAt || Date.parse(t.expiresAt) > now));
-    return found ? { site: found.repo } : null;
+    const found = (this.#state.userTokens ?? []).find((t) => safeEqual(t.hash, hash) && (!t.expiresAt || Date.parse(t.expiresAt) > now));
+    return this.user(found?.userId) ?? null;
   }
 
-  /** 全体の Token はすべてのリポジトリに書き込める。リポジトリのトークンはそのリポジトリだけ */
-  repoAccess(repo: string, token: string): RepoScope | null {
+  /**
+   * /_api/deploy（GitHub Actions）に使えるトークンか。sites が null ならすべてのサイト（全体の Token か管理者の個人トークン）、
+   * 配列ならそのサイトだけ（メンバーの個人トークン）。autoRoot は最初のサイトをルートにしてよいか
+   */
+  deployAccess(token: string): { sites: string[] | null; autoRoot: boolean } | null {
     if (!token) return null;
-    if (this.checkDeployToken(token)) return "write";
-    const hash = createHash("sha256").update(token).digest("hex");
-    const now = Date.now();
-    const found = (this.#state.repoTokens ?? []).find((t) => t.repo === repo && safeEqual(t.hash, hash) && (!t.expiresAt || Date.parse(t.expiresAt) > now));
-    return found?.scope ?? null;
+    if (this.checkDeployToken(token)) return { sites: null, autoRoot: true };
+    const user = this.tokenUser(token);
+    if (!user) return null;
+    return user.role === "admin" ? { sites: null, autoRoot: true } : { sites: [...user.sites], autoRoot: false };
+  }
+
+  /** git の push / clone。全体の Token か、そのリポジトリ（＝同じ名前のサイト）を扱えるユーザーの個人トークン */
+  repoAccess(repo: string, token: string): RepoScope | null {
+    const access = this.deployAccess(token);
+    if (!access) return null;
+    return access.sites === null || access.sites.includes(repo) ? "write" : null;
   }
 
   async addCredential(credential: StoredCredential): Promise<void> {
@@ -453,6 +470,7 @@ export class AdminState {
     if (user.role === "admin" && this.#admins().length <= 1) throw new UserError("最後の管理者は削除できません");
     this.#state.users = this.users.filter((u) => u.id !== id);
     this.#state.credentials = this.#state.credentials.filter((c) => c.userId !== id);
+    this.#state.userTokens = (this.#state.userTokens ?? []).filter((t) => t.userId !== id);
     for (const [hash, s] of this.#sessions) if (s.userId === id) this.#sessions.delete(hash);
     await this.#save();
   }

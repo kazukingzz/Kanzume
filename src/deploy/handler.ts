@@ -19,8 +19,8 @@ interface Deps {
 const EXTRACT_RATIO = 4;
 const META_DIR = ".kanzume/";
 
-/** 全体の Token なら { site: null }、サイト用のトークン（リポジトリの write トークン）ならそのサイト名 */
-function authorized(req: IncomingMessage, state: AdminState): { site: string | null } | null {
+/** 全体の Token か個人トークン。sites が配列なら、デプロイできるのはそのサイトだけ（メンバー） */
+function authorized(req: IncomingMessage, state: AdminState): { sites: string[] | null; autoRoot: boolean } | null {
   const auth = req.headers.authorization ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
   return state.deployAccess(token);
@@ -57,8 +57,8 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     const sources = parseJson(files.find((f) => f.path === `${META_DIR}sources.json`));
     const result = await deployer.deploy({
       // 全体の Token（管理者）のときだけ、最初のサイトをルートにする
-      autoRoot: access.site === null,
-      onlyName: access.site ?? undefined,
+      autoRoot: access.autoRoot,
+      onlyNames: access.sites ?? undefined,
       files: files.filter((f) => !f.path.startsWith(META_DIR)),
       sources: Array.isArray(sources) ? sources : null,
       source: sanitizeSource(meta?.source),
@@ -75,7 +75,8 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     if (!access) return sendJson(res, 401, { error: "Token が違います" });
     const body = await readJson(req, 512 * 1024);
     // サイト用のトークンでは、ほかのサイトの履歴に書かせない
-    const name = access.site ?? (typeof body?.name === "string" ? body.name.slice(0, 63) : null);
+    const requested = typeof body?.name === "string" ? body.name.slice(0, 63) : null;
+    const name = access.sites === null || (requested && access.sites.includes(requested)) ? requested : null;
     const error = typeof body?.error === "string" ? body.error.slice(0, 2000) : "ビルドに失敗しました";
     const log = new DeployLog("GitHub Actions でのビルドに失敗したため、アップロードされませんでした");
     deployer.recordFailure(name, error, {
