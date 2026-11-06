@@ -33,6 +33,16 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const deployer = new Deployer(sites, runtime, history);
   const repos = new Repos(config.dataDir, config.maxUploadBytes, config.repoQuotaBytes);
   await repos.init();
+  // リポジトリはサイトに属する。サイトのないリポジトリ（サイトに紐づける前に作ったもの）には、同じ名前の空のサイトを作る
+  for (const name of await repos.names()) {
+    if (sites.has(name)) continue;
+    try {
+      await sites.ensure(name);
+      console.log(`[kanzume] リポジトリ ${name} に合わせて、未デプロイのサイト ${name} を作りました`);
+    } catch (err) {
+      console.error(`[kanzume] リポジトリ ${name} のサイトを作れません: ${(err as Error)?.message ?? err}`);
+    }
+  }
   const { handleGit, handleHook } = createGitHandler({ config, state, repos, sites, deployer }, await installHooks(config.dataDir));
   const backup = options.backup ?? null;
   if (backup) {

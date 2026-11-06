@@ -45,7 +45,6 @@ const ADMIN_ROUTES = new Set([
   "POST /api/token/rotate",
   "GET /api/resources",
   "POST /api/root-site",
-  "GET /api/samples",
   "GET /api/users",
 ]);
 
@@ -429,13 +428,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const name = String(body?.name ?? "").trim();
       // メンバーは、自分のサイトと同じ名前のリポジトリだけ作れる
       if (!canSite(name)) return forbidden();
-      // 同じ名前のサイトがあると、このリポジトリへの push でそのサイトを上書きすることになるので、確認を求める
-      if (sites.get(name)?.get() && body?.confirm !== true) {
-        return sendJson(res, 409, {
-          error: `同じ名前のサイト（${name}）があります。このリポジトリに push すると、そのサイトを上書きします`,
-          needsConfirm: true,
-        });
-      }
+      // リポジトリはサイトに属する（push するとそのサイトにデプロイする）ので、先にサイトが必要
+      if (!sites.has(name)) return sendJson(res, 400, { error: `サイト ${name} がありません。先にサイトを作ってください` });
       try {
         await repos.create(name);
       } catch (err) {
@@ -504,14 +498,18 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     /** デプロイ前の設定画面で使う: その名前のサイトがあるか、サブドメインがほかのサイトに使われていないか、今の設定 */
     const siteInfo = (name: string) => {
       const valid = PROJECT_NAME.test(name);
-      const exists = valid && !!sites.get(name)?.get();
+      // exists はデプロイ済み（上書きの確認が要る）、created は作成済み（未デプロイを含む）
+      const exists = valid && sites.deployed(name);
+      const created = valid && sites.has(name);
       const owner = valid ? sites.resolve(name) : undefined;
-      const settings = exists ? sites.settings(name) : null;
+      // 未デプロイのサイトでも、デプロイ前に設定した環境変数を初期値に使う
+      const settings = created ? sites.settings(name) : null;
       return {
         valid,
         exists,
+        created,
         takenBy: owner && owner !== name ? owner : null,
-        url: valid ? `${siteOrigin(siteRoot, exists ? sites.subdomain(name) : name)}/` : null,
+        url: valid ? `${siteOrigin(siteRoot, created ? sites.subdomain(name) : name)}/` : null,
         current: settings ? { vars: settings.vars, secretKeys: Object.keys(settings.secrets).sort() } : null,
       };
     };
@@ -523,8 +521,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, {
         root: sites.root,
         sites: listed.map(({ name, store }) => {
-          const release = store.get()!;
-          return { name, ...siteUrls(name), deployedAt: release.deployedAt, latest: history.latest(name) };
+          const release = store.get();
+          return { name, ...siteUrls(name), deployed: !!release, deployedAt: release?.deployedAt ?? null, latest: history.latest(name) ?? null };
         }),
         // 初回のデプロイに失敗して、まだ一覧に出ないサイトのデプロイ
         pending: isAdmin
@@ -534,6 +532,22 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
               .slice(0, 10)
           : [],
       });
+    }
+
+    // サイトを作る（配信するサブドメインを決める）。デプロイは作ったあとにサイトの画面で選ぶ
+    if (route === "POST /api/sites") {
+      if (!isAdmin) return forbidden();
+      const body = await readJson(req);
+      const name = String(body?.name ?? "").trim().toLowerCase();
+      if (!PROJECT_NAME.test(name)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
+      if (sites.has(name)) return sendJson(res, 409, { error: `サイト ${name} は既にあります` });
+      try {
+        await sites.ensure(name);
+      } catch (err) {
+        if (err instanceof SettingsError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+      return sendJson(res, 200, { name, ...siteInfo(name) });
     }
 
     if (route === "POST /api/root-site") {
@@ -578,7 +592,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const siteName = typeof body?.name === "string" && body.name ? body.name.trim().toLowerCase() : undefined;
       const patch = siteName ? envPatch(body) : null;
       // メンバーは自分のサイトの再デプロイだけ（新しいサイトは作れない）
-      if (!isAdmin && (!siteName || !canSite(siteName) || !sites.get(siteName)?.get())) return forbidden();
+      if (!isAdmin && (!siteName || !canSite(siteName) || !sites.has(siteName))) return forbidden();
       if (siteName) {
         if (!PROJECT_NAME.test(siteName)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
         const info = siteInfo(siteName);
@@ -618,16 +632,23 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     const [, , name, rest = ""] = siteRoute;
     if (!canSite(name)) return forbidden();
     const store = sites.get(name);
-    const release = store?.get();
-    if (!store || !release) return sendJson(res, 404, { error: "サイトが見つかりません" });
+    if (!store) return sendJson(res, 404, { error: "サイトが見つかりません" });
+    // まだデプロイしていないサイトでは undefined
+    const release = store.get();
     const siteRouteKey = `${method} ${rest}`;
 
-    if (siteRouteKey === "GET ") {
+    if (siteRouteKey === "GET " && !release) {
+      return sendJson(res, 200, { name, ...siteUrls(name), root: sites.root === name, deployed: false, release: null, latest: history.latest(name) ?? null, repo: await repos.exists(name) });
+    }
+
+    if (siteRouteKey === "GET " && release) {
       const m = release.manifest;
       return sendJson(res, 200, {
         name,
         ...siteUrls(name),
         root: sites.root === name,
+        deployed: true,
+        repo: await repos.exists(name),
         release: {
           id: release.id,
           name: m.name,
@@ -651,7 +672,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         subdomain: sites.subdomain(name),
         vars: settings.vars,
         secretKeys: Object.keys(settings.secrets).sort(),
-        wranglerVars: release.manifest.vars,
+        wranglerVars: release?.manifest.vars ?? {},
         ...siteUrls(name),
       });
     }
@@ -724,12 +745,14 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       runtime.evict(store.siteDir);
       await state.removeSiteAccess(name);
       await sites.remove(name);
+      // リポジトリはサイトに属するので一緒に消す（残すと次の起動で空のサイトとして戻ってくる）
+      await repos.remove(name);
       history.clear(name);
       observability.clear(name);
       return sendJson(res, 200, { ok: true });
     }
 
-    if (siteRouteKey === "GET /deployments") return sendJson(res, 200, { deployments: history.list(name), active: release.id });
+    if (siteRouteKey === "GET /deployments") return sendJson(res, 200, { deployments: history.list(name), active: release?.id ?? null });
 
     const deployment = /^GET \/deployments\/([^/]+)$/.exec(siteRouteKey);
     if (deployment) {
@@ -737,9 +760,11 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
     }
 
-    if (siteRouteKey === "GET /files") return sendJson(res, 200, { release: release.id, groups: listFiles(release) });
+    if ((siteRouteKey === "GET /files" || siteRouteKey === "GET /file") && !release) return sendJson(res, 404, { error: "まだデプロイされていません" });
 
-    if (siteRouteKey === "GET /file") {
+    if (siteRouteKey === "GET /files" && release) return sendJson(res, 200, { release: release.id, groups: listFiles(release) });
+
+    if (siteRouteKey === "GET /file" && release) {
       const group = query.get("group") as FileGroup;
       if (!FILE_GROUPS.includes(group)) return sendJson(res, 404, { error: "ファイルが見つかりません" });
       const content = readFile(release, group, query.get("path") ?? "");

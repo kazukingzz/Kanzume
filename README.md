@@ -42,7 +42,11 @@ KANZUME_BACKUP_URL=s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.clou
 
 ## デプロイする
 
-**GitHub Actions**: 管理画面に表示される `KANZUME_URL`（Variables）と `KANZUME_TOKEN`（Secrets。全体の Token か、サイト設定で発行するそのサイト用のトークン）を登録して、次のワークフローを置きます。
+管理画面の「サイトを追加」でサイト名（サブドメイン）を決めてサイトを作り、そのサイトの「デプロイ」タブで方法を選びます（デプロイ済みのサイトでも「新しくデプロイ」から選べます）。環境変数・シークレットはデプロイ前でも「サイト設定」で設定できます。
+
+- **サンプルから**: [`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio) をそのままデプロイします。
+- **GitHub の公開リポジトリから**: public リポジトリ（のディレクトリ）の URL を指定してデプロイします。
+- **GitHub Actions から**: サイト設定で発行したそのサイト用のトークン（または管理者設定の全体の Token）を `KANZUME_TOKEN`（Secrets）、管理画面の URL を `KANZUME_URL`（Variables）に登録して、次のワークフローを置きます。wrangler の設定の `name` はサイト名にします。
 
 ```yaml
 name: Deploy to Kanzume
@@ -60,14 +64,14 @@ jobs:
           token: ${{ secrets.KANZUME_TOKEN }}
 ```
 
-**Kanzume に git push**: 管理画面の「リポジトリ」で作ったリポジトリに push すると、`main` の内容を wrangler の設定どおりにデプロイします（GitHub は不要）。パスワードには `KANZUME_TOKEN` か、リポジトリごとに発行したトークン（read / write・期限付き）を使います。
+- **サイトのリポジトリから**: サイトの「リポジトリ」タブで Kanzume 上にサイトと同じ名前の Git リポジトリを作り、`main` に push するとデプロイします（GitHub は不要）。パスワードには、そのサイト用のトークンかリポジトリのトークンを使います。
 
 ```sh
 git remote add kanzume https://example.com/_git/my-app.git
 git push kanzume main
 ```
 
-**GitHub の URL**: 管理画面の「サイトを追加」から、public リポジトリの URL を指定してデプロイできます。URL を入れると、サイト名（サブドメイン）・環境変数・シークレットを決める画面になります（デプロイ後も「サイト設定」で変えられ、再デプロイなしで反映されます）。サンプル（[`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio)）もそこからワンクリックで追加できます。git push と GitHub の URL からのデプロイは Kanzume の中でバンドルするので、npm パッケージの import・ビルドが必要なものは Actions を使ってください。
+GitHub の URL とリポジトリからのデプロイは Kanzume の中でバンドルするので、npm パッケージの import・ビルドが必要なものは Actions を使ってください。
 
 ## 対応している機能
 

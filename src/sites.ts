@@ -92,10 +92,14 @@ export class Sites {
     return this.#stores.get(name);
   }
 
-  /** 名前順。リリースがまだないサイト（初回のデプロイ中など）は含めない */
+  /** リリースがある（何かデプロイされている）か */
+  deployed(name: string): boolean {
+    return !!this.#stores.get(name)?.get();
+  }
+
+  /** 名前順。まだデプロイしていない（作っただけの）サイトも含める */
   list(): { name: string; store: Store }[] {
     return [...this.#stores]
-      .filter(([, store]) => store.get())
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, store]) => ({ name, store }));
   }

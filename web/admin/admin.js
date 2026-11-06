@@ -1,8 +1,10 @@
 const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
 // サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
-const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", site: "サイト設定" };
-const GLOBAL_TABS = { new: "サイトを追加", repos: "リポジトリ", resources: "リソース", settings: "設定", admin: "管理者設定" };
+const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", repo: "リポジトリ", site: "サイト設定" };
+const GLOBAL_TABS = { new: "サイトを追加", resources: "リソース", settings: "設定", admin: "管理者設定" };
+// まだデプロイしていないサイトでは出さないタブ
+const DEPLOYED_TABS = new Set(["code", "observability"]);
 // 管理者だけのタブ（メンバーには出さない）
 const ADMIN_TABS = new Set(["new", "resources", "admin"]);
 const isAdmin = () => state.overview?.me?.role === "admin";
@@ -362,7 +364,7 @@ function renderPickerMenu() {
           "span",
           { class: "site-option-text" },
           h("span", { class: "site-option-name", text: x.name }),
-          h("span", { class: "site-option-host" }, x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null, hostOf(x.url)),
+          h("span", { class: "site-option-host" }, x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null, x.deployed ? hostOf(x.url) : `${hostOf(x.subdomainUrl)}・未デプロイ`),
         ),
       ),
     ),
@@ -443,11 +445,11 @@ function renderShell() {
   const name = $("site-trigger-name");
   name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : isAdmin() ? "サイトがありません" : "参加しているサイトはありません";
   name.classList.toggle("placeholder", !current && state.tab !== "new");
-  $("site-trigger-host").textContent = current ? hostOf(current.url) : "";
+  $("site-trigger-host").textContent = current ? (current.deployed ? hostOf(current.url) : `${hostOf(current.subdomainUrl)}・未デプロイ`) : "";
   closePicker();
   for (const a of $("nav").querySelectorAll("a")) {
     a.classList.toggle("current", a.dataset.tab === state.tab);
-    a.hidden = (!!SITE_TABS[a.dataset.tab] && !current) || (ADMIN_TABS.has(a.dataset.tab) && !isAdmin());
+    a.hidden = (!!SITE_TABS[a.dataset.tab] && !current) || (DEPLOYED_TABS.has(a.dataset.tab) && !current?.deployed) || (ADMIN_TABS.has(a.dataset.tab) && !isAdmin());
   }
   $("topbar-title").textContent = current ? current.name : GLOBAL_TABS[state.tab] ?? "";
 }
@@ -461,8 +463,8 @@ async function enterApp() {
 
 function parseHash() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
-  // #/repos と #/repos/<名前> は全体のタブ
-  if (parts[0] === "repos") return { site: null, tab: "repos", repo: parts[1] ?? null };
+  // 以前の全体のリポジトリの URL（#/repos/<名前>）は、そのサイトのリポジトリのタブへ
+  if (parts[0] === "repos") return { site: parts[1] ?? null, tab: "repo" };
   if (parts[0] === "invite") return { site: null, tab: "invite", invite: parts[1] ?? "" };
   if (parts.length >= 2) return { site: parts[0], tab: parts[1] };
   return { site: null, tab: parts[0] ?? "" };
@@ -472,11 +474,15 @@ function route() {
   if ($("app").hidden) return;
   clearTimers();
   const names = state.sites.sites.map((x) => x.name);
-  let { site, tab, repo, invite } = parseHash();
-  state.repo = repo ?? null;
+  let { site, tab, invite } = parseHash();
   // サイトがないときの行き先。メンバーはサイトを作れないので個人の設定へ
   const home = isAdmin() ? "#/new" : "#/settings";
-  if (site && SITE_TABS[tab] && names.includes(site)) {
+  const deployed = (n) => state.sites.sites.find((x) => x.name === n)?.deployed;
+  if (site && SITE_TABS[tab] && names.includes(site) && DEPLOYED_TABS.has(tab) && !deployed(site)) {
+    location.replace(siteHash("deployments", site));
+    return;
+  } else if (site && SITE_TABS[tab] && names.includes(site)) {
+    if (location.hash.startsWith("#/repos")) return location.replace(siteHash(tab, site));
     state.siteName = site;
   } else if (tab === "invite") {
     if (!names.includes(state.siteName)) state.siteName = names[0] ?? null;
@@ -499,7 +505,7 @@ function route() {
     observability: viewObservability,
     site: viewSite,
     new: viewNewSite,
-    repos: viewRepos,
+    repo: viewRepoTab,
     resources: viewResources,
     settings: viewSettings,
     admin: viewAdmin,
@@ -554,6 +560,19 @@ async function viewDeployments(main) {
   const [detail, { deployments, active }] = await Promise.all([loadSite(), api(siteApi("/deployments"))]);
   const page = h("div", { class: "page" }, pageHead("デプロイ"));
 
+  if (!detail.deployed) {
+    page.append(h("section", { class: "card" }, h("h2", { text: "デプロイ方法を選ぶ" }), h("p", { class: "muted", text: `サイト ${detail.name}（${hostOf(detail.subdomainUrl)}）はまだデプロイされていません。次のどれかの方法でデプロイしてください。` }), deployOptions(detail)));
+  } else {
+    page.append(
+      h(
+        "details",
+        { class: "card deploy-again" },
+        h("summary", {}, h("b", { text: "新しくデプロイ" }), h("span", { class: "muted", text: " — 別の方法でデプロイして、今のリリースを置き換えます" })),
+        deployOptions(detail),
+      ),
+    );
+  }
+
   const latest = detail.latest;
   if (latest && latest.status === "failed" && (!detail.release || latest.id !== detail.release.deployment?.id)) {
     page.append(h("div", { class: "notice" }, h("b", { text: `直近のデプロイ（${fmtAgo(latest.createdAt)}）は失敗しました` }), h("div", { class: "mono", text: latest.error ?? "" })));
@@ -579,7 +598,8 @@ async function viewDeployments(main) {
   } else {
     current.append(h("p", { class: "muted", text: "成功したデプロイがまだありません。" }));
   }
-  page.append(current);
+  // 未デプロイのサイトでは、上の「デプロイ方法を選ぶ」があるので出さない
+  if (detail.deployed) page.append(current);
 
   page.append(h("div", { class: "section-head" }, h("h2", { text: "デプロイ履歴" }), h("span", { class: "muted", text: `${deployments.length} 件` })));
   const list = h("div", { class: "list" });
@@ -616,18 +636,6 @@ const SAMPLES = [
   },
 ];
 
-/** URL を読んで、デプロイ前の設定カードを開く */
-async function inspectGitHub(url, onError) {
-  try {
-    const info = await api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) });
-    state.github = { url, error: "", config: { ...info, repoUrl: url } };
-    route();
-    scrollTo({ top: 0 });
-  } catch (err) {
-    onError(err.message);
-  }
-}
-
 async function deployGitHub(body, onError) {
   let site;
   try {
@@ -644,87 +652,15 @@ async function deployGitHub(body, onError) {
   // デプロイは成功しているので、一覧の再読み込みに失敗してもエラーにしない
   state.github = { url: "", error: "", config: null };
   await loadOverview().catch(() => {});
-  location.hash = siteHash("deployments", site);
+  // 同じサイトのデプロイタブからデプロイしたときは hashchange が起きないので、描き直す
+  const next = siteHash("deployments", site);
+  if (location.hash === next) route();
+  else location.hash = next;
 }
 
 function busy(button, label) {
   button.disabled = true;
   button.textContent = label;
-}
-
-function samplesCard(urls) {
-  const error = h("div", { class: "error" });
-  const deployed = new Set(state.sites.sites.map((x) => x.name));
-  const buttons = [];
-  const items = SAMPLES.map((s) => {
-    const sample = { ...s, url: urls[s.key] };
-    const exists = deployed.has(sample.name);
-    const button = h("button", { class: exists ? "" : "primary", text: exists ? "再デプロイ" : "デプロイ" });
-    const label = button.textContent;
-    buttons.push(button);
-    button.addEventListener("click", async () => {
-      error.textContent = "";
-      for (const b of buttons) b.disabled = true;
-      busy(button, "読み込み中…");
-      await inspectGitHub(sample.url, (message) => {
-        error.textContent = message;
-        for (const b of buttons) b.disabled = false;
-        button.textContent = label;
-      });
-    });
-    return h(
-      "li",
-      { class: "sample" },
-      h(
-        "div",
-        { class: "grow" },
-        h("div", { class: "sample-title" }, h("b", { text: sample.title }), h("span", { class: "muted mono", text: `${sample.name}.${state.overview.domain?.effective ?? location.host}` }), exists ? h("span", { class: "tag", text: "デプロイ済み" }) : null),
-        h("p", { class: "muted", text: sample.description }),
-        h("div", { class: "tags" }, ...sample.tags.map((t) => h("span", { class: "tag", text: t })), h("a", { href: sample.url, target: "_blank", rel: "noopener", text: "コードを見る ↗" })),
-      ),
-      button,
-    );
-  });
-  return h(
-    "section",
-    { class: "card" },
-    h("h2", { text: "サンプルからデプロイ" }),
-    h("p", { class: "muted", text: "このリポジトリの examples にあるサンプルを、そのままサイトとして追加します。" }),
-    h("ul", { class: "samples" }, ...items),
-    error,
-  );
-}
-
-function githubCard() {
-  const input = h("input", { type: "url", placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>", spellcheck: "false", "aria-label": "GitHub の URL", value: state.github.url });
-  const error = h("div", { class: "error", text: state.github.error });
-  const button = h("button", { class: "primary", text: "次へ" });
-  const run = async () => {
-    state.github.url = input.value.trim();
-    if (!state.github.url) {
-      error.textContent = "GitHub の URL を入力してください";
-      input.focus();
-      return;
-    }
-    error.textContent = "";
-    busy(button, "読み込み中…");
-    await inspectGitHub(state.github.url, (message) => {
-      state.github.error = message;
-      error.textContent = message;
-      button.disabled = false;
-      button.textContent = "次へ";
-    });
-  };
-  button.addEventListener("click", run);
-  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && !button.disabled && run());
-  return h(
-    "section",
-    { class: "card" },
-    h("h2", { text: "GitHub の public リポジトリからデプロイ" }),
-    h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。次の画面でサイト名（サブドメイン）・環境変数・シークレットを決めてからデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions からデプロイしてください。" }),
-    h("div", { class: "row" }, h("div", { class: "grow" }, input), button),
-    error,
-  );
 }
 
 function deploymentItem(d, isActive) {
@@ -1807,7 +1743,12 @@ async function viewSite(main) {
   const detail = await loadSite();
   const r = detail.release;
   const page = h("div", { class: "page" }, pageHead("サイト設定"));
-  const rows = [
+  const rows = !r
+    ? [
+        ["名前", detail.name],
+        ["URL", h("span", {}, detail.subdomainUrl, h("span", { class: "muted", text: "（まだデプロイしていないので配信していません）" }))],
+      ]
+    : [
     ["名前", r.name],
     ["URL", siteUrlCell(detail)],
     ["Worker", r.main ? `worker/${r.main}` : "なし（静的サイト）"],
@@ -1848,7 +1789,7 @@ async function viewSite(main) {
     isAdmin() ? siteMembersCard() : null,
     siteTokensCard(),
     // ルートドメインは管理画面と同じオリジンなので、切り替えは管理者だけ
-    isAdmin()
+    isAdmin() && r
       ? h(
       "section",
       { class: "card" },
@@ -1866,7 +1807,7 @@ async function viewSite(main) {
       "section",
       { class: "card" },
       h("h2", { text: "サイトの削除" }),
-      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログをすべて削除します。他のサイトとパスキー・チーム ID・Token は残ります。" }),
+      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。他のサイトとパスキー・チーム ID・Token は残ります。" }),
       armed(h("button", { class: "danger" }), "サイトを削除", "もう一度押すと削除", async () => {
         try {
           await api(siteApi(), { method: "DELETE" });
@@ -2205,73 +2146,6 @@ function siteSettingsCards(settings) {
 
 // ---------- リポジトリ ----------
 
-async function viewRepos(main) {
-  if (state.repo) return viewRepo(main, state.repo);
-  const { repos } = await api("/repos");
-  const page = h("div", { class: "page" }, pageHead("リポジトリ"));
-  const input = h("input", { placeholder: "my-app", spellcheck: "false", "aria-label": "リポジトリの名前", autocomplete: "off" });
-  const error = h("div", { class: "error" });
-  const create = h("button", { class: "primary", text: "作成" });
-  const run = async () => {
-    if (create.disabled) return;
-    error.textContent = "";
-    create.disabled = true;
-    const name = input.value.trim();
-    const post = (confirm) => api("/repos", { method: "POST", body: JSON.stringify({ name, confirm }) });
-    try {
-      let repo;
-      try {
-        repo = await post(false);
-      } catch (err) {
-        // 同じ名前のサイトがあるときは、上書きになることを確かめてから作る
-        if (!/同じ名前のサイト/.test(err.message) || !window.confirm(`${err.message}\n\nそれでも作りますか？`)) throw err;
-        repo = await post(true);
-      }
-      location.hash = `#/repos/${encodeURIComponent(repo.name)}`;
-    } catch (err) {
-      error.textContent = err.message;
-      create.disabled = false;
-    }
-  };
-  create.addEventListener("click", run);
-  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
-  page.append(
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "新しいリポジトリ" }),
-      h("p", { class: "muted", text: "Kanzume を Git のリモートとして使えます。デフォルトブランチ（main）に push すると、wrangler の設定どおりにデプロイします。リポジトリ名は wrangler の name（＝サイト名・サブドメイン）と同じにしてください。違う name のコミットはデプロイしません。" }),
-      h("div", { class: "row" }, h("div", { class: "grow" }, input), create),
-      error,
-    ),
-  );
-  page.append(h("div", { class: "section-head" }, h("h2", { text: "リポジトリ一覧" }), h("span", { class: "muted", text: `${repos.length} 件` })));
-  const list = h("div", { class: "list" });
-  for (const repo of repos) {
-    list.append(
-      h(
-        "div",
-        { class: "list-item" },
-        h(
-          "a",
-          { class: "list-row repo-row", href: `#/repos/${encodeURIComponent(repo.name)}` },
-          h("div", { class: "grow" }, h("div", { class: "title mono", text: repo.name }), h("div", { class: "sub mono", text: repo.cloneUrl })),
-          h(
-            "div",
-            { class: "side" },
-            repo.site ? h("span", { class: "tag", text: `→ ${repo.site}` }) : null,
-            h("div", { text: repo.broken ? "読み込めません" : repo.lastPush ? `push ${fmtAgo(repo.lastPush)}` : "まだ push されていません" }),
-            h("div", { class: "muted", text: fmtBytes(repo.size) }),
-          ),
-        ),
-      ),
-    );
-  }
-  if (!repos.length) list.append(h("div", { class: "empty", text: "リポジトリはまだありません" }));
-  page.append(list);
-  main.replaceChildren(page);
-}
-
 const TTL_OPTIONS = [
   ["3600", "1 時間"],
   ["86400", "1 日"],
@@ -2287,10 +2161,7 @@ async function viewRepo(main, name) {
     h(
       "div",
       { class: "page-head" },
-      h("a", { class: "back", href: "#/repos", text: "← リポジトリ" }),
-      h("h1", { class: "mono", text: name }),
-      h("span", { class: "spacer" }),
-      repo.site ? h("a", { class: "open", href: siteHash("deployments", repo.site), text: `サイト ${repo.site} →` }) : null,
+      h("h1", { text: "リポジトリ" }),
     ),
   );
 
@@ -2482,7 +2353,8 @@ async function viewRepo(main, name) {
       armed(h("button", { class: "danger" }), "リポジトリを削除", "もう一度押すと削除", async () => {
         try {
           await api(repoApi(""), { method: "DELETE" });
-          location.hash = "#/repos";
+          await loadOverview();
+          location.hash = siteHash("deployments", name);
         } catch (err) {
           delError.textContent = err.message;
         }
@@ -2561,9 +2433,11 @@ function wranglerVarsView(vars, overridden) {
 }
 
 /** デプロイ前の設定カード（GitHub の URL・サンプル） */
-function deployConfigCard(cfg) {
+/** fixedName を渡すと、サイト名は変えられない（作成済みのサイトへのデプロイ）。onBack は「戻る」 */
+function deployConfigCard(cfg, { fixedName = null, onBack = null } = {}) {
   const error = h("div", { class: "error" });
-  const sub = subdomainInput(cfg.name, "サイト名");
+  const sub = subdomainInput(fixedName ?? cfg.name, "サイト名");
+  if (fixedName) sub.input.disabled = true;
   const status = h("p", { class: "muted hint" });
   const wrangler = cfg.vars ?? {};
   const initialVars = { ...wrangler, ...(cfg.current?.vars ?? {}) };
@@ -2591,6 +2465,7 @@ function deployConfigCard(cfg) {
   const back = h("button", {
     text: "戻る",
     onclick: () => {
+      if (onBack) return onBack();
       state.github.config = null;
       route();
     },
@@ -2630,9 +2505,9 @@ function deployConfigCard(cfg) {
       "section",
       { class: "card" },
       h("h2", { text: "サイト名" }),
-      h("p", { class: "muted", text: "サブドメインになります。wrangler の設定の name を初期値にしています。" }),
+      h("p", { class: "muted", text: fixedName ? "このサイトにデプロイします。" : "サブドメインになります。wrangler の設定の name を初期値にしています。" }),
       sub.el,
-      status,
+      fixedName ? null : status,
     ),
     h(
       "section",
@@ -2658,20 +2533,53 @@ function deployConfigCard(cfg) {
 
 async function viewNewSite(main) {
   const page = h("div", { class: "page" }, pageHead("サイトを追加"));
-  if (state.github.config) {
-    page.append(...deployConfigCard(state.github.config));
-    main.replaceChildren(page);
-    return;
-  }
+  const sub = subdomainInput("", "サイト名");
+  sub.input.placeholder = "my-app";
+  const status = h("p", { class: "muted hint", text: "英小文字・数字・ハイフンで決めてください。あとから「サイト設定」でサブドメインを変えられます。" });
+  const error = h("div", { class: "error" });
+  const create = h("button", { class: "primary", text: "作成" });
+  let timer = null;
+  sub.input.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      const name = sub.input.value.trim();
+      if (!name) return;
+      const info = await api(`/site-name?name=${encodeURIComponent(name)}`).catch(() => null);
+      if (!info) return;
+      const bad = !info.valid || info.created || info.takenBy;
+      status.classList.toggle("warn", !!bad);
+      status.textContent = !info.valid
+        ? "英小文字・数字・ハイフンで、63 文字以内にしてください。"
+        : info.created
+          ? `サイト ${name} は既にあります。`
+          : info.takenBy
+            ? `このサブドメインはサイト ${info.takenBy} が使っています。`
+            : `${info.url} で配信するサイトを作ります。`;
+    }, 250);
+  });
+  const run = async () => {
+    error.textContent = "";
+    create.disabled = true;
+    try {
+      const { name } = await api("/sites", { method: "POST", body: JSON.stringify({ name: sub.input.value.trim() }) });
+      await loadOverview();
+      location.hash = siteHash("deployments", name);
+    } catch (err) {
+      error.textContent = err.message;
+      create.disabled = false;
+    }
+  };
+  create.addEventListener("click", run);
+  sub.input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
   page.append(
-    samplesCard(await api("/samples")),
-    githubCard(),
     h(
       "section",
       { class: "card" },
-      h("h2", { text: "GitHub Actions からデプロイ" }),
-      h("p", { class: "muted", text: "wrangler の設定の name がサイト名（サブドメイン）になります。全体の Token は全サイト共通なので、管理者設定の KANZUME_URL と KANZUME_TOKEN をそのまま使えます。サイトのメンバーには、サイト設定の「デプロイ用のトークン」を使ってもらってください。" }),
-      h("a", { href: "#/admin", text: "管理者設定を開く" }),
+      h("h2", { text: "サイト名（配信ドメイン）" }),
+      h("p", { class: "muted", text: "サイトを作ると、次にデプロイの方法（サンプル・GitHub の公開リポジトリ・GitHub Actions・Kanzume のリポジトリ）を選べます。" }),
+      h("div", { class: "row narrow" }, h("div", { class: "grow" }, sub.el), create),
+      status,
+      error,
     ),
   );
   const pending = state.sites.pending;
@@ -2681,6 +2589,175 @@ async function viewNewSite(main) {
     for (const d of pending) list.append(deploymentItem(d, false));
     page.append(list);
   }
+  sub.input.focus();
+  main.replaceChildren(page);
+}
+
+// ---------- デプロイ方法（サイトごと） ----------
+
+const DEPLOY_METHODS = [
+  { key: "sample", title: "サンプルから", description: "用意してあるサンプルをそのままデプロイします。" },
+  { key: "github", title: "GitHub の公開リポジトリから", description: "public リポジトリの URL を指定して、Kanzume の中でバンドルしてデプロイします。" },
+  { key: "actions", title: "GitHub Actions から", description: "push のたびに Actions でビルドしてデプロイします。npm パッケージやビルドが必要なときに。" },
+  { key: "repo", title: "サイトのリポジトリから", description: "Kanzume にこのサイトの Git リポジトリを作り、git push でデプロイします。GitHub は不要です。" },
+];
+
+/** サイトにデプロイする 4 つの方法。選んだ方法の中身を下に出す */
+function deployOptions(detail) {
+  const site = detail.name;
+  const panel = h("div", { class: "deploy-panel" });
+  const buttons = [];
+  const choose = async (key) => {
+    for (const b of buttons) b.classList.toggle("active", b.dataset.key === key);
+    fill(panel, h("p", { class: "muted", text: "読み込み中…" }));
+    try {
+      fill(panel, ...(await METHOD_VIEWS[key](detail, () => choose(key))));
+    } catch (err) {
+      fill(panel, h("div", { class: "error", text: err.message }));
+    }
+  };
+  const grid = h(
+    "div",
+    { class: "deploy-methods" },
+    ...DEPLOY_METHODS.map((m) => {
+      const b = h("button", { class: "deploy-method", "data-key": m.key, onclick: () => choose(m.key) }, h("b", { text: m.title }), h("span", { class: "muted", text: m.description }));
+      buttons.push(b);
+      return b;
+    }),
+  );
+  return h("div", {}, grid, panel);
+}
+
+const METHOD_VIEWS = {
+  async sample(detail) {
+    const urls = await api("/samples");
+    const error = h("div", { class: "error" });
+    const buttons = [];
+    const items = SAMPLES.map((sample) => {
+      const url = urls[sample.key];
+      const button = h("button", { class: "primary", text: "このサイトにデプロイ" });
+      buttons.push(button);
+      button.addEventListener("click", async () => {
+        error.textContent = "";
+        for (const b of buttons) b.disabled = true;
+        busy(button, "デプロイ中…");
+        await deployGitHub({ url, name: detail.name }, (message) => {
+          error.textContent = message;
+          for (const b of buttons) b.disabled = false;
+          button.textContent = "このサイトにデプロイ";
+        });
+      });
+      return h(
+        "li",
+        { class: "sample" },
+        h(
+          "div",
+          { class: "grow" },
+          h("div", { class: "sample-title" }, h("b", { text: sample.title })),
+          h("p", { class: "muted", text: sample.description }),
+          h("div", { class: "tags" }, ...sample.tags.map((t) => h("span", { class: "tag", text: t })), h("a", { href: url, target: "_blank", rel: "noopener", text: "コードを見る ↗" })),
+        ),
+        button,
+      );
+    });
+    return [h("section", { class: "card" }, h("h2", { text: "サンプルから" }), h("p", { class: "muted", text: `サンプルを ${detail.name} としてデプロイします。環境変数はサンプルの wrangler の設定のものを使います（サイト設定で上書きできます）。` }), h("ul", { class: "samples" }, ...items), error)];
+  },
+
+  async github(detail, reset) {
+    const input = h("input", { type: "url", placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>", spellcheck: "false", "aria-label": "GitHub の URL" });
+    const error = h("div", { class: "error" });
+    const next = h("button", { class: "primary", text: "次へ" });
+    const box = h("div");
+    const run = async () => {
+      const url = input.value.trim();
+      if (!url) {
+        error.textContent = "GitHub の URL を入力してください";
+        return input.focus();
+      }
+      error.textContent = "";
+      busy(next, "読み込み中…");
+      try {
+        const [info, site] = await Promise.all([api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) }), api(`/site-name?name=${encodeURIComponent(detail.name)}`)]);
+        fill(box, ...deployConfigCard({ ...info, repoUrl: url, current: site.current }, { fixedName: detail.name, onBack: reset }));
+        form.hidden = true;
+      } catch (err) {
+        error.textContent = err.message;
+        next.disabled = false;
+        next.textContent = "次へ";
+      }
+    };
+    next.addEventListener("click", run);
+    input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && !next.disabled && run());
+    const form = h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "GitHub の公開リポジトリから" }),
+      h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。次の画面で環境変数とシークレットを確かめてからデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions を使ってください。" }),
+      h("div", { class: "row" }, h("div", { class: "grow" }, input), next),
+      error,
+    );
+    setTimeout(() => input.focus());
+    return [form, box];
+  },
+
+  async actions(detail) {
+    return [
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "GitHub Actions から" }),
+        h("p", { class: "muted", text: `1. wrangler の設定の name を ${detail.name} にします。2. 下でトークンを発行し、リポジトリの Secrets に KANZUME_TOKEN、Variables に KANZUME_URL を登録します。3. 次のワークフローを置いて push します。` }),
+        h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)),
+        h("pre", { class: "log", text: WORKFLOW }),
+      ),
+      siteTokensCard(),
+    ];
+  },
+
+  async repo(detail) {
+    const site = detail.name;
+    if (!detail.repo) {
+      const error = h("div", { class: "error" });
+      const create = h("button", { class: "primary", text: "リポジトリを作成" });
+      create.addEventListener("click", async () => {
+        error.textContent = "";
+        create.disabled = true;
+        try {
+          await api("/repos", { method: "POST", body: JSON.stringify({ name: site }) });
+          location.hash = siteHash("repo", site);
+        } catch (err) {
+          error.textContent = err.message;
+          create.disabled = false;
+        }
+      });
+      return [
+        h(
+          "section",
+          { class: "card" },
+          h("h2", { text: "サイトのリポジトリから" }),
+          h("p", { class: "muted", text: `Kanzume に Git リポジトリ ${site} を作ります。main に push すると、wrangler の設定どおりにこのサイトへデプロイします（name は ${site} にしてください）。` }),
+          create,
+          error,
+        ),
+      ];
+    }
+    return [
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "サイトのリポジトリから" }),
+        h("p", { class: "muted", text: `リポジトリ ${site} は作成済みです。push のコマンドとトークンはリポジトリのタブにあります。` }),
+        h("a", { href: siteHash("repo", site), text: "リポジトリを開く →" }),
+      ),
+    ];
+  },
+};
+
+/** サイトのリポジトリのタブ。まだなければ作成のボタンを出す */
+async function viewRepoTab(main) {
+  const detail = await loadSite();
+  if (detail.repo) return viewRepo(main, detail.name);
+  const page = h("div", { class: "page" }, pageHead("リポジトリ"), ...(await METHOD_VIEWS.repo(detail)));
   main.replaceChildren(page);
 }
 

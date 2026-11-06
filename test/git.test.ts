@@ -153,6 +153,11 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
     return { status: res.status, body: (await res.json()) as Record<string, any> };
   };
   assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "Bad Name" }) })).status, 400);
+  // リポジトリはサイトに属するので、先にサイトを作る
+  const noSite = await api("/repos", { method: "POST", body: JSON.stringify({ name: "blog" }) });
+  assert.equal(noSite.status, 400);
+  assert.match(noSite.body.error, /先にサイトを作って/);
+  assert.equal((await api("/sites", { method: "POST", body: JSON.stringify({ name: "blog" }) })).status, 200);
   const created = await api("/repos", { method: "POST", body: JSON.stringify({ name: "blog" }) });
   assert.equal(created.body.cloneUrl, `${base}/_git/blog.git`);
   assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "blog" }) })).status, 400, "同じ名前は作れない");
@@ -330,7 +335,7 @@ test("name が違う push は、ファイルを取り出す前に止まり、失
   assert.deepEqual(history.list("sample").map((d) => d.status), ["failed", "failed"], "設定がない失敗もリポジトリの履歴に入る");
 });
 
-test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、同じ名前のサイトがあれば確認を求める", { skip: NO_GIT }, async (t) => {
+test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", { skip: NO_GIT }, async (t) => {
   const { base, remote, repos, state } = await start(t);
   await repos.create("blog");
   mkdirSync(path.join(repos.dir, "broken.git"));
@@ -354,8 +359,6 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   const shop = workTree(t, { "wrangler.json": JSON.stringify({ name: "shop", assets: { directory: "p" } }), "p/index.html": "shop" });
   assert.equal((await git(shop, ["push", remote("shop"), "main"])).status, 0);
   await repos.remove("shop");
-  const conflict = await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop" }) });
-  assert.equal(conflict.status, 409);
-  assert.equal(conflict.body.needsConfirm, true);
-  assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop", confirm: true }) })).status, 200);
+  // デプロイ済みのサイトにも、確認なしでリポジトリを作れる（リポジトリはそのサイトのもの）
+  assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop" }) })).status, 200);
 });

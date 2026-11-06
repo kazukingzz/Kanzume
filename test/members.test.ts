@@ -146,7 +146,6 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
     ["/token/rotate", "POST"],
     ["/resources", "GET"],
     ["/root-site", "POST"],
-    ["/samples", "GET"],
     ["/users", "GET"],
     [`/users/${user.id}`, "PUT"],
   ] as const) {
@@ -213,4 +212,59 @@ test("サイト用のトークンは、そのサイトへの /_api/deploy だけ
   assert.match(((await other.json()) as { error: string }).error, /blog にしかデプロイできません/);
   assert.equal(app.sites.has("shop"), false);
   assert.ok(app.history.list().every((d) => d.name === "blog"), "ほかのサイトの履歴にも残さない");
+});
+
+test("サイトを先に作り（未デプロイ）、デプロイ前でも設定・トークン・リポジトリを扱える", async (t) => {
+  const app = await start(t);
+  const created = await app.admin("/sites", "POST", { name: "Blog " });
+  assert.equal(created.status, 200, await created.clone().text());
+  assert.equal(((await created.json()) as { name: string }).name, "blog");
+  assert.equal((await app.admin("/sites", "POST", { name: "blog" })).status, 409);
+  assert.equal((await app.admin("/sites", "POST", { name: "bad name" })).status, 400);
+  await app.admin("/sites/blog/settings", "PUT", { subdomain: "news" });
+  assert.equal((await app.admin("/sites", "POST", { name: "news" })).status, 400, "ほかのサイトのサブドメインとは重ねない");
+
+  const list = (await (await app.admin("/sites")).json()) as { sites: { name: string; deployed: boolean; deployedAt: string | null }[] };
+  assert.deepEqual(list.sites.map((s) => [s.name, s.deployed, s.deployedAt]), [["blog", false, null]]);
+  const detail = (await (await app.admin("/sites/blog")).json()) as { deployed: boolean; release: unknown; repo: boolean };
+  assert.deepEqual({ deployed: detail.deployed, release: detail.release, repo: detail.repo }, { deployed: false, release: null, repo: false });
+  assert.equal((await app.admin("/sites/blog/files")).status, 404);
+  assert.equal((await app.admin("/sites/blog/deployments")).status, 200);
+  assert.equal((await app.admin("/sites/blog/settings", "PUT", { vars: { A: "1" } })).status, 200);
+  assert.equal((await app.admin("/sites/blog/tokens", "POST", {})).status, 200);
+  assert.equal((await app.admin("/sites/blog/members")).status, 200);
+  // 配信はまだしない
+  assert.equal((await fetch(`${app.base}/`, { headers: { "x-forwarded-host": "news.localhost" } })).status, 404);
+
+  // 空のサイトへのデプロイは上書きの確認なし。デプロイ済みなら確認する
+  assert.equal(((await (await app.admin("/site-name?name=blog")).json()) as { exists: boolean; created: boolean }).created, true);
+  await app.deploy("blog");
+  assert.equal(((await (await app.admin("/sites")).json()) as { sites: { deployed: boolean }[] }).sites[0].deployed, true);
+  assert.equal(((await (await app.admin("/site-name?name=blog")).json()) as { exists: boolean }).exists, true);
+
+  // メンバーはサイトを作れない
+  const { api } = await member(app, ["blog"]);
+  assert.equal((await api("/sites", "POST", { name: "mine" })).status, 403);
+});
+
+test("サイトを消すと同じ名前のリポジトリも消え、サイトのないリポジトリには起動時に空のサイトができる", async (t) => {
+  const dataDir = tmpDir(t);
+  const config = loadConfig({ KANZUME_DATA_DIR: dataDir });
+  const first = await createServer(config);
+  await first.sites.ensure("blog");
+  await first.repos.create("blog");
+  await first.repos.create("orphan");
+  first.server.close();
+
+  const second = await createServer(config);
+  t.after(() => second.server.close());
+  assert.equal(second.sites.has("orphan"), true);
+  assert.equal(second.sites.deployed("orphan"), false);
+  await new Promise<void>((resolve) => second.server.listen(0, "127.0.0.1", resolve));
+  const base = `http://127.0.0.1:${(second.server.address() as AddressInfo).port}`;
+  const cookie = `kanzume_session=${await second.state.createSession()}`;
+  const res = await fetch(`${base}/_admin/kanzume/api/sites/blog`, { method: "DELETE", headers: { cookie, origin: base } });
+  assert.equal(res.status, 200);
+  assert.equal(await second.repos.exists("blog"), false);
+  assert.equal(await second.repos.exists("orphan"), true);
 });
