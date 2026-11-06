@@ -76,10 +76,19 @@ p { margin: 0 0 12px; }
 .brand { font-size: 17px; font-weight: 700; letter-spacing: 0.02em; }
 
 label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+/* 入力欄・セレクト・横に並ぶボタンは同じ高さにそろえる */
 input, select {
-  width: 100%; padding: 8px 10px; font: inherit; color: inherit;
-  background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+  width: 100%; height: 36px; padding: 0 10px; font: inherit; color: inherit;
+  background-color: var(--panel); border: 1px solid var(--line); border-radius: 8px;
 }
+/* セレクトは OS の見た目ではなく、入力欄と同じ枠に自前の矢印を付ける（ライト・ダークのどちらでも見える灰色） */
+select {
+  appearance: none; -webkit-appearance: none; padding-right: 30px; cursor: pointer; text-overflow: ellipsis;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238a8a85' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M7 10l5 5 5-5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 9px center; background-size: 14px;
+}
+select:disabled, input:disabled { opacity: 0.6; cursor: default; }
+input[type="checkbox"], input[type="radio"] { width: auto; height: auto; }
 button {
   font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 8px; cursor: pointer;
   border: 1px solid var(--line); background: var(--panel); color: var(--text); white-space: nowrap;
@@ -92,9 +101,10 @@ button.danger.confirm { background: var(--danger); border-color: var(--danger); 
 button:disabled { opacity: 0.5; cursor: default; }
 button.active { background: var(--active); border-color: var(--accent); color: var(--text); }
 .field { margin-bottom: 16px; max-width: 720px; }
+.row > button, .row > .grow + button, .token-form > button, .filters > button, .suffix-input + button { height: 36px; }
 .error { color: var(--danger); font-size: 13px; margin-top: 8px; min-height: 1em; }
 code, pre, .mono { font: 12.5px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; }
-code.value { display: block; padding: 7px 10px; background: var(--code); border-radius: 6px; overflow-x: auto; white-space: nowrap; }
+code.value { display: block; padding: 8px 10px; line-height: 20px; background: var(--code); border-radius: 6px; overflow-x: auto; white-space: nowrap; }
 
 /* 認証 */
 .auth { min-height: 100%; display: grid; place-items: center; padding: 16px; }
@@ -222,7 +232,7 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 .segmented button + button { border-left: 1px solid var(--line); }
 .segmented button.active { background: var(--active); color: var(--text); font-weight: 600; }
 .filters { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 20px; }
-.filters select, .filters input { width: auto; padding: 6px 8px; }
+.filters select, .filters input { width: auto; }
 .filters input[type="search"] { flex: 1; min-width: 160px; }
 
 /* デプロイ */
@@ -243,7 +253,11 @@ code.value { display: block; padding: 7px 10px; background: var(--code); border-
 /* 環境変数・シークレット・サブドメイン */
 .suffix-input { display: flex; align-items: stretch; max-width: 720px; }
 .suffix-input input { border-top-right-radius: 0; border-bottom-right-radius: 0; min-width: 0; flex: 1; }
-.suffix-input .suffix { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; background: var(--code); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; }
+.suffix-input .suffix { display: flex; align-items: center; padding: 0 10px; border: 1px solid var(--line); border-left: 0; border-radius: 0 8px 8px 0; background: var(--code); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 55%; font-size: 12px; }
+@media (max-width: 600px) {
+  /* スマホではドメインの表示を短くし、サイト名の入力欄を広く取る */
+  .suffix-input .suffix { max-width: 42%; padding: 0 8px; }
+}
 .hint.warn { color: var(--danger); }
 .row.narrow { max-width: 720px; }
 .env-rows { display: grid; gap: 8px; max-width: 720px; }
@@ -435,8 +449,8 @@ label.inline select, .row select { width: auto; }
 .token-form { display: flex; align-items: flex-end; gap: 10px; max-width: 720px; margin: 4px 0 16px; }
 .token-field { display: flex; flex-direction: column; gap: 4px; margin: 0; width: 160px; flex: none; }
 .token-field.grow { flex: 1; width: auto; min-width: 0; }
-.token-field select { width: 100%; height: 38px; }
-.token-form > button { height: 38px; padding: 0 20px; }
+.token-field select { width: 100%; }
+.token-form > button { padding: 0 20px; }
 .token-list { max-width: 720px; }
 .token-list .list-row { padding: 10px 14px; }
 .token-list .title { font-size: 13px; }
@@ -473,8 +487,10 @@ label.inline select, .row select { width: auto; }
 .deploy-method b { font-size: 14px; }
 .deploy-method.active { border-color: var(--accent); background: var(--active); }
 .deploy-panel:not(:empty) { margin-top: 16px; }
-.deploy-panel > .card { border-style: dashed; }
+/* 選んだ方法の中身はカードの入れ子にせず、区切り線の下に並べる */
+.deploy-panel > .card { border: 0; border-top: 1px solid var(--line); border-radius: 0; padding: 16px 0 0; margin: 0 0 8px; background: transparent; }
 details.deploy-again > summary { cursor: pointer; list-style: none; }
 details.deploy-again > summary::-webkit-details-marker { display: none; }
 details.deploy-again > summary::before { content: "▸ "; color: var(--muted); }
 details.deploy-again[open] > summary::before { content: "▾ "; }
+.steps { margin: 0 0 12px; padding-left: 20px; font-size: 13px; line-height: 1.7; max-width: 720px; }

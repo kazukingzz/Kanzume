@@ -1941,6 +1941,7 @@ function siteTokensCard() {
           h(
             "div",
             { class: "list-row static" },
+            h("span", { class: "status bad", text: "write" }),
             h("div", { class: "grow" }, h("div", { class: "title", text: "デプロイ・push" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
             armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
               try {
@@ -2178,7 +2179,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」${isAdmin() ? "、管理者設定の KANZUME_TOKEN" : ""}を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」${isAdmin() ? "、管理者設定の KANZUME_TOKEN" : ""} を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
     ),
   );
 
@@ -2353,7 +2354,7 @@ async function viewRepo(main, name) {
       "section",
       { class: "card" },
       h("h2", { text: "リポジトリの削除" }),
-      h("p", { class: "muted", text: "リポジトリとトークンを削除します。デプロイ済みのサイトは残ります。" }),
+      h("p", { class: "muted", text: "リポジトリとトークンを削除します。サイトとデプロイ済みのリリースは残ります。" }),
       armed(h("button", { class: "danger" }), "リポジトリを削除", "もう一度押すと削除", async () => {
         try {
           await api(repoApi(""), { method: "DELETE" });
@@ -2710,7 +2711,13 @@ const METHOD_VIEWS = {
         "section",
         { class: "card" },
         h("h2", { text: "GitHub Actions から" }),
-        h("p", { class: "muted", text: `1. wrangler の設定の name を ${detail.name} にします。2. 下でトークンを発行し、リポジトリの Secrets に KANZUME_TOKEN、Variables に KANZUME_URL を登録します。3. 次のワークフローを置いて push します。` }),
+        h(
+          "ol",
+          { class: "steps muted" },
+          h("li", { text: `wrangler の設定の name を ${detail.name} にします。` }),
+          h("li", { text: "下でトークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN、Variables に KANZUME_URL を登録します。" }),
+          h("li", { text: "次のワークフローを置いて push します。" }),
+        ),
         h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)),
         h("pre", { class: "log", text: WORKFLOW }),
       ),
