@@ -39,8 +39,9 @@ async function start(t: TestContext) {
     assert.equal(result.ok, true, result.ok ? "" : result.error);
   };
   await app.state.addCredential(cred("admin-cred"));
-  const admin = as(`kanzume_session=${await app.state.createSession()}`);
-  return { ...app, base, as, admin, deploy };
+  const adminSession = `kanzume_session=${await app.state.createSession()}`;
+  const admin = as(adminSession);
+  return { ...app, base, as, admin, deploy, adminCookie: async () => adminSession };
 }
 
 async function member(app: Awaited<ReturnType<typeof start>>, sites: string[]) {
@@ -269,4 +270,55 @@ test("サイトを消すと同じ名前のリポジトリも消え、サイト�
   assert.equal(res.status, 200);
   assert.equal(await second.repos.exists("blog"), false);
   assert.equal(await second.repos.exists("orphan"), true);
+});
+
+test("データベース（KV）とストレージ（R2）の中身を見て、追加・削除できる。何もなければ空", async (t) => {
+  const app = await start(t);
+  await app.admin("/sites", "POST", { name: "empty" });
+  assert.deepEqual(await (await app.admin("/sites/empty/kv")).json(), { namespaces: [] });
+  assert.deepEqual(await (await app.admin("/sites/empty/r2")).json(), { buckets: [] });
+  assert.equal(fs.existsSync(path.join(app.sites.get("empty")!.siteDir, "data.sqlite")), false, "見るだけでは DB を作らない");
+
+  const result = await deployFromFiles(
+    [
+      { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: "blog", main: "index.js", compatibility_date: "2026-10-01", kv_namespaces: [{ binding: "KV", id: "x" }], r2_buckets: [{ binding: "FILES", bucket_name: "files" }] })) },
+      { path: "index.js", data: Buffer.from(`export default { async fetch(r, env) { await env.KV.put("hello", "world", { metadata: { a: 1 } }); await env.FILES.put("img/a.txt", "abc", { httpMetadata: { contentType: "text/plain" } }); await env.FILES.put("b.bin", new Uint8Array([0, 1, 2])); return new Response("ok"); } };`) },
+    ],
+    app.deployer,
+    { source: {}, log: new DeployLog("t"), buildLog: [], autoRoot: true },
+  );
+  assert.equal(result.ok, true);
+  const worker = await app.runtime.get(app.sites.get("blog")!.get()!);
+  await worker.fetch(new Request("http://x/"));
+
+  assert.deepEqual(await (await app.admin("/sites/blog/kv")).json(), { namespaces: [{ name: "KV", bound: true, count: 1 }] });
+  const keys = (await (await app.admin("/sites/blog/kv/KV/keys")).json()) as { keys: { key: string; size: number; metadata: unknown }[] };
+  assert.deepEqual(keys.keys, [{ key: "hello", size: 5, metadata: { a: 1 }, expiration: null }]);
+  const value = (await (await app.admin("/sites/blog/kv/KV/value?key=hello")).json()) as { text: string };
+  assert.equal(value.text, "world");
+  assert.equal((await app.admin("/sites/blog/kv/KV/value", "PUT", { key: "new", value: "v", expirationTtl: 3600 })).status, 200);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value", "PUT", { key: "", value: "v" })).status, 400);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value?key=new", "DELETE")).status, 200);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value?key=new")).status, 404);
+
+  assert.deepEqual(await (await app.admin("/sites/blog/r2")).json(), { buckets: [{ name: "files", binding: "FILES", count: 2, size: 6 }] });
+  const top = (await (await app.admin("/sites/blog/r2/files/objects")).json()) as { objects: { key: string; contentType: string | null }[]; prefixes: string[] };
+  assert.deepEqual(top.prefixes, ["img/"]);
+  assert.deepEqual(top.objects.map((o) => o.key), ["b.bin"]);
+  const inner = (await (await app.admin("/sites/blog/r2/files/objects?prefix=img/")).json()) as { objects: { key: string; contentType: string | null }[] };
+  assert.deepEqual(inner.objects.map((o) => [o.key, o.contentType]), [["img/a.txt", "text/plain"]]);
+  assert.deepEqual(await (await app.admin("/sites/blog/r2/files/preview?key=img/a.txt")).json(), { text: "abc", size: 3, truncated: false });
+  assert.equal(((await (await app.admin("/sites/blog/r2/files/preview?key=b.bin")).json()) as { text: string | null }).text, null);
+  const download = await app.admin("/sites/blog/r2/files/object?key=img/a.txt");
+  assert.equal(await download.text(), "abc");
+  assert.match(download.headers.get("content-disposition") ?? "", /^attachment/);
+  const up = await fetch(`${app.base}/_admin/kanzume/api/sites/blog/r2/files/object?key=up/x.json`, {
+    method: "PUT",
+    headers: { cookie: (await app.adminCookie()), origin: app.base, "x-object-content-type": "application/json" },
+    body: '{"x":1}',
+  });
+  assert.equal(up.status, 200);
+  assert.equal(await (await worker.fetch(new Request("http://x/"))).response?.text(), "ok");
+  assert.equal((await app.admin("/sites/blog/r2/files/object?key=b.bin", "DELETE")).status, 200);
+  assert.equal(((await (await app.admin("/sites/blog/r2")).json()) as { buckets: { count: number }[] }).buckets[0].count, 2);
 });

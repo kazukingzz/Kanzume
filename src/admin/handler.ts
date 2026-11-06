@@ -14,7 +14,7 @@ import { DeployLog } from "../deploy/deployer.ts";
 import { deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
 import { ConfigError } from "../deploy/wrangler.ts";
 import type { DeployHistory } from "../deploy/history.ts";
-import { configuredRootHost, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
+import { configuredRootHost, readBody, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
 import type { ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
@@ -22,6 +22,7 @@ import { SettingsError, type SettingsPatch, type Sites } from "../sites.ts";
 import { PROJECT_NAME } from "../store.ts";
 import { RepoError, type Repos } from "../git/repos.ts";
 import { GIT_PATH } from "../git/server.ts";
+import { asText, kvDelete, kvKeys, kvNamespaces, kvPut, kvValue, PREVIEW_BYTES, r2Bucket, r2Buckets, r2List } from "./data.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
 import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
@@ -739,6 +740,88 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (deployment) {
       const found = history.get(decodeURIComponent(deployment[1]), name);
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
+    }
+
+    // ---------- データベース（KV） ----------
+
+    if (siteRouteKey === "GET /kv") return sendJson(res, 200, { namespaces: kvNamespaces(store.siteDir, release) });
+
+    const kvRoute = /^(GET|PUT|DELETE) \/kv\/([^/]+)\/(keys|value)$/.exec(siteRouteKey);
+    if (kvRoute) {
+      const [, m, rawNs, what] = kvRoute;
+      const ns = decodeURIComponent(rawNs);
+      const key = query.get("key") ?? "";
+      if (m === "GET" && what === "keys") return sendJson(res, 200, kvKeys(store.siteDir, ns, query.get("prefix") ?? "", query.get("after") ?? ""));
+      if (what === "value" && m === "GET") {
+        const value = kvValue(store.siteDir, ns, key);
+        return value ? sendJson(res, 200, value) : sendJson(res, 404, { error: "キーが見つかりません" });
+      }
+      try {
+        if (what === "value" && m === "PUT") {
+          const body = await readJson(req, 26 * 1024 * 1024);
+          const ttl = body?.expirationTtl === null || body?.expirationTtl === undefined || body?.expirationTtl === "" ? undefined : Number(body.expirationTtl);
+          await kvPut(store.siteDir, ns, String(body?.key ?? ""), String(body?.value ?? ""), { expirationTtl: ttl, metadata: body?.metadata ?? undefined });
+          return sendJson(res, 200, { ok: true });
+        }
+        if (what === "value" && m === "DELETE") {
+          await kvDelete(store.siteDir, ns, key);
+          return sendJson(res, 200, { ok: true });
+        }
+      } catch (err) {
+        if (err instanceof TypeError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+    }
+
+    // ---------- ストレージ（R2） ----------
+
+    if (siteRouteKey === "GET /r2") return sendJson(res, 200, { buckets: r2Buckets(store.siteDir, release) });
+
+    const r2Route = /^(GET|PUT|DELETE) \/r2\/([^/]+)\/(objects|object|preview)$/.exec(siteRouteKey);
+    if (r2Route) {
+      const [, m, rawBucket, what] = r2Route;
+      const bucketName = decodeURIComponent(rawBucket);
+      const key = query.get("key") ?? "";
+      try {
+        if (m === "GET" && what === "objects") return sendJson(res, 200, await r2List(store.siteDir, bucketName, query.get("prefix") ?? "", query.get("cursor") || undefined));
+        const bucket = r2Bucket(store.siteDir, bucketName);
+        if (m === "GET" && what === "preview") {
+          const obj = (await bucket.get(key, { range: { offset: 0, length: PREVIEW_BYTES } })) as { size: number; arrayBuffer?: () => Promise<ArrayBuffer> } | null;
+          if (!obj?.arrayBuffer) return sendJson(res, 404, { error: "オブジェクトが見つかりません" });
+          const head = await bucket.head(key);
+          return sendJson(res, 200, { text: asText(new Uint8Array(await obj.arrayBuffer())), size: head?.size ?? 0, truncated: (head?.size ?? 0) > PREVIEW_BYTES });
+        }
+        if (m === "GET" && what === "object") {
+          const obj = (await bucket.get(key)) as { size: number; httpMetadata: { contentType?: string }; body?: ReadableStream<Uint8Array> } | null;
+          if (!obj?.body) return sendJson(res, 404, { error: "オブジェクトが見つかりません" });
+          // 管理画面と同じオリジンで開かれないよう、必ずダウンロードにする
+          const filename = encodeURIComponent(key.split("/").pop() || "object");
+          res.writeHead(200, {
+            "content-type": "application/octet-stream",
+            "content-length": String(obj.size),
+            "content-disposition": `attachment; filename*=UTF-8''${filename}`,
+            "x-content-type-options": "nosniff",
+            "cache-control": "no-store",
+          });
+          for await (const chunk of obj.body) res.write(chunk);
+          res.end();
+          return;
+        }
+        if (m === "PUT" && what === "object") {
+          const body = await readBody(req, config.maxUploadBytes);
+          if (!body) return sendJson(res, 413, { error: `アップロードは ${Math.round(config.maxUploadBytes / 1024 / 1024)} MB 以内にしてください` });
+          const contentType = String(req.headers["x-object-content-type"] ?? "") || undefined;
+          await bucket.put(key, body, { httpMetadata: contentType ? { contentType } : undefined });
+          return sendJson(res, 200, { ok: true });
+        }
+        if (m === "DELETE" && what === "object") {
+          await bucket.delete(key);
+          return sendJson(res, 200, { ok: true });
+        }
+      } catch (err) {
+        if (err instanceof TypeError || err instanceof RangeError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
     }
 
     if ((siteRouteKey === "GET /files" || siteRouteKey === "GET /file") && !release) return sendJson(res, 404, { error: "まだデプロイされていません" });

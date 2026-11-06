@@ -1,7 +1,7 @@
 const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
 // サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
-const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", repo: "リポジトリ", site: "サイト設定" };
+const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", database: "データベース", storage: "ストレージ", repo: "リポジトリ", site: "サイト設定" };
 const GLOBAL_TABS = { new: "サイトを追加", resources: "リソース", settings: "設定", admin: "管理者設定" };
 // まだデプロイしていないサイトでは出さないタブ
 const DEPLOYED_TABS = new Set(["code", "observability"]);
@@ -481,6 +481,8 @@ function route() {
     site: viewSite,
     new: viewNewSite,
     repo: viewRepoTab,
+    database: viewDatabase,
+    storage: viewStorage,
     resources: viewResources,
     settings: viewSettings,
     admin: viewAdmin,
@@ -2099,6 +2101,382 @@ function siteSettingsCards(settings) {
       secretDone,
     ),
   ];
+}
+
+// ---------- データベース（KV）・ストレージ（R2） ----------
+
+const ICONS = {
+  database: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
+  storage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>',
+  folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
+  file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>',
+};
+const icon = (name, cls = "icon") => h("span", { class: cls, html: ICONS[name] });
+
+/** 何もないときの表示。wrangler の設定の例を添える */
+function emptyState(iconName, title, text, snippet) {
+  return h(
+    "section",
+    { class: "card empty-state" },
+    icon(iconName, "empty-icon"),
+    h("h2", { text: title }),
+    h("p", { class: "muted", text }),
+    snippet ? h("pre", { class: "log", text: snippet }) : null,
+  );
+}
+
+/** 複数あるときだけ出す切り替え（KV の名前空間・R2 のバケット） */
+function chooser(items, current, onChange, label) {
+  if (items.length <= 1) return null;
+  const select = h("select", { "aria-label": label }, ...items.map((x) => h("option", { value: x.name, text: x.label ?? x.name })));
+  select.value = current;
+  select.addEventListener("change", () => onChange(select.value));
+  return h("label", { class: "inline" }, label, select);
+}
+
+const fmtExpiration = (sec) => (sec ? `${fmtDate(sec * 1000)} に期限切れ` : "期限なし");
+const prettyValue = (text) => {
+  try {
+    return JSON.stringify(JSON.parse(text), null, 2);
+  } catch {
+    return text;
+  }
+};
+
+async function viewDatabase(main) {
+  const site = state.siteName;
+  const { namespaces } = await api(siteApi("/kv"));
+  const page = h("div", { class: "page" }, pageHead("データベース"));
+  if (!namespaces.length) {
+    page.append(
+      emptyState(
+        "database",
+        "KV はまだありません",
+        "wrangler の設定に kv_namespaces を追加してデプロイすると、Worker が保存したキーと値をここで見たり編集したりできます。",
+        `"kv_namespaces": [\n  { "binding": "KV", "id": "<任意の ID>" }\n]`,
+      ),
+    );
+    return main.replaceChildren(page);
+  }
+  state.db ??= {};
+  if (state.db.site !== site || !namespaces.some((n) => n.name === state.db.ns)) state.db = { site, ns: namespaces[0].name, prefix: "" };
+  const ns = namespaces.find((n) => n.name === state.db.ns);
+  const nsApi = (p) => siteApi(`/kv/${encodeURIComponent(ns.name)}${p}`);
+
+  const list = h("div", { class: "list data-list" });
+  const more = h("button", { class: "load-more", text: "さらに読み込む" });
+  const error = h("div", { class: "error" });
+  const search = h("input", { type: "search", placeholder: "キーの先頭で絞り込む", value: state.db.prefix, "aria-label": "キーの先頭" });
+  let after = "";
+
+  const row = (k) => {
+    const item = h("div", { class: "list-item" });
+    const detail = h("div", { class: "data-detail", hidden: true });
+    const head = h(
+      "button",
+      { class: "list-row data-row", "aria-expanded": "false" },
+      h("span", { class: "data-key mono", text: k.key }),
+      h("span", { class: "muted", text: fmtBytes(k.size) }),
+      h("span", { class: "muted data-exp", text: k.expiration ? fmtExpiration(k.expiration) : "" }),
+    );
+    const open = async () => {
+      const value = await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`));
+      const edit = h("button", { text: "編集", onclick: () => fill(detail, editor({ key: k.key, value: value.text ?? "", metadata: value.metadata })) });
+      const del = armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", async () => {
+        try {
+          await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`), { method: "DELETE" });
+          item.remove();
+        } catch (err) {
+          error.textContent = err.message;
+        }
+      });
+      fill(
+        detail,
+        value.text === null
+          ? h("p", { class: "muted", text: `バイナリの値です（${fmtBytes(value.size)}）。管理画面では表示・編集できません。` })
+          : h("pre", { class: "log data-value", text: prettyValue(value.text) + (value.truncated ? "\n…（先頭の 256 KiB だけを表示しています）" : "") }),
+        h(
+          "dl",
+          { class: "kv" },
+          h("dt", { text: "サイズ" }),
+          h("dd", { text: fmtBytes(value.size) }),
+          h("dt", { text: "有効期限" }),
+          h("dd", { text: fmtExpiration(value.expiration) }),
+          h("dt", { text: "metadata" }),
+          h("dd", { class: "mono", text: value.metadata === null ? "なし" : JSON.stringify(value.metadata) }),
+        ),
+        h("div", { class: "actions" }, value.text !== null && !value.truncated ? edit : null, del),
+      );
+    };
+    head.addEventListener("click", async () => {
+      const show = detail.hidden;
+      detail.hidden = !show;
+      head.setAttribute("aria-expanded", String(show));
+      if (show) await open().catch((err) => fill(detail, h("div", { class: "error", text: err.message })));
+    });
+    item.append(head, detail);
+    return item;
+  };
+
+  const load = async (reset) => {
+    if (reset) {
+      after = "";
+      fill(list);
+    }
+    const { keys, cursor } = await api(nsApi(`/keys?prefix=${encodeURIComponent(state.db.prefix)}&after=${encodeURIComponent(after)}`));
+    for (const k of keys) list.append(row(k));
+    if (reset && !keys.length) list.append(h("div", { class: "empty", text: state.db.prefix ? "このキーで始まるものはありません" : "まだキーがありません" }));
+    after = cursor ?? "";
+    more.hidden = !cursor;
+  };
+  more.addEventListener("click", () => load(false).catch((err) => (error.textContent = err.message)));
+  let timer = null;
+  search.addEventListener("input", () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      state.db.prefix = search.value;
+      load(true).catch((err) => (error.textContent = err.message));
+    }, 250);
+  });
+
+  /** 追加・編集のフォーム（値は文字列。JSON もそのまま保存する） */
+  const editor = (initial = null) => {
+    const key = h("input", { class: "mono", value: initial?.key ?? "", placeholder: "キー", "aria-label": "キー", disabled: initial ? true : undefined });
+    const value = h("textarea", { class: "mono", rows: "8", placeholder: "値（文字列・JSON）", "aria-label": "値" });
+    value.value = initial?.value ?? "";
+    const ttl = h("input", { type: "number", min: "60", placeholder: "なし", "aria-label": "有効期限（秒）" });
+    const formError = h("div", { class: "error" });
+    const save = h("button", { class: "primary", text: "保存" });
+    save.addEventListener("click", async () => {
+      formError.textContent = "";
+      save.disabled = true;
+      try {
+        await api(nsApi("/value"), { method: "PUT", body: JSON.stringify({ key: key.value, value: value.value, expirationTtl: ttl.value || null, metadata: initial?.metadata ?? null }) });
+        addBox.hidden = true;
+        await load(true);
+      } catch (err) {
+        formError.textContent = err.message;
+      } finally {
+        save.disabled = false;
+      }
+    });
+    return h(
+      "div",
+      { class: "data-form" },
+      h("div", { class: "field" }, h("label", { text: "キー" }), key),
+      h("div", { class: "field" }, h("label", { text: "値" }), value),
+      h("div", { class: "field narrow-field" }, h("label", { text: "有効期限（秒・60 以上。空なら期限なし）" }), ttl),
+      h("div", { class: "actions" }, save),
+      formError,
+    );
+  };
+  const addBox = h("div", { class: "card add-box", hidden: true });
+  const add = h("button", {
+    text: "＋ キーを追加",
+    onclick: () => {
+      addBox.hidden = !addBox.hidden;
+      if (!addBox.hidden) fill(addBox, h("h2", { text: "キーを追加" }), editor());
+    },
+  });
+
+  page.append(
+    h(
+      "div",
+      { class: "filters" },
+      chooser(
+        namespaces.map((n) => ({ name: n.name, label: `${n.name}${n.bound ? "" : "（設定にない）"}` })),
+        ns.name,
+        (name) => {
+          state.db = { site, ns: name, prefix: "" };
+          route();
+        },
+        "KV",
+      ),
+      search,
+      add,
+    ),
+    h("p", { class: "muted data-summary", text: `名前空間（binding）${ns.name}・${ns.count} 件${ns.bound ? "" : "（今の wrangler の設定にはない名前空間です。データだけが残っています）"}` }),
+    addBox,
+    list,
+    more,
+    error,
+  );
+  main.replaceChildren(page);
+  await load(true);
+}
+
+async function viewStorage(main) {
+  const site = state.siteName;
+  const { buckets } = await api(siteApi("/r2"));
+  const page = h("div", { class: "page" }, pageHead("ストレージ"));
+  if (!buckets.length) {
+    page.append(
+      emptyState(
+        "storage",
+        "R2 のバケットはまだありません",
+        "wrangler の設定に r2_buckets を追加してデプロイすると、Worker が保存したファイル（オブジェクト）をここで見たり、アップロード・ダウンロードしたりできます。",
+        `"r2_buckets": [\n  { "binding": "BUCKET", "bucket_name": "${site}" }\n]`,
+      ),
+    );
+    return main.replaceChildren(page);
+  }
+  state.storage ??= {};
+  if (state.storage.site !== site || !buckets.some((b) => b.name === state.storage.bucket)) state.storage = { site, bucket: buckets[0].name, prefix: "" };
+  const bucket = buckets.find((b) => b.name === state.storage.bucket);
+  const bApi = (p) => siteApi(`/r2/${encodeURIComponent(bucket.name)}${p}`);
+  const go2 = (prefix) => {
+    state.storage.prefix = prefix;
+    route();
+  };
+
+  const error = h("div", { class: "error" });
+  const list = h("div", { class: "list data-list" });
+  const more = h("button", { class: "load-more", text: "さらに読み込む" });
+  let cursor = null;
+
+  // パンくず（フォルダは / 区切りのキーの先頭）
+  const parts = state.storage.prefix.split("/").filter(Boolean);
+  const crumbs = h(
+    "nav",
+    { class: "crumbs", "aria-label": "フォルダ" },
+    h("button", { class: "ghost", text: bucket.name, onclick: () => go2("") }),
+    ...parts.flatMap((p, i) => [h("span", { class: "muted", text: "/" }), h("button", { class: "ghost", text: p, onclick: () => go2(parts.slice(0, i + 1).join("/") + "/") })]),
+  );
+
+  const objectRow = (o) => {
+    const item = h("div", { class: "list-item" });
+    const name = o.key.slice(state.storage.prefix.length);
+    const detail = h("div", { class: "data-detail", hidden: true });
+    const head = h(
+      "button",
+      { class: "list-row data-row", "aria-expanded": "false" },
+      h("span", { class: "data-key" }, icon("file"), h("span", { class: "mono", text: name })),
+      h("span", { class: "muted", text: fmtBytes(o.size) }),
+      h("span", { class: "muted data-exp", text: fmtDate(o.uploaded) }),
+    );
+    head.addEventListener("click", async () => {
+      const show = detail.hidden;
+      detail.hidden = !show;
+      head.setAttribute("aria-expanded", String(show));
+      if (!show) return;
+      const download = h("a", { class: "button", href: `${BASE}/api${bApi(`/object?key=${encodeURIComponent(o.key)}`)}`, download: name, text: "ダウンロード" });
+      const del = armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", async () => {
+        try {
+          await api(bApi(`/object?key=${encodeURIComponent(o.key)}`), { method: "DELETE" });
+          item.remove();
+        } catch (err) {
+          error.textContent = err.message;
+        }
+      });
+      const preview = h("div", {}, h("p", { class: "muted", text: "読み込み中…" }));
+      fill(
+        detail,
+        preview,
+        h(
+          "dl",
+          { class: "kv" },
+          h("dt", { text: "キー" }),
+          h("dd", { class: "mono", text: o.key }),
+          h("dt", { text: "サイズ" }),
+          h("dd", { text: fmtBytes(o.size) }),
+          h("dt", { text: "Content-Type" }),
+          h("dd", { text: o.contentType ?? "–" }),
+          h("dt", { text: "アップロード" }),
+          h("dd", { text: fmtDate(o.uploaded) }),
+          h("dt", { text: "ETag" }),
+          h("dd", { class: "mono", text: o.etag }),
+          Object.keys(o.customMetadata).length ? h("dt", { text: "customMetadata" }) : null,
+          Object.keys(o.customMetadata).length ? h("dd", { class: "mono", text: JSON.stringify(o.customMetadata) }) : null,
+        ),
+        h("div", { class: "actions" }, download, del),
+      );
+      try {
+        const p = await api(bApi(`/preview?key=${encodeURIComponent(o.key)}`));
+        fill(
+          preview,
+          p.text === null
+            ? h("p", { class: "muted", text: "テキストではないのでプレビューできません。ダウンロードして開いてください。" })
+            : h("pre", { class: "log data-value", text: prettyValue(p.text) + (p.truncated ? "\n…（先頭の 256 KiB だけを表示しています）" : "") }),
+        );
+      } catch (err) {
+        fill(preview, h("div", { class: "error", text: err.message }));
+      }
+    });
+    item.append(head, detail);
+    return item;
+  };
+
+  const load = async (reset) => {
+    const r = await api(bApi(`/objects?prefix=${encodeURIComponent(state.storage.prefix)}${!reset && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`));
+    if (reset) {
+      fill(list);
+      for (const p of r.prefixes) {
+        list.append(
+          h(
+            "div",
+            { class: "list-item" },
+            h("button", { class: "list-row data-row", onclick: () => go2(p) }, h("span", { class: "data-key" }, icon("folder"), h("span", { class: "mono", text: p.slice(state.storage.prefix.length) })), h("span"), h("span")),
+          ),
+        );
+      }
+    }
+    for (const o of r.objects) list.append(objectRow(o));
+    if (reset && !r.objects.length && !r.prefixes.length) list.append(h("div", { class: "empty", text: "このフォルダにはまだ何もありません" }));
+    cursor = r.cursor;
+    more.hidden = !cursor;
+  };
+  more.addEventListener("click", () => load(false).catch((err) => (error.textContent = err.message)));
+
+  // アップロード（今のフォルダに、ファイル名のキーで保存する）
+  const fileInput = h("input", { type: "file", multiple: true, hidden: true });
+  const upload = h("button", { text: "＋ アップロード", onclick: () => fileInput.click() });
+  fileInput.addEventListener("change", async () => {
+    error.textContent = "";
+    for (const file of fileInput.files) {
+      busy(upload, `アップロード中… ${file.name}`);
+      try {
+        const res = await fetch(`${BASE}/api${bApi(`/object?key=${encodeURIComponent(state.storage.prefix + file.name)}`)}`, {
+          method: "PUT",
+          body: file,
+          headers: { "x-object-content-type": file.type || "application/octet-stream" },
+          credentials: "same-origin",
+        });
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+      } catch (err) {
+        error.textContent = `${file.name}: ${err.message}`;
+      }
+    }
+    fileInput.value = "";
+    upload.disabled = false;
+    upload.textContent = "＋ アップロード";
+    route();
+  });
+
+  page.append(
+    h(
+      "div",
+      { class: "filters" },
+      chooser(
+        buckets.map((b) => ({ name: b.name, label: `${b.name}${b.binding ? `（${b.binding}）` : "（設定にない）"}` })),
+        bucket.name,
+        (name) => {
+          state.storage = { site, bucket: name, prefix: "" };
+          route();
+        },
+        "バケット",
+      ),
+      crumbs,
+      h("span", { class: "spacer" }),
+      upload,
+      fileInput,
+    ),
+    h("p", { class: "muted data-summary", text: `バケット ${bucket.name}${bucket.binding ? `（binding: ${bucket.binding}）` : "（今の wrangler の設定にはないバケットです。データだけが残っています）"}・${bucket.count} 件・${fmtBytes(bucket.size)}` }),
+    list,
+    more,
+    error,
+  );
+  main.replaceChildren(page);
+  await load(true);
 }
 
 // ---------- リポジトリ ----------
