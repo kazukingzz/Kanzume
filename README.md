@@ -4,7 +4,7 @@ Workers + KV + R2 だけの小さなホスティング。ハッカソン向け�
 
 Workers 用のコード（`export default { fetch }` + `wrangler.jsonc`）を書き換えずに、セルフホストした 1 つのコンテナへデプロイできます。管理画面は `/_admin/kanzume`（パスキーでログイン）です。
 
-サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`。管理画面で変更可）。DNS はドメイン本体とワイルドカード（`*.example.com`）を Kanzume に向けて、初回のパスキー登録時か管理画面の「設定 > ドメイン」で `example.com` を設定してください（管理画面はサイト以外のホスト、例えば `admin.example.com` でも開けます）。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
+サイトはいくつでも置けて、wrangler の設定の `name` がサブドメインになります（`name = "blog"` → `blog.example.com`。管理画面で変更可）。DNS はドメイン本体とワイルドカード（`*.example.com`）を Kanzume に向けて、初回のパスキー登録時か管理画面の「管理者設定 > ドメイン」で `example.com` を設定してください（管理画面はサイト以外のホスト、例えば `admin.example.com` でも開けます）。KV / R2 のデータはサイトごとに分かれます。最初にデプロイしたサイトはルートドメインでも配信します（管理画面で変更可）。
 
 ## 立てる
 
@@ -21,6 +21,12 @@ docker build -t kanzume .
 docker run -d -p 8080:8080 -v kanzume-data:/data kanzume
 ```
 
+## メンバー
+
+管理者は全体の設定（ドメイン・バックアップ・全体の Token・メンバー）とすべてのサイトを扱えます。管理者を増やすときは「管理者設定」のチーム ID を渡します。
+
+サイトだけを任せたい人には、そのサイトの「サイト設定 > メンバー」で招待リンク（1 人 1 回・7 日間有効）を作って渡します。リンクからパスキーを登録した人はそのサイトのメンバーになり、そのサイトのデプロイ・設定・削除と、同じ名前のリポジトリを扱えます。GitHub Actions や git push には、サイト設定の「デプロイ用のトークン」（そのサイトにだけデプロイできる）を使います。
+
 ## バックアップ
 
 `KANZUME_BACKUP_URL` に S3 互換ストレージ（Cloudflare R2・AWS S3・B2・MinIO）を指定すると、データ（サイト・KV・R2・パスキー・リポジトリ・ログ）を暗号化して外部に保存し、`/data` が空の状態で起動したときに最新の世代を自動で復元します（復元が終わるまでリクエストは受け付けません）。デプロイや設定の変更のあとと 1 時間ごとに、変わったファイルだけを送ります。未設定ならバックアップしません。
@@ -36,7 +42,7 @@ KANZUME_BACKUP_URL=s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.clou
 
 ## デプロイする
 
-**GitHub Actions**: 管理画面に表示される `KANZUME_URL`（Variables）と `KANZUME_TOKEN`（Secrets）を登録して、次のワークフローを置きます。
+**GitHub Actions**: 管理画面に表示される `KANZUME_URL`（Variables）と `KANZUME_TOKEN`（Secrets。全体の Token か、サイト設定で発行するそのサイト用のトークン）を登録して、次のワークフローを置きます。
 
 ```yaml
 name: Deploy to Kanzume
@@ -73,7 +79,7 @@ Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします
 
 ## 環境変数
 
-`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。管理画面の「設定 > ドメイン」より優先する。どちらもなければ管理画面を開いたホスト）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_BACKUP_URL`（上記）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
+`PORT`（8080）、`KANZUME_DATA_DIR`（/data）、`KANZUME_ORIGIN`（ルートドメインの URL。管理画面の「管理者設定 > ドメイン」より優先する。どちらもなければ管理画面を開いたホスト）、`KANZUME_SETUP_TOKEN`、`KANZUME_MAX_UPLOAD_MB`（50）、`KANZUME_REPO_QUOTA_MB`（git リポジトリ 1 つあたりの容量の上限、200）、`KANZUME_WORKER_IDLE_SEC`（600）、`KANZUME_CPU_TIMEOUT_MS`（5000）、`KANZUME_MAX_WORKERS`（同時にメモリに載せる Worker の数、5）、`KANZUME_LOG_RETENTION_HOURS`（72）、`KANZUME_BACKUP_URL`（上記）、`KANZUME_SAMPLES_REPO`（管理画面のサンプルの取得元。fork したら自分のリポジトリの `https://github.com/<owner>/<repo>/tree/<branch>` にする）
 
 ## 開発
 

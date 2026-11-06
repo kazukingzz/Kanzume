@@ -2,7 +2,10 @@ const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
 // サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
 const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", site: "サイト設定" };
-const GLOBAL_TABS = { new: "サイトを追加", repos: "リポジトリ", resources: "リソース", settings: "設定" };
+const GLOBAL_TABS = { new: "サイトを追加", repos: "リポジトリ", resources: "リソース", settings: "設定", admin: "管理者設定" };
+// 管理者だけのタブ（メンバーには出さない）
+const ADMIN_TABS = new Set(["new", "resources", "admin"]);
+const isAdmin = () => state.overview?.me?.role === "admin";
 const NEW_SITE = "__new";
 
 const state = {
@@ -145,7 +148,7 @@ function showAuth(view) {
   clearTimers();
   $("app").hidden = true;
   $("auth").hidden = false;
-  for (const id of ["auth-loading", "setup", "login"]) $(id).hidden = id !== view;
+  for (const id of ["auth-loading", "setup", "login", "invite"]) $(id).hidden = id !== view;
   if (view === "login") setAuthMode("signin");
 }
 
@@ -162,13 +165,87 @@ $("register").addEventListener("click", async () => {
     }
     await enterApp();
     if (domainError) {
-      location.hash = "#/settings";
-      alert(`パスキーは登録しましたが、ドメインを保存できませんでした: ${domainError.message}\n設定のページで設定してください。`);
+      location.hash = "#/admin";
+      alert(`パスキーは登録しましたが、ドメインを保存できませんでした: ${domainError.message}\n管理者設定のページで設定してください。`);
     }
   } catch (err) {
     $("setup-error").textContent = err.message;
   }
 });
+
+// ---------- 招待 ----------
+
+const inviteToken = () => (/^#\/invite\/([^/]+)/.exec(location.hash) || [])[1] ?? null;
+
+async function showInvite(token) {
+  showAuth("invite");
+  $("invite-error").textContent = "";
+  $("invite-form").hidden = true;
+  try {
+    const info = await api(`/invite?token=${encodeURIComponent(token)}`);
+    if (!info.valid) {
+      $("invite-desc").textContent = "この招待リンクは使えません（使用済み・期限切れ・取り消し済みのいずれか）。管理者に新しいリンクを頼んでください。";
+      return;
+    }
+    $("invite-desc").textContent = `サイト ${info.site} のメンバーとして参加します。パスキーを登録すると、このサイトのデプロイ・設定・削除ができるようになります（${fmtDate(info.expiresAt).slice(0, 10)} まで有効）。`;
+    $("invite-form").hidden = false;
+    $("invite-name").focus();
+  } catch (err) {
+    $("invite-desc").textContent = "";
+    $("invite-error").textContent = err.message;
+  }
+}
+
+$("invite-join").addEventListener("click", async () => {
+  $("invite-error").textContent = "";
+  const join = { inviteToken: inviteToken(), name: $("invite-name").value.trim() };
+  if (!join.name) {
+    $("invite-error").textContent = "名前を入力してください";
+    $("invite-name").focus();
+    return;
+  }
+  try {
+    const options = await api("/register/options", { method: "POST", body: JSON.stringify(join) });
+    const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
+    await api("/register/verify", { method: "POST", body: JSON.stringify({ ...join, response: credentialJSON(cred) }) });
+    location.hash = "#/";
+    await enterApp();
+  } catch (err) {
+    $("invite-error").textContent = err.message;
+  }
+});
+
+// 登録済みの人はサインインしてから、招待のページで「参加する」を押す
+$("invite-signin").addEventListener("click", (e) => {
+  e.preventDefault();
+  showAuth("login");
+});
+
+async function viewInvite(main, token) {
+  const page = h("div", { class: "page" }, pageHead("サイトへの招待"));
+  const info = await api(`/invite?token=${encodeURIComponent(token)}`);
+  const error = h("div", { class: "error" });
+  if (!info.valid) {
+    page.append(h("section", { class: "card" }, h("p", { class: "muted", text: "この招待リンクは使えません（使用済み・期限切れ・取り消し済みのいずれか）。" })));
+  } else if (isAdmin()) {
+    page.append(h("section", { class: "card" }, h("p", { class: "muted", text: `サイト ${info.site} への招待リンクです。管理者はすべてのサイトを扱えるので、参加の必要はありません。メンバーになる人にこのリンクを渡してください。` })));
+  } else {
+    const join = h("button", { class: "primary", text: "参加する" });
+    join.addEventListener("click", async () => {
+      join.disabled = true;
+      try {
+        const { site } = await api("/invite/accept", { method: "POST", body: JSON.stringify({ token }) });
+        await loadOverview();
+        location.hash = siteHash("deployments", site);
+      } catch (err) {
+        error.textContent = err.message;
+        join.disabled = false;
+      }
+    });
+    page.append(h("section", { class: "card" }, h("h2", { text: `サイト ${info.site}` }), h("p", { class: "muted", text: `${state.overview.me.name} として、このサイトのメンバーに参加します。` }), join, error));
+  }
+  main.replaceChildren(page);
+}
 
 function setAuthMode(mode) {
   const signup = mode === "signup";
@@ -187,9 +264,10 @@ $("mode-signup").addEventListener("click", () => setAuthMode("signup"));
 $("join").addEventListener("click", async () => {
   $("login-error").textContent = "";
   try {
-    const options = await api("/register/options", { method: "POST", body: JSON.stringify({ teamId: $("team-id").value.trim() }) });
+    const join = { teamId: $("team-id").value.trim(), name: $("team-name").value.trim() };
+    const options = await api("/register/options", { method: "POST", body: JSON.stringify(join) });
     const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
-    await api("/register/verify", { method: "POST", body: JSON.stringify({ response: credentialJSON(cred) }) });
+    await api("/register/verify", { method: "POST", body: JSON.stringify({ ...join, response: credentialJSON(cred) }) });
     await enterApp();
   } catch (err) {
     $("login-error").textContent = err.message;
@@ -253,7 +331,7 @@ function chooseSite(value) {
   else location.hash = next;
 }
 
-const pickerItems = () => [...state.sites.sites.map((x) => x.name), NEW_SITE];
+const pickerItems = () => [...state.sites.sites.map((x) => x.name), ...(isAdmin() ? [NEW_SITE] : [])];
 
 function renderPickerMenu() {
   const menu = $("site-menu");
@@ -288,8 +366,8 @@ function renderPickerMenu() {
         ),
       ),
     ),
-    state.sites.sites.length ? h("li", { class: "site-menu-sep", role: "presentation" }) : h("li", { class: "site-menu-empty", role: "presentation", text: "サイトはまだありません" }),
-    option(NEW_SITE, picker.items.length - 1, check(), h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: "＋ サイトを追加" }))),
+    state.sites.sites.length ? (isAdmin() ? h("li", { class: "site-menu-sep", role: "presentation" }) : null) : h("li", { class: "site-menu-empty", role: "presentation", text: isAdmin() ? "サイトはまだありません" : "参加しているサイトはありません" }),
+    isAdmin() ? option(NEW_SITE, picker.items.length - 1, check(), h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: "＋ サイトを追加" }))) : null,
   );
   if (picker.active >= 0) menu.setAttribute("aria-activedescendant", `site-option-${picker.active}`);
   else menu.removeAttribute("aria-activedescendant");
@@ -363,13 +441,13 @@ async function loadOverview() {
 function renderShell() {
   const current = state.tab === "new" ? null : state.sites.sites.find((x) => x.name === state.siteName);
   const name = $("site-trigger-name");
-  name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : "サイトがありません";
+  name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : isAdmin() ? "サイトがありません" : "参加しているサイトはありません";
   name.classList.toggle("placeholder", !current && state.tab !== "new");
   $("site-trigger-host").textContent = current ? hostOf(current.url) : "";
   closePicker();
   for (const a of $("nav").querySelectorAll("a")) {
     a.classList.toggle("current", a.dataset.tab === state.tab);
-    a.hidden = !!SITE_TABS[a.dataset.tab] && !current;
+    a.hidden = (!!SITE_TABS[a.dataset.tab] && !current) || (ADMIN_TABS.has(a.dataset.tab) && !isAdmin());
   }
   $("topbar-title").textContent = current ? current.name : GLOBAL_TABS[state.tab] ?? "";
 }
@@ -385,6 +463,7 @@ function parseHash() {
   const parts = location.hash.replace(/^#\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
   // #/repos と #/repos/<名前> は全体のタブ
   if (parts[0] === "repos") return { site: null, tab: "repos", repo: parts[1] ?? null };
+  if (parts[0] === "invite") return { site: null, tab: "invite", invite: parts[1] ?? "" };
   if (parts.length >= 2) return { site: parts[0], tab: parts[1] };
   return { site: null, tab: parts[0] ?? "" };
 }
@@ -393,16 +472,20 @@ function route() {
   if ($("app").hidden) return;
   clearTimers();
   const names = state.sites.sites.map((x) => x.name);
-  let { site, tab, repo } = parseHash();
+  let { site, tab, repo, invite } = parseHash();
   state.repo = repo ?? null;
+  // サイトがないときの行き先。メンバーはサイトを作れないので個人の設定へ
+  const home = isAdmin() ? "#/new" : "#/settings";
   if (site && SITE_TABS[tab] && names.includes(site)) {
     state.siteName = site;
-  } else if (GLOBAL_TABS[tab]) {
+  } else if (tab === "invite") {
+    if (!names.includes(state.siteName)) state.siteName = names[0] ?? null;
+  } else if (GLOBAL_TABS[tab] && !(ADMIN_TABS.has(tab) && !isAdmin())) {
     if (!names.includes(state.siteName)) state.siteName = names[0] ?? null;
   } else {
-    // 不明な URL は最初のサイト（なければサイトの追加）へ
-    const first = names.includes(state.siteName) ? state.siteName : (state.sites.root ?? names[0]);
-    location.replace(first ? siteHash(SITE_TABS[tab] ? tab : "deployments", first) : "#/new");
+    // 不明な URL・権限のないタブは最初のサイト（なければサイトの追加か設定）へ
+    const first = names.includes(state.siteName) ? state.siteName : (state.sites.root && names.includes(state.sites.root) ? state.sites.root : names[0]);
+    location.replace(first ? siteHash(SITE_TABS[tab] ? tab : "deployments", first) : home);
     return;
   }
   state.tab = tab;
@@ -410,7 +493,18 @@ function route() {
   const main = $("main");
   main.className = "main" + (tab === "code" ? " fill" : "");
   main.scrollTop = 0;
-  const views = { deployments: viewDeployments, code: viewCode, observability: viewObservability, site: viewSite, new: viewNewSite, repos: viewRepos, resources: viewResources, settings: viewSettings };
+  const views = {
+    deployments: viewDeployments,
+    code: viewCode,
+    observability: viewObservability,
+    site: viewSite,
+    new: viewNewSite,
+    repos: viewRepos,
+    resources: viewResources,
+    settings: viewSettings,
+    admin: viewAdmin,
+    invite: (m) => viewInvite(m, invite),
+  };
   views[tab](main).catch((err) => {
     main.className = "main";
     main.replaceChildren(h("div", { class: "page" }, h("div", { class: "notice", text: err.message })));
@@ -1366,17 +1460,18 @@ function armed(button, label, confirmLabel, action) {
 function passkeyList() {
   const list = h("ul", { class: "passkeys" }, h("li", { class: "muted", text: "読み込み中…" }));
   const render = (passkeys) => {
-    fill(list, ...passkeys.map((p, i) => passkeyItem(p, i, () => load())));
+    fill(list, ...passkeys.map((p, i) => passkeyItem(p, i, () => load(), passkeys.length > 1)));
   };
   const load = () =>
     api("/passkeys")
       .then(({ passkeys }) => render(passkeys))
       .catch((err) => fill(list, h("li", { class: "error", text: err.message })));
   load();
+  list.reload = load;
   return list;
 }
 
-function passkeyItem(p, i, reload) {
+function passkeyItem(p, i, reload, removable) {
   const label = p.name || `パスキー ${i + 1}`;
   const meta = [
     p.provider && p.provider !== p.name ? p.provider : null,
@@ -1387,7 +1482,19 @@ function passkeyItem(p, i, reload) {
   const item = h("li", { class: "passkey" });
   const show = () => {
     const rename = h("button", { class: "ghost", text: "名前を変更", onclick: edit });
-    fill(item, h("div", { class: "grow" }, h("div", { class: "passkey-name", text: label }), h("div", { class: "muted passkey-meta", text: meta.join(" · ") })), rename);
+    const error = h("div", { class: "error" });
+    // 最後の 1 つは消せない（サインインできなくなるため）
+    const remove = removable
+      ? armed(h("button", { class: "ghost danger" }), "削除", "もう一度押すと削除", async () => {
+          try {
+            await api(`/passkeys/${encodeURIComponent(p.id)}`, { method: "DELETE" });
+            reload();
+          } catch (err) {
+            error.textContent = err.message;
+          }
+        })
+      : null;
+    fill(item, h("div", { class: "grow" }, h("div", { class: "passkey-name", text: label }), h("div", { class: "muted passkey-meta", text: meta.join(" · ") }), error), rename, remove);
   };
   function edit() {
     const input = h("input", { value: p.name, maxlength: "40", placeholder: label, "aria-label": "パスキーの名前" });
@@ -1512,8 +1619,147 @@ function backupCard() {
   return h("section", { class: "card" }, h("h2", { text: "バックアップ" }), body, error);
 }
 
+// ---------- 設定（個人） ----------
+
 async function viewSettings(main) {
-  const page = h("div", { class: "page" }, pageHead("設定"), domainCard(), backupCard());
+  const me = state.overview.me;
+  const nameInput = h("input", { value: me.name, maxlength: "40", autocomplete: "name", "aria-label": "名前" });
+  const nameError = h("div", { class: "error" });
+  const nameSave = h("button", { class: "primary", text: "保存" });
+  const saveName = async () => {
+    nameError.textContent = "";
+    nameSave.disabled = true;
+    try {
+      const { name } = await api("/me", { method: "PUT", body: JSON.stringify({ name: nameInput.value }) });
+      me.name = name;
+      nameSave.textContent = "保存しました";
+      setTimeout(() => (nameSave.textContent = "保存"), 1500);
+    } catch (err) {
+      nameError.textContent = err.message;
+    } finally {
+      nameSave.disabled = false;
+    }
+  };
+  nameSave.addEventListener("click", saveName);
+  nameInput.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && saveName());
+
+  const addError = h("div", { class: "error" });
+  const list = passkeyList();
+  const addPasskey = h("button", { text: "＋ このデバイスのパスキーを追加" });
+  addPasskey.addEventListener("click", async () => {
+    addError.textContent = "";
+    try {
+      const options = await api("/register/options", { method: "POST", body: "{}" });
+      const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
+      await api("/register/verify", { method: "POST", body: JSON.stringify({ response: credentialJSON(cred) }) });
+      list.reload();
+    } catch (err) {
+      addError.textContent = err.message;
+    }
+  });
+
+  const mySites = isAdmin()
+    ? h("p", { class: "muted", text: "管理者なので、すべてのサイトを扱えます。" })
+    : me.sites.length
+      ? h("ul", { class: "secrets" }, ...me.sites.map((name) => h("li", { class: "secret" }, h("a", { class: "grow", href: siteHash("deployments", name), text: name }), h("span", { class: "muted", text: "メンバー" }))))
+      : h("p", { class: "muted", text: "参加しているサイトはありません。管理者から招待リンクをもらって開いてください。" });
+
+  main.replaceChildren(
+    h(
+      "div",
+      { class: "page" },
+      pageHead("設定"),
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "プロフィール" }),
+        h("div", { class: "field" }, h("label", { text: "名前" }), h("div", { class: "row narrow" }, h("div", { class: "grow" }, nameInput), nameSave)),
+        h("p", { class: "muted hint", text: `ロール: ${isAdmin() ? "管理者" : "メンバー"}` }),
+        nameError,
+      ),
+      h("section", { class: "card" }, h("h2", { text: "参加しているサイト" }), mySites),
+      h("section", { class: "card" }, h("h2", { text: "パスキー" }), h("p", { class: "muted", text: "別のデバイスからもサインインできるように、パスキーを追加できます。" }), list, h("div", { class: "actions" }, addPasskey), addError),
+    ),
+  );
+}
+
+/** 管理者設定のメンバー一覧（ロールの変更・サイトから外す・削除） */
+function usersCard() {
+  const body = h("div", {}, h("p", { class: "muted", text: "読み込み中…" }));
+  const error = h("div", { class: "error" });
+  const act = (fn) => async () => {
+    error.textContent = "";
+    try {
+      await fn();
+      await loadOverview();
+      load();
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  };
+  const load = async () => {
+    try {
+      const { users } = await api("/users");
+      fill(
+        body,
+        h(
+          "ul",
+          { class: "users" },
+          ...users.map((u) => {
+            const role = h("select", { "aria-label": `${u.name} のロール` }, h("option", { value: "admin", text: "管理者", selected: u.role === "admin" }), h("option", { value: "member", text: "メンバー", selected: u.role === "member" }));
+            role.addEventListener("change", act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ role: role.value }) })));
+            const sitesView =
+              u.role === "admin"
+                ? h("span", { class: "muted", text: "すべてのサイト" })
+                : u.sites.length
+                  ? h(
+                      "span",
+                      { class: "tags" },
+                      ...u.sites.map((name) =>
+                        h(
+                          "span",
+                          { class: "tag" },
+                          name,
+                          h("button", { class: "tag-remove", title: `${name} から外す`, "aria-label": `${u.name} を ${name} から外す`, text: "×", onclick: act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ removeSite: name }) })) }),
+                        ),
+                      ),
+                    )
+                  : h("span", { class: "muted", text: "参加しているサイトなし" });
+            return h(
+              "li",
+              { class: "user" },
+              h(
+                "div",
+                { class: "grow" },
+                h("div", { class: "user-name" }, h("b", { text: u.name }), u.me ? h("span", { class: "tag", text: "自分" }) : null),
+                h("div", { class: "muted user-meta" }, `パスキー ${u.passkeys} 個 · ${u.lastUsedAt ? `最終利用 ${fmtAgo(u.lastUsedAt)}` : "未使用"}`),
+                h("div", { class: "user-sites" }, sitesView),
+              ),
+              u.me ? null : role,
+              u.me ? null : armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "DELETE" }))),
+            );
+          }),
+        ),
+      );
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  };
+  load();
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "メンバー" }),
+    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。サイトへの招待は、各サイトの「サイト設定 > メンバー」から作ります。削除するとそのユーザーのパスキーも消えます。" }),
+    body,
+    error,
+  );
+}
+
+// ---------- 管理者設定 ----------
+
+async function viewAdmin(main) {
+  const page = h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), backupCard(), usersCard());
   const tokenView = h("code", { class: "value grow", text: state.showToken ? state.token : "••••••••••••••••" });
   const toggle = h("button", { text: state.showToken ? "隠す" : "表示" });
   toggle.addEventListener("click", () => {
@@ -1536,11 +1782,9 @@ async function viewSettings(main) {
     h(
       "section",
       { class: "card" },
-      h("h2", { text: "チーム" }),
-      h("p", { class: "muted", text: "メンバーはログイン画面でこのチーム ID を入力すると、自分のパスキーを登録してログインできます。" }),
+      h("h2", { text: "管理者を追加" }),
+      h("p", { class: "muted", text: "ログイン画面の「サインアップ」でこのチーム ID を入力すると、管理者としてパスキーを登録できます。サイトだけを任せる人には、チーム ID ではなくサイトの招待リンクを渡してください。" }),
       h("div", { class: "field" }, h("label", { text: "チーム ID" }), h("div", { class: "row" }, h("code", { class: "value grow team-id", text: state.overview.teamId }), copyButton(() => state.overview.teamId))),
-      h("div", { class: "log-title", text: "登録済みのパスキー" }),
-      passkeyList(),
     ),
     h(
       "section",
@@ -1601,7 +1845,11 @@ async function viewSite(main) {
       h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)])),
     ),
     ...siteSettingsCards(settings),
-    h(
+    isAdmin() ? siteMembersCard() : null,
+    siteTokensCard(),
+    // ルートドメインは管理画面と同じオリジンなので、切り替えは管理者だけ
+    isAdmin()
+      ? h(
       "section",
       { class: "card" },
       h("h2", { text: "ルートドメイン" }),
@@ -1613,7 +1861,7 @@ async function viewSite(main) {
       }),
       rootToggle,
       rootError,
-    ),
+    ) : null,
     h(
       "section",
       { class: "card" },
@@ -1625,7 +1873,7 @@ async function viewSite(main) {
           state.siteName = null;
           await loadOverview();
           const next = state.sites.root ?? state.sites.sites[0]?.name;
-          location.hash = next ? siteHash("deployments", next) : "#/new";
+          location.hash = next ? siteHash("deployments", next) : isAdmin() ? "#/new" : "#/settings";
         } catch (err) {
           delError.textContent = err.message;
         }
@@ -1634,6 +1882,178 @@ async function viewSite(main) {
     ),
   );
   main.replaceChildren(page);
+}
+
+/** サイトのメンバーと招待リンク（管理者だけ） */
+function siteMembersCard() {
+  const body = h("div", {}, h("p", { class: "muted", text: "読み込み中…" }));
+  const issued = h("div");
+  const error = h("div", { class: "error" });
+  const site = state.siteName;
+  const load = async () => {
+    try {
+      const { members, invites } = await api(siteApi("/members"));
+      fill(
+        body,
+        h("div", { class: "log-title", text: "メンバー" }),
+        members.length
+          ? h(
+              "ul",
+              { class: "secrets" },
+              ...members.map((m) =>
+                h(
+                  "li",
+                  { class: "secret" },
+                  h("span", { class: "grow", text: m.name }),
+                  h("span", { class: "muted", text: `参加 ${fmtDate(m.createdAt).slice(0, 10)}` }),
+                  armed(h("button", { class: "danger" }), "外す", "もう一度押すと外す", async () => {
+                    try {
+                      await api(siteApi(`/members/${encodeURIComponent(m.id)}`), { method: "DELETE" });
+                      load();
+                    } catch (err) {
+                      error.textContent = err.message;
+                    }
+                  }),
+                ),
+              ),
+            )
+          : h("p", { class: "muted", text: "まだいません。招待リンクを作って渡してください。" }),
+        invites.length ? h("div", { class: "log-title", text: "未使用の招待リンク" }) : null,
+        invites.length
+          ? h(
+              "ul",
+              { class: "secrets" },
+              ...invites.map((i) =>
+                h(
+                  "li",
+                  { class: "secret" },
+                  h("span", { class: "grow muted", text: `${fmtDate(i.createdAt)} に${i.createdBy ? ` ${i.createdBy} が` : ""}作成 · ${fmtDate(i.expiresAt).slice(0, 10)} まで` }),
+                  armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
+                    try {
+                      await api(siteApi(`/invites/${i.id}`), { method: "DELETE" });
+                      load();
+                    } catch (err) {
+                      error.textContent = err.message;
+                    }
+                  }),
+                ),
+              ),
+            )
+          : null,
+      );
+    } catch (err) {
+      error.textContent = err.message;
+    }
+  };
+  const create = h("button", { class: "primary", text: "招待リンクを作る" });
+  create.addEventListener("click", async () => {
+    error.textContent = "";
+    create.disabled = true;
+    try {
+      const invite = await api(siteApi("/invites"), { method: "POST", body: "{}" });
+      fill(
+        issued,
+        h(
+          "div",
+          { class: "notice good-notice" },
+          h("b", { text: `招待リンクを作りました。1 人が 1 回だけ使え、${invite.ttlDays} 日で無効になります。この画面を離れると二度と表示できません。` }),
+          h("div", { class: "row" }, h("code", { class: "value grow", text: invite.url }), copyButton(() => invite.url)),
+        ),
+      );
+      load();
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      create.disabled = false;
+    }
+  });
+  load();
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "メンバー" }),
+    h("p", { class: "muted", text: `招待リンクを開いた人がパスキーを登録すると、${site} のメンバーになります。メンバーはこのサイトのデプロイ・設定・削除と、同じ名前のリポジトリを扱えます。ほかのサイトや管理者設定は見えません。` }),
+    h("div", { class: "actions" }, create),
+    issued,
+    body,
+    error,
+  );
+}
+
+/** サイト用のトークン（GitHub Actions の KANZUME_TOKEN と、同じ名前のリポジトリへの git push に使える） */
+function siteTokensCard() {
+  const list = h("div", { class: "list token-list" });
+  const issued = h("div");
+  const error = h("div", { class: "error" });
+  const site = state.siteName;
+  const render = (tokens) => {
+    fill(
+      list,
+      ...tokens.map((t) =>
+        h(
+          "div",
+          { class: "list-item" },
+          h(
+            "div",
+            { class: "list-row static" },
+            h("div", { class: "grow" }, h("div", { class: "title", text: "デプロイ・push" }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
+            armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
+              try {
+                await api(siteApi(`/tokens/${t.id}`), { method: "DELETE" });
+                load();
+              } catch (err) {
+                error.textContent = err.message;
+              }
+            }),
+          ),
+        ),
+      ),
+    );
+    if (!tokens.length) list.append(h("div", { class: "empty", text: "発行したトークンはありません" }));
+  };
+  const load = () =>
+    api(siteApi("/tokens"))
+      .then(({ tokens }) => render(tokens))
+      .catch((err) => (error.textContent = err.message));
+  const ttl = h("select", { "aria-label": "期限" }, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));
+  ttl.value = "2592000";
+  const issue = h("button", { class: "primary", text: "発行" });
+  issue.addEventListener("click", async () => {
+    error.textContent = "";
+    issue.disabled = true;
+    try {
+      const t = await api(siteApi("/tokens"), { method: "POST", body: JSON.stringify({ ttl: ttl.value ? Number(ttl.value) : null }) });
+      fill(
+        issued,
+        h(
+          "div",
+          { class: "notice good-notice" },
+          h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
+          h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
+        ),
+      );
+      load();
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      issue.disabled = false;
+    }
+  });
+  load();
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "デプロイ用のトークン" }),
+    h("p", {
+      class: "muted",
+      text: `このサイト（${site}）だけにデプロイできるトークンです。GitHub Actions の Secrets の KANZUME_TOKEN に登録するか、Kanzume のリポジトリ ${site} への git push のパスワードに使います。wrangler の設定の name は ${site} にしてください。`,
+    }),
+    h("div", { class: "field" }, h("label", { text: "KANZUME_URL（Variables）" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
+    h("div", { class: "token-form" }, h("label", { class: "token-field" }, h("span", { text: "期限" }), ttl), issue),
+    error,
+    issued,
+    list,
+  );
 }
 
 /** サイト設定のサブドメイン・環境変数・シークレット。保存するとすぐ（次のリクエストから）反映される */
@@ -1883,7 +2303,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには設定の KANZUME_TOKEN か、下で発行したトークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」${isAdmin() ? "、管理者設定の KANZUME_TOKEN" : ""}を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
     ),
   );
 
@@ -2250,8 +2670,8 @@ async function viewNewSite(main) {
       "section",
       { class: "card" },
       h("h2", { text: "GitHub Actions からデプロイ" }),
-      h("p", { class: "muted", text: "wrangler の設定の name がサイト名（サブドメイン）になります。Token は全サイト共通なので、設定のページの KANZUME_URL と KANZUME_TOKEN をそのまま使えます。" }),
-      h("a", { href: "#/settings", text: "設定のページを開く" }),
+      h("p", { class: "muted", text: "wrangler の設定の name がサイト名（サブドメイン）になります。全体の Token は全サイト共通なので、管理者設定の KANZUME_URL と KANZUME_TOKEN をそのまま使えます。サイトのメンバーには、サイト設定の「デプロイ用のトークン」を使ってもらってください。" }),
+      h("a", { href: "#/admin", text: "管理者設定を開く" }),
     ),
   );
   const pending = state.sites.pending;
@@ -2273,7 +2693,9 @@ async function viewNewSite(main) {
     else {
       $("setup-domain-field").hidden = !!s.domainFromEnv;
       $("setup-domain").value = location.host;
-      showAuth(s.registered ? "login" : "setup");
+      const token = inviteToken();
+      if (token && s.registered) await showInvite(token);
+      else showAuth(s.registered ? "login" : "setup");
     }
   } catch (err) {
     showAuth("login");

@@ -19,10 +19,11 @@ interface Deps {
 const EXTRACT_RATIO = 4;
 const META_DIR = ".kanzume/";
 
-function authorized(req: IncomingMessage, state: AdminState): boolean {
+/** 全体の Token なら { site: null }、サイト用のトークン（リポジトリの write トークン）ならそのサイト名 */
+function authorized(req: IncomingMessage, state: AdminState): { site: string | null } | null {
   const auth = req.headers.authorization ?? "";
   const token = auth.startsWith("Bearer ") ? auth.slice("Bearer ".length).trim() : "";
-  return !!token && state.checkDeployToken(token);
+  return state.deployAccess(token);
 }
 
 function parseJson(file: UploadedFile | undefined): unknown {
@@ -37,7 +38,8 @@ function parseJson(file: UploadedFile | undefined): unknown {
 export function createDeployHandler({ config, state, sites, deployer }: Deps) {
   async function handleDeploy(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
-    if (!authorized(req, state)) return sendJson(res, 401, { error: "Token が違います" });
+    const access = authorized(req, state);
+    if (!access) return sendJson(res, 401, { error: "Token が違います" });
 
     const log = new DeployLog("GitHub Actions からのデプロイを受け付けました");
     const body = await readBody(req, config.maxUploadBytes);
@@ -54,8 +56,9 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     const meta = parseJson(files.find((f) => f.path === `${META_DIR}meta.json`)) as { source?: unknown } | undefined;
     const sources = parseJson(files.find((f) => f.path === `${META_DIR}sources.json`));
     const result = await deployer.deploy({
-      // /_api/deploy は全体の Token でしか呼べないので、最初のサイトはルートにしてよい
-      autoRoot: true,
+      // 全体の Token（管理者）のときだけ、最初のサイトをルートにする
+      autoRoot: access.site === null,
+      onlyName: access.site ?? undefined,
       files: files.filter((f) => !f.path.startsWith(META_DIR)),
       sources: Array.isArray(sources) ? sources : null,
       source: sanitizeSource(meta?.source),
@@ -68,9 +71,11 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
 
   async function handleReport(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
-    if (!authorized(req, state)) return sendJson(res, 401, { error: "Token が違います" });
+    const access = authorized(req, state);
+    if (!access) return sendJson(res, 401, { error: "Token が違います" });
     const body = await readJson(req, 512 * 1024);
-    const name = typeof body?.name === "string" ? body.name.slice(0, 63) : null;
+    // サイト用のトークンでは、ほかのサイトの履歴に書かせない
+    const name = access.site ?? (typeof body?.name === "string" ? body.name.slice(0, 63) : null);
     const error = typeof body?.error === "string" ? body.error.slice(0, 2000) : "ビルドに失敗しました";
     const log = new DeployLog("GitHub Actions でのビルドに失敗したため、アップロードされませんでした");
     deployer.recordFailure(name, error, {

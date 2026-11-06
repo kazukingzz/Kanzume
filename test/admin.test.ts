@@ -67,7 +67,8 @@ test("パスキー登録後は、新しいパスキーの登録にはチーム I
   const register = await post("/register/options", { teamId: state.teamId.toLowerCase() });
   assert.equal(register.status, 200);
   const options = (await register.json()) as { excludeCredentials: { id: string }[] };
-  assert.deepEqual(options.excludeCredentials.map((c) => c.id), ["cred-1"]);
+  // チーム ID での登録は新しいユーザーになるので、既存のパスキーは除外しない
+  assert.deepEqual(options.excludeCredentials.map((c) => c.id), []);
 
   const login = await post("/login/options", {});
   assert.equal(login.status, 200);
@@ -124,13 +125,14 @@ test("認証なしで出せるログイン用の challenge では、新しいパ
   });
 
   const { challenge: loginChallenge } = (await (await post("/login/options", {})).json()) as { challenge: string };
-  const attack = await post("/register/verify", { response: fakeRegistration(loginChallenge) });
+  const attack = await post("/register/verify", { teamId: state.teamId, response: fakeRegistration(loginChallenge) });
   assert.equal(attack.status, 400);
   assert.match(((await attack.json()) as { error: string }).error, /challenge/i);
   assert.equal(state.credentials.length, 1);
 
   const { challenge: registerChallenge } = (await (await post("/register/options", { teamId: state.teamId })).json()) as { challenge: string };
-  const legit = await post("/register/verify", { response: fakeRegistration(registerChallenge) });
+  const legit = await post("/register/verify", { teamId: state.teamId, response: fakeRegistration(registerChallenge) });
+  assert.equal((await post("/register/verify", { response: fakeRegistration(registerChallenge) })).status, 403, "チーム ID なしでは登録まで進まない");
   assert.equal(legit.status, 400);
   assert.doesNotMatch(((await legit.json()) as { error: string }).error, /challenge/i);
 });
@@ -167,9 +169,11 @@ test("400 日使われていないセッションは消え、使われている�
   assert.equal(reloaded.hasSession(old), false);
   assert.equal(reloaded.hasSession(used), true);
   await reloaded.flush();
-  const saved = JSON.parse(fs.readFileSync(file, "utf8")).sessions as Record<string, number>;
+  // 古い形式（数値）のセッションは、最初の管理者のセッションとして読み込まれる
+  const saved = JSON.parse(fs.readFileSync(file, "utf8")).sessions as Record<string, { lastSeen: number; userId: string }>;
   assert.equal(Object.keys(saved).length, 1);
-  assert.ok(Date.now() - Object.values(saved)[0] < 60_000, "使われたセッションの最終利用時刻が保存される");
+  assert.equal(Object.values(saved)[0].userId, reloaded.setupUserId);
+  assert.ok(Date.now() - Object.values(saved)[0].lastSeen < 60_000, "使われたセッションの最終利用時刻が保存される");
 });
 
 test("リクエストのたびに admin.json を書き直さない", async (t) => {

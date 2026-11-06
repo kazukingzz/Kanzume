@@ -42,14 +42,31 @@
         <button class="primary" id="signin">パスキーでサインイン</button>
       </div>
       <div id="signup-panel" hidden>
-        <p class="muted">管理画面の設定に表示されているチーム ID を入力して、このデバイスのパスキーを登録します。</p>
+        <p class="muted">管理者設定に表示されているチーム ID を入力して、管理者としてパスキーを登録します。サイトのメンバーは、管理者から届いた招待リンクを開いてください。</p>
         <div class="field">
           <label for="team-id">チーム ID</label>
           <input id="team-id" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
         </div>
+        <div class="field">
+          <label for="team-name">名前</label>
+          <input id="team-name" autocomplete="name" maxlength="40" placeholder="メンバーの一覧に出る名前">
+        </div>
         <button class="primary" id="join">パスキーを登録</button>
       </div>
       <div class="error" id="login-error"></div>
+    </div>
+    <div id="invite" hidden>
+      <h2>サイトに招待されています</h2>
+      <p class="muted" id="invite-desc">読み込み中…</p>
+      <div id="invite-form">
+        <div class="field">
+          <label for="invite-name">名前</label>
+          <input id="invite-name" autocomplete="name" maxlength="40" placeholder="メンバーの一覧に出る名前">
+        </div>
+        <button class="primary" id="invite-join">パスキーを登録して参加</button>
+        <p class="muted hint">すでにパスキーを登録している場合は、<a href="#" id="invite-signin">サインイン</a>してから参加できます。</p>
+      </div>
+      <div class="error" id="invite-error"></div>
     </div>
   </div>
 </div>
@@ -113,6 +130,10 @@
       <a data-tab="settings">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1" /></svg>
         設定
+      </a>
+      <a data-tab="admin">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.3-8 9-4.6-.7-8-4.5-8-9V6z" /><path d="M9 12l2 2 4-4" /></svg>
+        管理者設定
       </a>
     </nav>
     <div class="sidebar-foot">

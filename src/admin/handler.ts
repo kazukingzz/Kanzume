@@ -25,7 +25,7 @@ import { GIT_PATH } from "../git/server.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
 import { describeDevice, normalizePasskeyName, providerName } from "./passkeys.ts";
 import { Challenges, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, readCookie } from "./session.ts";
-import { DomainError, safeEqual, type AdminState } from "./state.ts";
+import { DomainError, INVITE_TTL_MS, normalizeUserName, safeEqual, UserError, type AdminState, type User } from "./state.ts";
 
 export const ADMIN_PATH = "/_admin/kanzume";
 
@@ -37,6 +37,17 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/logo.svg": { file: "logo.svg", type: "image/svg+xml" },
 };
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
+/** 管理者だけが呼べる API（全体の設定） */
+const ADMIN_ROUTES = new Set([
+  "POST /api/domain",
+  "GET /api/backup",
+  "POST /api/backup/run",
+  "POST /api/token/rotate",
+  "GET /api/resources",
+  "POST /api/root-site",
+  "GET /api/samples",
+  "GET /api/users",
+]);
 
 interface Deps {
   config: Config;
@@ -69,16 +80,27 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
   const sessionCookie = (origin: string, value: string, maxAge: number) =>
     `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
 
-  const login = async (res: ServerResponse, origin: string) => {
-    sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(), SESSION_COOKIE_MAX_AGE) });
+  const login = async (res: ServerResponse, origin: string, userId: string) => {
+    sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(userId), SESSION_COOKIE_MAX_AGE) });
   };
 
-  const allowedToRegister = (authenticated: boolean, body: Record<string, unknown> | null): string | null => {
-    if (authenticated) return null;
+  /**
+   * パスキーを登録できるか。誰のパスキーになるかも決める
+   * - ログイン中: 自分のパスキーを足す
+   * - 初回（パスキーが 1 つもない）: セットアップトークンで最初の管理者
+   * - 招待トークン: そのサイトのメンバー（新しいユーザー）
+   * - チーム ID: 管理者（新しいユーザー）
+   */
+  type Registration = { kind: "self"; userId: string } | { kind: "setup" } | { kind: "invite"; token: string } | { kind: "team" };
+  const allowedToRegister = (user: User | null, body: Record<string, unknown> | null): Registration | string => {
+    if (user) return { kind: "self", userId: user.id };
     if (state.credentials.length === 0) {
-      return safeEqual(String(body?.setupToken ?? ""), config.setupToken) ? null : "セットアップトークンが違います";
+      return safeEqual(String(body?.setupToken ?? ""), config.setupToken) ? { kind: "setup" } : "セットアップトークンが違います";
     }
-    return state.checkTeamId(String(body?.teamId ?? "")) ? null : "チーム ID が違います";
+    if (typeof body?.inviteToken === "string" && body.inviteToken) {
+      return state.checkInvite(body.inviteToken) ? { kind: "invite", token: body.inviteToken } : "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
+    }
+    return state.checkTeamId(String(body?.teamId ?? "")) ? { kind: "team" } : "チーム ID が違います";
   };
 
   return async function handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
@@ -112,7 +134,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (method !== "GET" && req.headers.origin !== origin) return sendJson(res, 403, { error: "Origin が一致しません" });
 
     const sessionId = readCookie(req, SESSION_COOKIE);
-    const authenticated = state.hasSession(sessionId);
+    const user = state.sessionUser(sessionId);
+    const authenticated = user !== null;
     const route = `${method} ${sub}`;
 
     if (route === "GET /api/state") {
@@ -122,17 +145,18 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     if (route === "POST /api/register/options") {
       const body = await readJson(req);
-      const denied = allowedToRegister(authenticated, body);
-      if (denied) return sendJson(res, 403, { error: denied });
+      const allowed = allowedToRegister(user, body);
+      if (typeof allowed === "string") return sendJson(res, 403, { error: allowed });
       const options = await generateRegistrationOptions({
         rpName: "Kanzume",
         rpID,
         userName: `Kanzume（${rpID}）`,
-        userDisplayName: "Kanzume メンバー",
+        userDisplayName: user?.name ?? (normalizeUserName(body?.name) || "Kanzume メンバー"),
         userID: randomBytes(16),
         challenge: challenges.create("register"),
         attestationType: "none",
-        excludeCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
+        // 同じ認証器で別のユーザーとして登録するのは止めない（自分のパスキーの重複だけ防ぐ）
+        excludeCredentials: (user ? state.credentialsOf(user.id) : []).map((c) => ({ id: c.id, transports: c.transports })),
         authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
       });
       return sendJson(res, 200, options);
@@ -140,6 +164,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     if (route === "POST /api/register/verify") {
       const body = await readJson(req, 256 * 1024);
+      // オプションを取ったあとに招待が使われたなどを防ぐため、もう一度確かめる
+      const allowed = allowedToRegister(user, body);
+      if (typeof allowed === "string") return sendJson(res, 403, { error: allowed });
       let challenge = "";
       let result;
       try {
@@ -157,7 +184,17 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       challenges.markUsed(challenge);
       const { credential, aaguid } = result.registrationInfo;
       const device = describeDevice(req.headers["user-agent"]);
+      let owner: string;
+      if (allowed.kind === "self") owner = allowed.userId;
+      else if (allowed.kind === "setup") owner = state.setupUserId;
+      else if (allowed.kind === "team") owner = (await state.createUser(String(body?.name ?? ""), "admin")).id;
+      else {
+        const member = await state.redeemInviteAsNewUser(allowed.token, String(body?.name ?? ""));
+        if (!member) return sendJson(res, 403, { error: "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）" });
+        owner = member.id;
+      }
       await state.addCredential({
+        userId: owner,
         id: credential.id,
         publicKey: Buffer.from(credential.publicKey).toString("base64url"),
         counter: credential.counter,
@@ -167,7 +204,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         aaguid,
         device,
       });
-      return login(res, origin);
+      // ログイン中に足したパスキーは、セッションをそのまま使う
+      if (allowed.kind === "self") return sendJson(res, 200, { ok: true });
+      return login(res, origin, owner);
     }
 
     if (route === "POST /api/login/options") {
@@ -208,7 +247,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
       challenges.markUsed(challenge);
       await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
-      return login(res, origin);
+      if (!state.user(stored.userId)) return sendJson(res, 400, { error: "このパスキーのユーザーは削除されています" });
+      return login(res, origin, stored.userId!);
     }
 
     if (route === "POST /api/logout") {
@@ -221,14 +261,28 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, "", 0) });
     }
 
-    if (!authenticated) return sendJson(res, 401, { error: "ログインしてください" });
+    // 招待リンクを開いた人に、どのサイトへの招待かを見せる（ログイン前でも）
+    if (route === "GET /api/invite") {
+      const invite = state.checkInvite(query.get("token") ?? "");
+      return sendJson(res, 200, invite ? { valid: true, site: invite.site, expiresAt: invite.expiresAt } : { valid: false });
+    }
+
+    if (!user) return sendJson(res, 401, { error: "ログインしてください" });
+
+    const isAdmin = user.role === "admin";
+    /** 管理者はすべてのサイト、メンバーは参加しているサイトだけ */
+    const canSite = (name: string) => isAdmin || user.sites.includes(name);
+    const forbidden = () => sendJson(res, 403, { error: "この操作の権限がありません" });
+    const adminOnly =
+      ADMIN_ROUTES.has(route) || /^(PUT|DELETE) \/api\/users\//.test(route) || /^(GET|POST|DELETE) \/api\/sites\/[a-z0-9-]+\/(members|invites)(\/|$)/.test(route);
+    if (adminOnly && !isAdmin) return forbidden();
 
     if (route === "GET /api/overview") {
       return sendJson(res, 200, {
         url: origin,
-        token: state.deployToken,
-        teamId: state.teamId,
-        members: state.credentials.length,
+        me: { id: user.id, name: user.name, role: user.role, sites: user.sites },
+        ...(isAdmin ? { token: state.deployToken, teamId: state.teamId } : {}),
+        members: state.users.length,
         domain: {
           value: state.domain,
           fromEnv: Boolean(config.origin),
@@ -257,9 +311,11 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, run.ok ? 200 : 502, { ...backup.status(), error: run.error });
     }
 
+    // ---------- 個人の設定 ----------
+
     if (route === "GET /api/passkeys") {
       return sendJson(res, 200, {
-        passkeys: state.credentials.map((c) => ({
+        passkeys: state.credentialsOf(user.id).map((c) => ({
           id: c.id,
           name: c.name ?? "",
           provider: providerName(c.aaguid) ?? null,
@@ -274,8 +330,76 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const name = normalizePasskeyName(body?.name);
       if (!name) return sendJson(res, 400, { error: "名前を入力してください" });
-      const ok = await state.renameCredential(String(body?.id ?? ""), name);
+      const id = String(body?.id ?? "");
+      if (!state.credentialsOf(user.id).some((c) => c.id === id)) return sendJson(res, 404, { error: "パスキーが見つかりません" });
+      const ok = await state.renameCredential(id, name);
       return ok ? sendJson(res, 200, { name }) : sendJson(res, 404, { error: "パスキーが見つかりません" });
+    }
+
+    const passkeyDelete = /^DELETE \/api\/passkeys\/([^/]+)$/.exec(route);
+    if (passkeyDelete) {
+      try {
+        await state.removeCredential(decodeURIComponent(passkeyDelete[1]), user.id);
+      } catch (err) {
+        if (err instanceof UserError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (route === "PUT /api/me") {
+      const body = await readJson(req);
+      try {
+        const updated = await state.updateUser(user.id, { name: String(body?.name ?? "") });
+        return sendJson(res, 200, { name: updated.name });
+      } catch (err) {
+        if (err instanceof UserError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
+    }
+
+    // ログイン中に招待リンクを開いたとき: 自分をそのサイトのメンバーにする
+    if (route === "POST /api/invite/accept") {
+      const body = await readJson(req);
+      const invite = await state.consumeInvite(String(body?.token ?? ""), user.id);
+      if (!invite) return sendJson(res, 400, { error: "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）" });
+      return sendJson(res, 200, { site: invite.site });
+    }
+
+    // ---------- メンバーの管理（管理者） ----------
+
+    if (route === "GET /api/users") {
+      return sendJson(res, 200, {
+        users: state.users.map((u) => {
+          const creds = state.credentialsOf(u.id);
+          const used = creds.map((c) => c.lastUsedAt ?? c.createdAt).sort().at(-1) ?? null;
+          return { id: u.id, name: u.name, role: u.role, sites: u.sites, createdAt: u.createdAt, passkeys: creds.length, lastUsedAt: used, me: u.id === user.id };
+        }),
+      });
+    }
+
+    const userRoute = /^(PUT|DELETE) \/api\/users\/([^/]+)$/.exec(route);
+    if (userRoute) {
+      const id = decodeURIComponent(userRoute[2]);
+      try {
+        if (userRoute[1] === "DELETE") {
+          if (id === user.id) return sendJson(res, 400, { error: "自分は削除できません" });
+          await state.removeUser(id);
+          return sendJson(res, 200, { ok: true });
+        }
+        const body = await readJson(req);
+        const role = body?.role === "admin" || body?.role === "member" ? body.role : undefined;
+        const updated = await state.updateUser(id, {
+          role,
+          name: typeof body?.name === "string" ? body.name : undefined,
+          removeSite: typeof body?.removeSite === "string" ? body.removeSite : undefined,
+          addSite: typeof body?.addSite === "string" && sites.get(body.addSite)?.get() ? body.addSite : undefined,
+        });
+        return sendJson(res, 200, { user: updated });
+      } catch (err) {
+        if (err instanceof UserError) return sendJson(res, 400, { error: err.message });
+        throw err;
+      }
     }
 
     // ---------- Git リポジトリ ----------
@@ -290,7 +414,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (route === "GET /api/repos") {
       // 1 つ読めないリポジトリがあっても、一覧全体は返す
       const list = await Promise.all(
-        (await repos.names()).map((name) =>
+        (await repos.names()).filter(canSite).map((name) =>
           repoInfo(name).catch((err) => {
             console.error(`[git] リポジトリ ${name} を読めません:`, err);
             return { name, broken: true, cloneUrl: `${origin}${GIT_PATH}/${name}.git`, site: null, defaultBranch: "main", lastPush: null, size: 0 };
@@ -303,6 +427,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (route === "POST /api/repos") {
       const body = await readJson(req);
       const name = String(body?.name ?? "").trim();
+      // メンバーは、自分のサイトと同じ名前のリポジトリだけ作れる
+      if (!canSite(name)) return forbidden();
       // 同じ名前のサイトがあると、このリポジトリへの push でそのサイトを上書きすることになるので、確認を求める
       if (sites.get(name)?.get() && body?.confirm !== true) {
         return sendJson(res, 409, {
@@ -322,6 +448,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     const repoRoute = /^(GET|POST|DELETE) \/api\/repos\/([a-z0-9-]+)(\/.*)?$/.exec(route);
     if (repoRoute) {
       const [, , name, rest = ""] = repoRoute;
+      if (!canSite(name)) return forbidden();
       if (!(await repos.exists(name))) return sendJson(res, 404, { error: "リポジトリが見つかりません" });
       const key = `${method} ${rest}`;
       const ref = query.get("ref") || (await repos.defaultBranch(name));
@@ -390,8 +517,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     };
 
     if (route === "GET /api/sites") {
-      const listed = sites.list();
-      const names = new Set(listed.map((x) => x.name));
+      const all = sites.list();
+      const names = new Set(all.map((x) => x.name));
+      const listed = all.filter((x) => canSite(x.name));
       return sendJson(res, 200, {
         root: sites.root,
         sites: listed.map(({ name, store }) => {
@@ -399,10 +527,12 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           return { name, ...siteUrls(name), deployedAt: release.deployedAt, latest: history.latest(name) };
         }),
         // 初回のデプロイに失敗して、まだ一覧に出ないサイトのデプロイ
-        pending: history
-          .list()
-          .filter((d) => !names.has(d.name))
-          .slice(0, 10),
+        pending: isAdmin
+          ? history
+              .list()
+              .filter((d) => !names.has(d.name))
+              .slice(0, 10)
+          : [],
       });
     }
 
@@ -417,6 +547,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     const pendingDeployment = /^GET \/api\/deployments\/([^/]+)$/.exec(route);
     if (pendingDeployment) {
       const found = history.get(decodeURIComponent(pendingDeployment[1]));
+      if (found && !canSite(found.name)) return forbidden();
       return found ? sendJson(res, 200, found) : sendJson(res, 404, { error: "デプロイが見つかりません" });
     }
 
@@ -446,6 +577,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       // name を省くと、今までどおり wrangler の name でデプロイする
       const siteName = typeof body?.name === "string" && body.name ? body.name.trim().toLowerCase() : undefined;
       const patch = siteName ? envPatch(body) : null;
+      // メンバーは自分のサイトの再デプロイだけ（新しいサイトは作れない）
+      if (!isAdmin && (!siteName || !canSite(siteName) || !sites.get(siteName)?.get())) return forbidden();
       if (siteName) {
         if (!PROJECT_NAME.test(siteName)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
         const info = siteInfo(siteName);
@@ -480,9 +613,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       }
     }
 
-    const siteRoute = /^(GET|PUT|DELETE) \/api\/sites\/([a-z0-9-]+)(\/.*)?$/.exec(route);
+    const siteRoute = /^(GET|POST|PUT|DELETE) \/api\/sites\/([a-z0-9-]+)(\/.*)?$/.exec(route);
     if (!siteRoute) return sendJson(res, 404, { error: "Not Found" });
     const [, , name, rest = ""] = siteRoute;
+    if (!canSite(name)) return forbidden();
     const store = sites.get(name);
     const release = store?.get();
     if (!store || !release) return sendJson(res, 404, { error: "サイトが見つかりません" });
@@ -537,8 +671,58 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, { ok: true, subdomain: sites.subdomain(name), ...siteUrls(name) });
     }
 
+    // ---------- サイトのメンバーと招待（管理者） ----------
+
+    if (siteRouteKey === "GET /members") {
+      const invites = state.invites(name).map((i) => ({ id: i.id, createdAt: i.createdAt, expiresAt: i.expiresAt, createdBy: state.user(i.createdBy)?.name ?? null }));
+      const members = state.users.filter((u) => u.role === "member" && u.sites.includes(name)).map((u) => ({ id: u.id, name: u.name, createdAt: u.createdAt }));
+      return sendJson(res, 200, { members, invites });
+    }
+
+    if (siteRouteKey === "POST /invites") {
+      const { token, invite } = await state.createInvite(name, user.id);
+      return sendJson(res, 200, { id: invite.id, expiresAt: invite.expiresAt, ttlDays: INVITE_TTL_MS / 86_400_000, url: `${origin}${ADMIN_PATH}/#/invite/${token}` });
+    }
+
+    const inviteRevoke = /^DELETE \/invites\/([0-9a-f]+)$/.exec(siteRouteKey);
+    if (inviteRevoke) {
+      return (await state.revokeInvite(name, inviteRevoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "招待が見つかりません" });
+    }
+
+    const memberRemove = /^DELETE \/members\/([^/]+)$/.exec(siteRouteKey);
+    if (memberRemove) {
+      try {
+        await state.updateUser(decodeURIComponent(memberRemove[1]), { removeSite: name });
+      } catch (err) {
+        if (err instanceof UserError) return sendJson(res, 404, { error: err.message });
+        throw err;
+      }
+      return sendJson(res, 200, { ok: true });
+    }
+
+    // ---------- サイト用のトークン（GitHub Actions と、同じ名前のリポジトリへの git push） ----------
+
+    if (siteRouteKey === "GET /tokens") {
+      return sendJson(res, 200, { tokens: state.repoTokens(name).map((t) => ({ id: t.id, scope: t.scope, createdAt: t.createdAt, expiresAt: t.expiresAt })) });
+    }
+
+    if (siteRouteKey === "POST /tokens") {
+      // リポジトリのトークンと同じ形（ttl は秒、null は無期限）。Actions と git push の両方に使えるよう write にする
+      const body = await readJson(req);
+      const ttl = body?.ttl === null || body?.ttl === undefined ? null : Number(body.ttl);
+      if (ttl !== null && !(ttl > 0 && ttl <= 365 * 86400)) return sendJson(res, 400, { error: "期限が不正です" });
+      const { token, info } = await state.createRepoToken(name, "write", ttl);
+      return sendJson(res, 200, { token, id: info.id, scope: info.scope, createdAt: info.createdAt, expiresAt: info.expiresAt });
+    }
+
+    const siteTokenRevoke = /^DELETE \/tokens\/([0-9a-f]+)$/.exec(siteRouteKey);
+    if (siteTokenRevoke) {
+      return (await state.revokeRepoTokens(name, siteTokenRevoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
+    }
+
     if (siteRouteKey === "DELETE ") {
       runtime.evict(store.siteDir);
+      await state.removeSiteAccess(name);
       await sites.remove(name);
       history.clear(name);
       observability.clear(name);
