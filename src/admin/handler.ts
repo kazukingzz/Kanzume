@@ -88,9 +88,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
    * - ログイン中: 自分のパスキーを足す
    * - 初回（パスキーが 1 つもない）: セットアップトークンで最初の管理者
    * - 招待トークン: そのサイトのメンバー（新しいユーザー）
-   * - チーム ID: 管理者（新しいユーザー）
+   * 管理者は初回セットアップした人だけ（メンバーを管理者設定で管理者にすることはできる）
    */
-  type Registration = { kind: "self"; userId: string } | { kind: "setup" } | { kind: "invite"; token: string } | { kind: "team" };
+  type Registration = { kind: "self"; userId: string } | { kind: "setup" } | { kind: "invite"; token: string };
   const allowedToRegister = (user: User | null, body: Record<string, unknown> | null): Registration | string => {
     if (user) return { kind: "self", userId: user.id };
     if (state.credentials.length === 0) {
@@ -99,7 +99,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (typeof body?.inviteToken === "string" && body.inviteToken) {
       return state.checkInvite(body.inviteToken) ? { kind: "invite", token: body.inviteToken } : "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
     }
-    return state.checkTeamId(String(body?.teamId ?? "")) ? { kind: "team" } : "チーム ID が違います";
+    return "パスキーを登録するには、管理者から届いた招待リンクを開いてください";
   };
 
   return async function handleAdmin(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<void> {
@@ -186,7 +186,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       let owner: string;
       if (allowed.kind === "self") owner = allowed.userId;
       else if (allowed.kind === "setup") owner = state.setupUserId;
-      else if (allowed.kind === "team") owner = (await state.createUser(String(body?.name ?? ""), "admin")).id;
       else {
         const member = await state.redeemInviteAsNewUser(allowed.token, String(body?.name ?? ""));
         if (!member) return sendJson(res, 403, { error: "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）" });
@@ -280,7 +279,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, {
         url: origin,
         me: { id: user.id, name: user.name, role: user.role, sites: user.sites },
-        ...(isAdmin ? { token: state.deployToken, teamId: state.teamId } : {}),
         members: state.users.length,
         domain: {
           value: state.domain,

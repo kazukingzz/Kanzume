@@ -16,8 +16,6 @@ const state = {
   siteName: null,
   site: null,
   tab: "deployments",
-  token: "",
-  showToken: false,
   timers: [],
   obs: { view: "overview", range: "24h", result: "", kind: "", q: "", live: false },
   code: { group: null, path: null },
@@ -151,7 +149,7 @@ function showAuth(view) {
   $("app").hidden = true;
   $("auth").hidden = false;
   for (const id of ["auth-loading", "setup", "login", "invite"]) $(id).hidden = id !== view;
-  if (view === "login") setAuthMode("signin");
+  if (view === "login") $("login-error").textContent = "";
 }
 
 $("register").addEventListener("click", async () => {
@@ -248,33 +246,6 @@ async function viewInvite(main, token) {
   }
   main.replaceChildren(page);
 }
-
-function setAuthMode(mode) {
-  const signup = mode === "signup";
-  $("signin-panel").hidden = signup;
-  $("signup-panel").hidden = !signup;
-  $("mode-signin").classList.toggle("active", !signup);
-  $("mode-signup").classList.toggle("active", signup);
-  $("mode-signin").setAttribute("aria-pressed", String(!signup));
-  $("mode-signup").setAttribute("aria-pressed", String(signup));
-  $("login-error").textContent = "";
-  if (signup) $("team-id").focus();
-}
-$("mode-signin").addEventListener("click", () => setAuthMode("signin"));
-$("mode-signup").addEventListener("click", () => setAuthMode("signup"));
-
-$("join").addEventListener("click", async () => {
-  $("login-error").textContent = "";
-  try {
-    const join = { teamId: $("team-id").value.trim(), name: $("team-name").value.trim() };
-    const options = await api("/register/options", { method: "POST", body: JSON.stringify(join) });
-    const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
-    await api("/register/verify", { method: "POST", body: JSON.stringify({ ...join, response: credentialJSON(cred) }) });
-    await enterApp();
-  } catch (err) {
-    $("login-error").textContent = err.message;
-  }
-});
 
 $("signin").addEventListener("click", async () => {
   $("login-error").textContent = "";
@@ -442,7 +413,6 @@ const siteApi = (path = "") => `/sites/${encodeURIComponent(state.siteName)}${pa
 
 async function loadOverview() {
   [state.overview, state.sites] = await Promise.all([api("/overview"), api("/sites")]);
-  state.token = state.overview.token;
 }
 
 function renderShell() {
@@ -1690,7 +1660,7 @@ function usersCard() {
     "section",
     { class: "card" },
     h("h2", { text: "メンバー" }),
-    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。サイトへの招待は、各サイトの「サイト設定 > メンバー」から作ります。削除するとそのユーザーのパスキーも消えます。" }),
+    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。新しい人は、各サイトの「サイト設定 > メンバー」で作る招待リンクから参加します。ロールを管理者にすると、全体の設定とすべてのサイトを扱えるようになります。削除するとそのユーザーのパスキーも消えます。" }),
     body,
     error,
   );
@@ -1699,46 +1669,7 @@ function usersCard() {
 // ---------- 管理者設定 ----------
 
 async function viewAdmin(main) {
-  const page = h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), backupCard(), usersCard());
-  const tokenView = h("code", { class: "value grow", text: state.showToken ? state.token : "••••••••••••••••" });
-  const toggle = h("button", { text: state.showToken ? "隠す" : "表示" });
-  toggle.addEventListener("click", () => {
-    state.showToken = !state.showToken;
-    tokenView.textContent = state.showToken ? state.token : "••••••••••••••••";
-    toggle.textContent = state.showToken ? "隠す" : "表示";
-  });
-  const rotateError = h("div", { class: "error" });
-  const rotate = armed(h("button", { class: "danger" }), "Token を再発行", "もう一度押すと再発行", async () => {
-    try {
-      const { token } = await api("/token/rotate", { method: "POST", body: "{}" });
-      state.token = token;
-      tokenView.textContent = state.showToken ? token : "••••••••••••••••";
-    } catch (err) {
-      rotateError.textContent = err.message;
-    }
-  });
-
-  page.append(
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "管理者を追加" }),
-      h("p", { class: "muted", text: "ログイン画面の「サインアップ」でこのチーム ID を入力すると、管理者としてパスキーを登録できます。サイトだけを任せる人には、チーム ID ではなくサイトの招待リンクを渡してください。" }),
-      h("div", { class: "field" }, h("label", { text: "チーム ID" }), h("div", { class: "row" }, h("code", { class: "value grow team-id", text: state.overview.teamId }), copyButton(() => state.overview.teamId))),
-    ),
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "GitHub Actions からデプロイ" }),
-      h("p", { class: "muted", text: "デプロイしたいリポジトリの Variables に KANZUME_URL、Secrets に KANZUME_TOKEN を登録してください。" }),
-      h("div", { class: "field" }, h("label", { text: "KANZUME_URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
-      h("div", { class: "field" }, h("label", { text: "KANZUME_TOKEN" }), h("div", { class: "row" }, tokenView, toggle, copyButton(() => state.token))),
-      h("div", {}, rotate, h("p", { class: "muted hint", text: "再発行すると今の Token は使えなくなります。" }), rotateError),
-    ),
-    h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)), h("pre", { class: "log", text: WORKFLOW })),
-  );
-
-  main.replaceChildren(page);
+  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), backupCard(), usersCard()));
 }
 
 // ---------- サイト設定 ----------
@@ -1811,7 +1742,7 @@ async function viewSite(main) {
       "section",
       { class: "card" },
       h("h2", { text: "サイトの削除" }),
-      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。他のサイトとパスキー・チーム ID・Token は残ります。" }),
+      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。ほかのサイトとメンバーのパスキーは残ります。" }),
       armed(h("button", { class: "danger" }), "サイトを削除", "もう一度押すと削除", async () => {
         try {
           await api(siteApi(), { method: "DELETE" });
@@ -2179,7 +2110,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」${isAdmin() ? "、管理者設定の KANZUME_TOKEN" : ""} を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
+      h("p", { class: "muted hint", text: `ユーザー名は何でもよく、パスワードには、下で発行したトークンか、サイト設定の「デプロイ用のトークン」 を入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。` }),
     ),
   );
 
@@ -2295,7 +2226,7 @@ async function viewRepo(main, name) {
   const scope = h("select", {}, h("option", { value: "write", text: "write（push もできる・管理者と同等）" }), h("option", { value: "read", text: "read（clone だけ）" }));
   const writeWarning = h("p", {
     class: "notice warn-notice",
-    text: "write トークンは全体の Token と同じ強さです。Worker は Kanzume と同じプロセスで動くため、push できる人はサーバー上のすべて（ほかのサイトや管理画面の Token を含む）にアクセスできます。信頼できる相手にだけ渡してください。",
+    text: "write トークンはサイトのデプロイ用のトークンと同じく push できます。Worker は Kanzume と同じプロセスで動くため、push できる人はサーバー上のすべて（ほかのサイトや管理画面の Token を含む）にアクセスできます。信頼できる相手にだけ渡してください。",
   });
   scope.addEventListener("change", () => (writeWarning.hidden = scope.value !== "write"));
   const ttl = h("select", {}, ...TTL_OPTIONS.map(([v, label]) => h("option", { value: v, text: label })));

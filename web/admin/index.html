@@ -33,26 +33,8 @@
       <div class="error" id="setup-error"></div>
     </div>
     <div id="login" hidden>
-      <div class="segmented auth-mode" role="group" aria-label="ログイン方法">
-        <button id="mode-signin" class="active" aria-pressed="true">サインイン</button>
-        <button id="mode-signup" aria-pressed="false">サインアップ</button>
-      </div>
-      <div id="signin-panel">
-        <p class="muted">登録済みのパスキーでサインインします。</p>
-        <button class="primary" id="signin">パスキーでサインイン</button>
-      </div>
-      <div id="signup-panel" hidden>
-        <p class="muted">管理者設定に表示されているチーム ID を入力して、管理者としてパスキーを登録します。サイトのメンバーは、管理者から届いた招待リンクを開いてください。</p>
-        <div class="field">
-          <label for="team-id">チーム ID</label>
-          <input id="team-id" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXX-XXXX-XXXX-XXXX">
-        </div>
-        <div class="field">
-          <label for="team-name">名前</label>
-          <input id="team-name" autocomplete="name" maxlength="40" placeholder="メンバーの一覧に出る名前">
-        </div>
-        <button class="primary" id="join">パスキーを登録</button>
-      </div>
+      <p class="muted">登録済みのパスキーでサインインします。初めての方は、管理者から届いた招待リンクを開いてください。</p>
+      <button class="primary" id="signin">パスキーでサインイン</button>
       <div class="error" id="login-error"></div>
     </div>
     <div id="invite" hidden>

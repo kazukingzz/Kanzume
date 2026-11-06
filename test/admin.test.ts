@@ -53,21 +53,22 @@ test("チーム ID は大文字小文字・ハイフン・空白・O と 0・I/L
 test("最初のパスキー登録はセットアップトークンでだけ始められる", async (t) => {
   const { post, state } = await start(t);
   assert.equal((await post("/register/options", { setupToken: "wrong" })).status, 403);
-  assert.equal((await post("/register/options", { teamId: state.teamId })).status, 403);
+  assert.equal((await post("/register/options", { inviteToken: "kzi_x" })).status, 403);
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 200);
 });
 
-test("パスキー登録後は、新しいパスキーの登録にはチーム ID が必要で、サインインには不要", async (t) => {
+test("パスキー登録後は、新しいパスキーの登録には招待が必要で（チーム ID では登録できない）、サインインには不要", async (t) => {
   const { post, state } = await start(t);
   await state.addCredential(fakeCredential);
 
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 403);
   assert.equal((await post("/register/options", {})).status, 403);
-  assert.equal((await post("/register/options", { teamId: "0000-0000-0000-0000" })).status, 403);
-  const register = await post("/register/options", { teamId: state.teamId.toLowerCase() });
+  assert.equal((await post("/register/options", { teamId: state.teamId })).status, 403);
+  const { token } = await state.createInvite("blog", state.setupUserId);
+  const register = await post("/register/options", { inviteToken: token });
   assert.equal(register.status, 200);
   const options = (await register.json()) as { excludeCredentials: { id: string }[] };
-  // チーム ID での登録は新しいユーザーになるので、既存のパスキーは除外しない
+  // 招待での登録は新しいユーザーになるので、既存のパスキーは除外しない
   assert.deepEqual(options.excludeCredentials.map((c) => c.id), []);
 
   const login = await post("/login/options", {});
@@ -125,14 +126,15 @@ test("認証なしで出せるログイン用の challenge では、新しいパ
   });
 
   const { challenge: loginChallenge } = (await (await post("/login/options", {})).json()) as { challenge: string };
-  const attack = await post("/register/verify", { teamId: state.teamId, response: fakeRegistration(loginChallenge) });
+  const { token } = await state.createInvite("blog", state.setupUserId);
+  const attack = await post("/register/verify", { inviteToken: token, response: fakeRegistration(loginChallenge) });
   assert.equal(attack.status, 400);
   assert.match(((await attack.json()) as { error: string }).error, /challenge/i);
   assert.equal(state.credentials.length, 1);
 
-  const { challenge: registerChallenge } = (await (await post("/register/options", { teamId: state.teamId })).json()) as { challenge: string };
-  const legit = await post("/register/verify", { teamId: state.teamId, response: fakeRegistration(registerChallenge) });
-  assert.equal((await post("/register/verify", { response: fakeRegistration(registerChallenge) })).status, 403, "チーム ID なしでは登録まで進まない");
+  const { challenge: registerChallenge } = (await (await post("/register/options", { inviteToken: token })).json()) as { challenge: string };
+  const legit = await post("/register/verify", { inviteToken: token, response: fakeRegistration(registerChallenge) });
+  assert.equal((await post("/register/verify", { response: fakeRegistration(registerChallenge) })).status, 403, "招待なしでは登録まで進まない");
   assert.equal(legit.status, 400);
   assert.doesNotMatch(((await legit.json()) as { error: string }).error, /challenge/i);
 });

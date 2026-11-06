@@ -23,7 +23,7 @@ docker run -d -p 8080:8080 -v kanzume-data:/data kanzume
 
 ## メンバー
 
-管理者は全体の設定（ドメイン・バックアップ・全体の Token・メンバー）とすべてのサイトを扱えます。管理者を増やすときは「管理者設定」のチーム ID を渡します。
+初回セットアップでパスキーを登録した人が管理者になり、全体の設定（ドメイン・バックアップ・メンバー）とすべてのサイトを扱えます。ほかの人は招待リンクから参加します（管理者設定でメンバーを管理者にすることもできます）。
 
 サイトだけを任せたい人には、そのサイトの「サイト設定 > メンバー」で招待リンク（1 人 1 回・7 日間有効）を作って渡します。リンクからパスキーを登録した人はそのサイトのメンバーになり、そのサイトのデプロイ・設定・削除と、同じ名前のリポジトリを扱えます。GitHub Actions や git push には、サイト設定の「デプロイ用のトークン」（そのサイトにだけデプロイできる）を使います。
 
@@ -46,7 +46,7 @@ KANZUME_BACKUP_URL=s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.clou
 
 - **サンプルから**: [`examples/worker`](examples/worker)・[`examples/portfolio`](examples/portfolio) をそのままデプロイします。
 - **GitHub の公開リポジトリから**: public リポジトリ（のディレクトリ）の URL を指定してデプロイします。
-- **GitHub Actions から**: サイト設定で発行したそのサイト用のトークン（または管理者設定の全体の Token）を `KANZUME_TOKEN`（Secrets）、管理画面の URL を `KANZUME_URL`（Variables）に登録して、次のワークフローを置きます。wrangler の設定の `name` はサイト名にします。
+- **GitHub Actions から**: サイト設定で発行したそのサイト用のトークンを `KANZUME_TOKEN`（Secrets）、管理画面の URL を `KANZUME_URL`（Variables）に登録して、次のワークフローを置きます。wrangler の設定の `name` はサイト名にします。
 
 ```yaml
 name: Deploy to Kanzume
@@ -79,7 +79,7 @@ GitHub の URL とリポジトリからのデプロイは Kanzume の中でバ�
 - △ `nodejs_compat`（fs・net・child_process などは不可）
 - × Cron Triggers / D1 / Durable Objects / Queues / WebSocket / HTMLRewriter / Service Worker 形式
 
-Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします。セキュリティ境界ではないので、デプロイできる人（全体の Token・リポジトリ用の write トークンを持つ人）は管理者と同等で、サーバー上のすべてにアクセスできます。ルートドメインで配信するサイトも管理画面と同じオリジンで動くので同様です。信頼できる相手にだけ渡してください。
+Worker は `node:vm` で、Kanzume と同じプロセスの中で動かします。セキュリティ境界ではないので、デプロイできる人（サイトのトークン・リポジトリ用の write トークンを持つ人）は管理者と同等で、サーバー上のすべてにアクセスできます。ルートドメインで配信するサイトも管理画面と同じオリジンで動くので同様です。信頼できる相手にだけ渡してください。
 
 ## 環境変数
 
