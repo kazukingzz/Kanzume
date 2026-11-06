@@ -322,3 +322,56 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   assert.equal((await app.admin("/sites/blog/r2/files/object?key=b.bin", "DELETE")).status, 200);
   assert.equal(((await (await app.admin("/sites/blog/r2")).json()) as { buckets: { count: number }[] }).buckets[0].count, 2);
 });
+
+test("初回のパスキー登録は verify でもセットアップトークンが要る", async (t) => {
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" }));
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.server.close());
+  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  const post = (p: string, body: unknown) => fetch(`${base}/_admin/kanzume/api${p}`, { method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const { challenge } = (await (await post("/register/options", { setupToken: "setup" })).json()) as { challenge: string };
+  const response = {
+    id: "x",
+    rawId: "x",
+    type: "public-key",
+    clientExtensionResults: {},
+    response: { clientDataJSON: Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: base })).toString("base64url"), attestationObject: "eA" },
+  };
+  assert.equal((await post("/register/verify", { response })).status, 403);
+  const ok = await post("/register/verify", { setupToken: "setup", response });
+  assert.equal(ok.status, 400, "トークンがあれば検証まで進む（ここでは偽の登録データなので 400）");
+  assert.doesNotMatch(((await ok.json()) as { error: string }).error, /セットアップトークン/);
+});
+
+test("メンバーは R2 のバケット名でサイトの外に出られず、管理画面のホスト名をサブドメインにできず、ほかのサイトの情報を引けない", async (t) => {
+  const app = await start(t);
+  await app.deploy("blog");
+  await app.admin("/sites", "POST", { name: "shop" });
+  await app.sites.updateSettings("shop", { vars: { SECRET_URL: "x" } });
+  const { api } = await member(app, ["blog"]);
+
+  for (const bucket of ["..%2F..%2Fphantom", "%2E%2E%2Fx", "A", "%E0%A4%A"]) {
+    const res = await api(`/sites/blog/r2/${bucket}/object?key=x`, "DELETE");
+    assert.equal(res.status, 400, bucket);
+  }
+  assert.equal((await api("/sites/blog/kv/..%2Fx/keys")).status, 400);
+  assert.equal(fs.existsSync(path.join(app.sites.dir, "phantom")), false);
+
+  assert.equal((await api("/site-name?name=shop")).status, 403);
+  const info = (await (await app.admin("/site-name?name=shop")).json()) as Record<string, unknown>;
+  assert.equal("current" in info, false, "管理者にも設定の中身は返さない");
+  assert.equal((await app.admin("/sites", "POST", { name: "invite" })).status, 400);
+
+  // ルートドメインを決めて fa.example.test から管理画面を開いているとき、fa はサブドメインにできない
+  await app.state.setDomain("example.test");
+  const cookie = `kanzume_session=${await app.state.createSession(app.state.users.find((u) => u.role === "member")!.id)}`;
+  const viaAdminHost = (p: string, method: string, body: unknown) =>
+    fetch(`${app.base}/_admin/kanzume/api${p}`, {
+      method,
+      headers: { cookie, origin: "http://fa.example.test", "x-forwarded-host": "fa.example.test", "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  const taken = await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "fa" });
+  assert.equal(taken.status, 400);
+  assert.equal((await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "news" })).status, 200);
+});

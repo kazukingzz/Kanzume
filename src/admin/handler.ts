@@ -12,7 +12,8 @@ import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { DeployLog } from "../deploy/deployer.ts";
 import { deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
-import { ConfigError } from "../deploy/wrangler.ts";
+import { BINDING_NAME, ConfigError } from "../deploy/wrangler.ts";
+import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import type { DeployHistory } from "../deploy/history.ts";
 import { configuredRootHost, readBody, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
@@ -39,6 +40,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
 };
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 /** 管理者だけが呼べる API（全体の設定） */
+/** サイト名にできない名前（管理画面の URL の #/invite・#/repos と重なるもの） */
+const RESERVED_SITE_NAMES = ["invite", "repos"];
 const ADMIN_ROUTES = new Set([
   "POST /api/domain",
   "GET /api/backup",
@@ -497,6 +500,18 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     const siteUrls = (name: string) => sites.urls(siteRoot, name);
 
+    /**
+     * サイトの名前・サブドメインに使えないラベル。管理画面を開いているホスト（fa.example.com の fa）を
+     * サイトに取られると、そのホストの管理画面・/_api・/_git がサイトのものになってしまうため
+     */
+    const reservedLabels = (() => {
+      const labels = new Set(RESERVED_SITE_NAMES);
+      const adminHost = new URL(origin).hostname;
+      const rootHost = new URL(siteRoot).hostname;
+      if (adminHost !== rootHost && adminHost.endsWith(`.${rootHost}`)) labels.add(adminHost.slice(0, -rootHost.length - 1));
+      return labels;
+    })();
+
     /** デプロイ前の設定画面で使う: その名前のサイトがあるか、サブドメインがほかのサイトに使われていないか、今の設定 */
     const siteInfo = (name: string) => {
       const valid = PROJECT_NAME.test(name);
@@ -504,15 +519,13 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const exists = valid && sites.deployed(name);
       const created = valid && sites.has(name);
       const owner = valid ? sites.resolve(name) : undefined;
-      // 未デプロイのサイトでも、デプロイ前に設定した環境変数を初期値に使う
-      const settings = created ? sites.settings(name) : null;
       return {
         valid,
         exists,
         created,
-        takenBy: owner && owner !== name ? owner : null,
+        // 作成済みのサイトは自分の ID でデプロイできる（ほかのサイトがその名前をサブドメインにしていても構わない）
+        takenBy: !created && owner && owner !== name ? owner : null,
         url: valid ? `${siteOrigin(siteRoot, created ? sites.subdomain(name) : name)}/` : null,
-        current: settings ? { vars: settings.vars, secretKeys: Object.keys(settings.secrets).sort() } : null,
       };
     };
 
@@ -542,6 +555,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const name = String(body?.name ?? "").trim().toLowerCase();
       if (!PROJECT_NAME.test(name)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
+      if (reservedLabels.has(name)) return sendJson(res, 400, { error: `${name} は管理画面で使っている名前なので、サイト名にできません` });
       if (sites.has(name)) return sendJson(res, 409, { error: `サイト ${name} は既にあります` });
       try {
         await sites.ensure(name);
@@ -574,7 +588,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       try {
         const fetched = await fetchFromGitHub(url, { maxBytes: config.maxUploadBytes, ...github }, new DeployLog("inspect"));
         const { name, vars } = inspectFiles(fetched);
-        return sendJson(res, 200, { name, vars, ...siteInfo(name) });
+        // 取得したリポジトリの wrangler の設定だけを返す（ほかのサイトの情報は混ぜない）
+        return sendJson(res, 200, { name, vars });
       } catch (err) {
         if (err instanceof GitHubError || err instanceof ConfigError) return sendJson(res, 400, { error: err.message });
         throw err;
@@ -582,6 +597,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     }
 
     if (route === "GET /api/site-name") {
+      // サイト名の空きを調べるのはサイトを作る管理者だけ（メンバーにほかのサイトの有無を見せない）
+      if (!isAdmin) return forbidden();
       const name = query.get("name") ?? "";
       return sendJson(res, 200, siteInfo(name));
     }
@@ -612,7 +629,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           await sites.updateSettings(siteName, patch);
           runtime.evict(sites.get(siteName)!.siteDir);
         }
-        const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github, siteName });
+        // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
+        const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github, siteName, autoRoot: isAdmin });
         if (!result.ok) {
           // 新しく作ったサイトが失敗したら、設定だけが残らないように消す
           if (created && !sites.get(siteName!)?.get()) await sites.remove(siteName!);
@@ -683,6 +701,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const patch: SettingsPatch = envPatch(body);
       if (body && "subdomain" in body) patch.subdomain = body.subdomain === null ? null : String(body.subdomain ?? "");
+      const wanted = typeof patch.subdomain === "string" ? patch.subdomain.trim().toLowerCase() : "";
+      if (wanted && wanted !== sites.subdomain(name) && reservedLabels.has(wanted)) {
+        return sendJson(res, 400, { error: `${wanted} は管理画面で使っているので、サブドメインにできません` });
+      }
       try {
         await sites.updateSettings(name, patch);
       } catch (err) {
@@ -750,6 +772,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (kvRoute) {
       const [, m, rawNs, what] = kvRoute;
       const ns = decodeURIComponent(rawNs);
+      if (!BINDING_NAME.test(ns)) return sendJson(res, 400, { error: "KV の名前空間の名前が不正です" });
       const key = query.get("key") ?? "";
       if (m === "GET" && what === "keys") return sendJson(res, 200, kvKeys(store.siteDir, ns, query.get("prefix") ?? "", query.get("after") ?? ""));
       if (what === "value" && m === "GET") {
@@ -781,6 +804,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (r2Route) {
       const [, m, rawBucket, what] = r2Route;
       const bucketName = decodeURIComponent(rawBucket);
+      // バケット名はファイルのディレクトリ名になるので、wrangler と同じ規則で確かめる（../ などでサイトの外に出させない）
+      if (!R2_BUCKET_NAME.test(bucketName)) return sendJson(res, 400, { error: "バケット名が不正です" });
       const key = query.get("key") ?? "";
       try {
         if (m === "GET" && what === "objects") return sendJson(res, 200, await r2List(store.siteDir, bucketName, query.get("prefix") ?? "", query.get("cursor") || undefined));

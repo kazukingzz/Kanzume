@@ -223,7 +223,8 @@ export function inspectFiles(fetched: Fetched): Inspection {
   return { name, vars };
 }
 
-export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName?: string }): Promise<DeployResult> {
+/** autoRoot: ルートのサイトがまだないとき、このサイトをルートにしてよいか（管理者のときだけ。ルートは管理画面と同じオリジンになるため） */
+export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName?: string; autoRoot?: boolean }): Promise<DeployResult> {
   const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
   let fetched: Fetched;
   try {
@@ -232,8 +233,7 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
     return fail(deployer, options.siteName ?? null, err, { source: {}, buildLog: [], log }, "GitHub からのデプロイ");
   }
   const { source, dir, files } = fetched;
-  // GitHub の URL からのデプロイは管理画面（管理者）からしか呼べないので、最初のサイトはルートにしてよい
-  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: true, siteName: options.siteName });
+  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: options.autoRoot ?? false, siteName: options.siteName });
 }
 
 export interface BuildContext {

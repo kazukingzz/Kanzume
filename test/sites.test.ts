@@ -76,8 +76,11 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
   const admin = await site("shop.localhost:8080", "/_admin/kanzume");
   assert.equal(admin.status, 302, "サイトのサブドメインでは管理画面を開かない");
   assert.equal(admin.headers.get("location"), "http://localhost:8080/_admin/kanzume");
-  const reserved = await site("shop.localhost:8080", "/_api/deploy", { method: "POST" });
-  assert.equal(((await reserved.json()) as { site: string }).site, "shop", "サブドメインでは /_api/ もサイトのパス");
+  // デプロイと git はトークンを受け取るので、サイトのサブドメインでも Kanzume が受ける（Worker に Authorization を渡さない）
+  const reserved = await site("shop.localhost:8080", "/_api/deploy", { method: "POST", headers: { authorization: "Bearer secret-token" } });
+  assert.equal(reserved.status, 401);
+  assert.equal((await site("shop.localhost:8080", "/_git/shop.git/info/refs?service=git-upload-pack")).status, 401);
+  assert.equal(((await (await site("shop.localhost:8080", "/_api/other")).json()) as { site: string }).site, "shop", "ほかの /_api/ はサイトのパス");
 });
 
 test("KANZUME_ORIGIN を設定すると、存在しないサブドメインは 404 になる", async (t) => {

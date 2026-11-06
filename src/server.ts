@@ -64,6 +64,12 @@ export async function createServer(config: Config, options: { github?: Partial<G
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch((err) => {
+      // パスの %xx が壊れているなど（decodeURIComponent の URIError）は、利用者の入力の誤り
+      if (err instanceof URIError && !res.headersSent) {
+        res.writeHead(400, { "content-type": "text/plain; charset=utf-8" });
+        res.end("Bad Request");
+        return;
+      }
       console.error("[kanzume] リクエスト処理で例外:", err);
       if (!res.headersSent) {
         res.writeHead(500, { "content-type": "text/plain; charset=utf-8" });

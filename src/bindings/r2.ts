@@ -203,6 +203,9 @@ export class R2ObjectBody extends R2Object {
   }
 }
 
+/** バケット名（wrangler の bucket_name と同じ規則）。ファイルのディレクトリ名に使うので、ほかの文字は通さない */
+export const R2_BUCKET_NAME = /^[a-z0-9][a-z0-9-]{1,62}$/;
+
 export class R2Bucket {
   #dir: string;
   #bucket: string;
@@ -212,6 +215,7 @@ export class R2Bucket {
   #list: StatementSync;
 
   constructor(db: DatabaseSync, siteDir: string, bucket: string) {
+    if (!R2_BUCKET_NAME.test(bucket)) throw new TypeError(`R2 のバケット名が不正です: ${bucket}`);
     this.#bucket = bucket;
     this.#dir = path.join(siteDir, "r2", bucket);
     this.#get = db.prepare("SELECT * FROM r2 WHERE bucket = ? AND key = ?");

@@ -115,6 +115,11 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
     // git のフックからの内部の呼び出し。ホスト名でサイトを選ぶ前に受ける（IP アドレスの先頭の数字と同じ名前のサイトに横取りさせない）
     if (pathname === HOOK_PATH) return handleHook(req, res);
 
+    // デプロイと git はトークンを受け取るので、どのホストでも Kanzume が受ける（サイトの Worker に Authorization を渡さない）
+    if (pathname === "/_api/deploy") return handleDeploy(req, res);
+    if (pathname === "/_api/deploy/report") return handleReport(req, res);
+    if (pathname.startsWith(`${GIT_PATH}/`)) return handleGit(req, res, pathname, search);
+
     const isAdmin = pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`);
     const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
     // ルートドメインは管理画面で設定でき、保存したらすぐ効くように毎回読む
@@ -134,9 +139,6 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
       return handleSite(req, res, release, pathname, search);
     }
 
-    if (pathname === "/_api/deploy") return handleDeploy(req, res);
-    if (pathname.startsWith(`${GIT_PATH}/`)) return handleGit(req, res, pathname, search);
-    if (pathname === "/_api/deploy/report") return handleReport(req, res);
     if (isAdmin) return handleAdmin(req, res, pathname);
     if (pathname.startsWith("/_api/")) return sendText(res, 404, "Not Found");
 

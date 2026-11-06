@@ -19,7 +19,6 @@ const state = {
   timers: [],
   obs: { view: "overview", range: "24h", result: "", kind: "", q: "", live: false },
   code: { group: null, path: null },
-  github: { url: "", error: "", config: null },
   // リポジトリごとに、最後に見ていたブランチ
   repoRefs: {},
 };
@@ -152,12 +151,17 @@ function showAuth(view) {
   if (view === "login") $("login-error").textContent = "";
 }
 
+/** パスキーを登録する。options と verify には同じ body を送る（サーバーは verify でも登録してよいかを確かめ直す） */
+async function registerPasskey(body = {}) {
+  const options = await api("/register/options", { method: "POST", body: JSON.stringify(body) });
+  const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
+  await api("/register/verify", { method: "POST", body: JSON.stringify({ ...body, response: credentialJSON(cred) }) });
+}
+
 $("register").addEventListener("click", async () => {
   $("setup-error").textContent = "";
   try {
-    const options = await api("/register/options", { method: "POST", body: JSON.stringify({ setupToken: $("setup-token").value.trim() }) });
-    const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
-    await api("/register/verify", { method: "POST", body: JSON.stringify({ response: credentialJSON(cred) }) });
+    await registerPasskey({ setupToken: $("setup-token").value.trim() });
     // ルートドメインはパスキーを登録してから（ログインした状態で）保存する
     let domainError = null;
     if (!$("setup-domain-field").hidden) {
@@ -205,9 +209,7 @@ $("invite-join").addEventListener("click", async () => {
     return;
   }
   try {
-    const options = await api("/register/options", { method: "POST", body: JSON.stringify(join) });
-    const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
-    await api("/register/verify", { method: "POST", body: JSON.stringify({ ...join, response: credentialJSON(cred) }) });
+    await registerPasskey(join);
     go("#/");
     await enterApp();
   } catch (err) {
@@ -638,7 +640,6 @@ async function deployGitHub(body, onError) {
     return;
   }
   // デプロイは成功しているので、一覧の再読み込みに失敗してもエラーにしない
-  state.github = { url: "", error: "", config: null };
   await loadOverview().catch(() => {});
   // 同じサイトのデプロイタブからデプロイしたときは hashchange が起きないので、描き直す
   const next = siteHash("deployments", site);
@@ -1572,9 +1573,7 @@ async function viewSettings(main) {
   addPasskey.addEventListener("click", async () => {
     addError.textContent = "";
     try {
-      const options = await api("/register/options", { method: "POST", body: "{}" });
-      const cred = await navigator.credentials.create({ publicKey: creationOptions(options) });
-      await api("/register/verify", { method: "POST", body: JSON.stringify({ response: credentialJSON(cred) }) });
+      await registerPasskey();
       list.reload();
     } catch (err) {
       addError.textContent = err.message;
@@ -2002,7 +2001,7 @@ function siteSettingsCards(settings) {
     try {
       current = vars.values();
     } catch {}
-    fill(varsBox, wranglerVarsView(wrangler, (k) => k in current));
+    fill(varsBox, wranglerVarsView(wrangler, (k) => Object.hasOwn(current, k)));
   };
   renderWrangler();
   vars.el.addEventListener("input", renderWrangler);
@@ -2649,7 +2648,7 @@ function envEditor(entries, { masked = false, placeholder = "値", note } = {}) 
       const [k, v] = row.querySelectorAll("input");
       const key = k.value.trim();
       if (key) {
-        if (key in out) throw new Error(`「${key}」が 2 回あります`);
+        if (Object.hasOwn(out, key)) throw new Error(`「${key}」が 2 回あります`);
         out[key] = v.value;
       }
     }
@@ -2681,43 +2680,18 @@ function wranglerVarsView(vars, overridden) {
 }
 
 /** デプロイ前の設定カード（GitHub の URL・サンプル） */
-/** fixedName を渡すと、サイト名は変えられない（作成済みのサイトへのデプロイ）。onBack は「戻る」 */
-function deployConfigCard(cfg, { fixedName = null, onBack = null } = {}) {
+/**
+ * GitHub の URL を読んだあとの確認カード。デプロイ先は作成済みのサイト（site）で、環境変数とシークレットを決めてからデプロイする。
+ * cfg: inspect の結果（wrangler の vars）と、そのサイトの今の設定（current）
+ */
+function deployConfigCard(cfg, site, onBack) {
   const error = h("div", { class: "error" });
-  const sub = subdomainInput(fixedName ?? cfg.name, "サイト名");
-  if (fixedName) sub.input.disabled = true;
-  const status = h("p", { class: "muted hint" });
   const wrangler = cfg.vars ?? {};
-  const initialVars = { ...wrangler, ...(cfg.current?.vars ?? {}) };
-  const vars = envEditor(initialVars);
+  const current = cfg.current ?? { vars: {}, secretKeys: [] };
+  const vars = envEditor({ ...wrangler, ...current.vars });
   const secrets = envEditor({}, { masked: true });
 
-  let checkTimer = null;
-  const showStatus = (info) => {
-    status.classList.toggle("warn", !!(info?.exists || info?.takenBy || info?.valid === false));
-    if (!info) status.textContent = "";
-    else if (!info.valid) status.textContent = "英小文字・数字・ハイフンで、63 文字以内にしてください。";
-    else if (info.takenBy) status.textContent = `このサブドメインはサイト ${info.takenBy} が使っています。別の名前にしてください。`;
-    else if (info.exists) status.textContent = `サイト ${sub.input.value} は既にあります。デプロイすると上書きします（KV / R2 のデータは残ります）。`;
-    else status.textContent = `${info.url} で公開します。`;
-  };
-  showStatus(cfg);
-  sub.input.addEventListener("input", () => {
-    clearTimeout(checkTimer);
-    checkTimer = setTimeout(async () => {
-      const name = sub.input.value.trim();
-      showStatus(name ? await api(`/site-name?name=${encodeURIComponent(name)}`).catch(() => null) : null);
-    }, 250);
-  });
-
-  const back = h("button", {
-    text: "戻る",
-    onclick: () => {
-      if (onBack) return onBack();
-      state.github.config = null;
-      route();
-    },
-  });
+  const back = h("button", { text: "戻る", onclick: onBack });
   const deploy = h("button", { class: "primary", text: "デプロイ" });
   deploy.addEventListener("click", async () => {
     error.textContent = "";
@@ -2725,15 +2699,10 @@ function deployConfigCard(cfg, { fixedName = null, onBack = null } = {}) {
     try {
       const v = vars.values();
       // wrangler の設定と同じ値は保存しない（あとで wrangler の設定を変えたときに、古い値で上書きし続けないように）
-      for (const [k, val] of Object.entries(v)) if (wrangler[k] === val && !(k in (cfg.current?.vars ?? {}))) delete v[k];
-      body = { url: cfg.repoUrl, name: sub.input.value.trim(), vars: v, secrets: secrets.values() };
+      for (const [k, val] of Object.entries(v)) if (wrangler[k] === val && !Object.hasOwn(current.vars, k)) delete v[k];
+      body = { url: cfg.repoUrl, name: site, vars: v, secrets: secrets.values() };
     } catch (err) {
       error.textContent = err.message;
-      return;
-    }
-    if (!body.name) {
-      error.textContent = "サイト名を入力してください";
-      sub.input.focus();
       return;
     }
     back.disabled = true;
@@ -2746,17 +2715,8 @@ function deployConfigCard(cfg, { fixedName = null, onBack = null } = {}) {
     });
   });
 
-  const existingSecrets = cfg.current?.secretKeys ?? [];
   return [
-    h("section", { class: "card" }, h("h2", { text: "リポジトリ" }), h("code", { class: "value", text: cfg.repoUrl })),
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "サイト名" }),
-      h("p", { class: "muted", text: fixedName ? "このサイトにデプロイします。" : "サブドメインになります。wrangler の設定の name を初期値にしています。" }),
-      sub.el,
-      fixedName ? null : status,
-    ),
+    h("section", { class: "card" }, h("h2", { text: "リポジトリ" }), h("code", { class: "value", text: cfg.repoUrl }), h("p", { class: "muted hint", text: `サイト ${site} にデプロイします。` })),
     h(
       "section",
       { class: "card" },
@@ -2769,7 +2729,7 @@ function deployConfigCard(cfg, { fixedName = null, onBack = null } = {}) {
       { class: "card" },
       h("h2", { text: "シークレット" }),
       h("p", { class: "muted", text: "API キーなど。環境変数と同じく env に入りますが、保存したあとは値を表示しません。" }),
-      existingSecrets.length ? h("p", { class: "muted hint", text: `設定済み: ${existingSecrets.join(", ")}（そのまま残ります）` }) : null,
+      current.secretKeys.length ? h("p", { class: "muted hint", text: `設定済み: ${current.secretKeys.join(", ")}（そのまま残ります）` }) : null,
       secrets.el,
     ),
     h("div", { class: "actions" }, back, deploy),
@@ -2925,8 +2885,8 @@ const METHOD_VIEWS = {
       error.textContent = "";
       busy(next, "読み込み中…");
       try {
-        const [info, site] = await Promise.all([api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) }), api(`/site-name?name=${encodeURIComponent(detail.name)}`)]);
-        fill(box, ...deployConfigCard({ ...info, repoUrl: url, current: site.current }, { fixedName: detail.name, onBack: reset }));
+        const [info, settings] = await Promise.all([api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) }), api(`/sites/${encodeURIComponent(detail.name)}/settings`)]);
+        fill(box, ...deployConfigCard({ ...info, repoUrl: url, current: { vars: settings.vars, secretKeys: settings.secretKeys } }, detail.name, reset));
         form.hidden = true;
       } catch (err) {
         error.textContent = err.message;

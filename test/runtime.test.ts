@@ -56,7 +56,7 @@ test("KV / R2 のバインディングが env に入る", async (t) => {
         return new Response((await env.KV.get("k")) + "," + (await (await env.BUCKET.get("o")).text()));
       }
     }`,
-    { kvNamespaces: [{ binding: "KV" }], r2Buckets: [{ binding: "BUCKET", bucketName: "b" }] },
+    { kvNamespaces: [{ binding: "KV" }], r2Buckets: [{ binding: "BUCKET", bucketName: "bk" }] },
   );
   const { response } = await (await load()).fetch(new Request("http://x/"));
   assert.equal(await response!.text(), "kv-value,r2-value");

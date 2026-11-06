@@ -1,4 +1,5 @@
 import path from "node:path";
+import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import { parse as parseToml } from "smol-toml";
 import { PROJECT_NAME, type HtmlHandling, type Manifest, type NotFoundHandling } from "../store.ts";
 
@@ -40,7 +41,7 @@ export function parseWranglerConfig(filename: string, text: string): Record<stri
 
 const HTML_HANDLING: HtmlHandling[] = ["auto-trailing-slash", "force-trailing-slash", "drop-trailing-slash", "none"];
 const NOT_FOUND_HANDLING: NotFoundHandling[] = ["none", "single-page-application", "404-page"];
-const BINDING_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
+export const BINDING_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 function asObject(value: unknown, field: string): Record<string, unknown> {
   if (value === undefined) return {};
@@ -78,7 +79,7 @@ export function toManifest(raw: Record<string, unknown>, hasWorker: boolean): Ma
   }));
   const r2Buckets = asArray(raw.r2_buckets, "r2_buckets").map((r2, i) => {
     const bucketName = r2.bucket_name ?? r2.binding;
-    if (typeof bucketName !== "string" || !/^[a-z0-9][a-z0-9-]{1,62}$/.test(bucketName)) {
+    if (typeof bucketName !== "string" || !R2_BUCKET_NAME.test(bucketName)) {
       throw new ConfigError(`r2_buckets[${i}].bucket_name が不正です`);
     }
     return { binding: binding(r2.binding, `r2_buckets[${i}].binding`), bucketName };

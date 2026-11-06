@@ -73,6 +73,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   const app = await start(t);
   const { fetcher } = fakeGitHub(repoTarball(t, exampleFiles()));
   const result = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/examples/worker", app.deployer, {
+    autoRoot: true,
     fetch: fetcher,
     apiBase: "https://api.test",
     codeloadBase: "https://codeload.test",
@@ -261,10 +262,8 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
 
   const inspect = await api("/deploy-github/inspect", "POST", { url });
   assert.equal(inspect.status, 200);
-  const info = (await inspect.json()) as { name: string; vars: Record<string, string>; exists: boolean };
-  assert.equal(info.name, "hello", "name がなければディレクトリ名");
-  assert.deepEqual(info.vars, { GREETING: "wrangler", LEVEL: "1" }, "文字列でない vars は初期値に入れない");
-  assert.equal(info.exists, false);
+  const info = (await inspect.json()) as Record<string, unknown>;
+  assert.deepEqual(info, { name: "hello", vars: { GREETING: "wrangler", LEVEL: "1" } }, "name がなければディレクトリ名。文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない");
 
   const deploy = await api("/deploy-github", "POST", { url, name: "blog", vars: { GREETING: "settings" }, secrets: { API_KEY: "s3cret" } });
   assert.equal(deploy.status, 200, await deploy.clone().text());
@@ -272,7 +271,6 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
 
   // 同じ名前で確認なしだと 409、確認すれば上書き
   assert.equal((await api("/deploy-github", "POST", { url, name: "blog", vars: {}, secrets: {} })).status, 409);
-  assert.equal(((await (await api("/deploy-github/inspect", "POST", { url })).json()) as { exists: boolean }).exists, false, "名前が違えば存在しない");
   assert.equal(((await (await api("/site-name?name=blog")).json()) as { exists: boolean }).exists, true);
 
   // シークレットの値は返さない
@@ -304,4 +302,23 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
   // 戻せる
   assert.equal((await api("/sites/blog/settings", "PUT", { subdomain: "" })).status, 200);
   assert.equal(((await (await site("blog.localhost")).json()) as { GREETING: string }).GREETING, "changed");
+});
+
+test("メンバーが管理画面の GitHub デプロイで自分のサイトをデプロイしても、ルートにはならない", async (t) => {
+  const { fetcher } = fakeGitHub(repoTarball(t, { "apps/hello/wrangler.jsonc": `{ "main": "index.js", "compatibility_date": "2026-10-01" }`, "apps/hello/index.js": "export default { fetch() { return new Response('hi'); } };" }));
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
+  t.after(() => app.server.close());
+  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  await app.sites.ensure("blog");
+  const user = await app.state.createUser("m", "member", ["blog"]);
+  const cookie = `kanzume_session=${await app.state.createSession(user.id)}`;
+  const res = await fetch(`${base}/_admin/kanzume/api/deploy-github`, {
+    method: "POST",
+    headers: { cookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ url: "https://github.com/kazukingzz/kanzume/tree/main/apps/hello", name: "blog" }),
+  });
+  assert.equal(res.status, 200, await res.clone().text());
+  assert.equal(app.sites.deployed("blog"), true);
+  assert.equal(app.sites.root, null, "ルートは管理画面と同じオリジンなので、メンバーのデプロイでは決めない");
 });
