@@ -411,7 +411,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           role,
           name: typeof body?.name === "string" ? body.name : undefined,
           removeSite: typeof body?.removeSite === "string" ? body.removeSite : undefined,
-          addSite: typeof body?.addSite === "string" && sites.get(body.addSite)?.get() ? body.addSite : undefined,
+          addSite: typeof body?.addSite === "string" && sites.has(body.addSite) ? body.addSite : undefined,
         });
         return sendJson(res, 200, { user: updated });
       } catch (err) {

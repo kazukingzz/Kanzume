@@ -526,3 +526,6 @@ a.button:hover { background: var(--hover); }
   button.data-row { grid-template-columns: minmax(0, 1fr) auto; }
   button.data-row > .data-exp { display: none; }
 }
+.user-sites { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.user-sites select { width: auto; height: 30px; font-size: 12px; }
+.row select.wide { width: 100%; }

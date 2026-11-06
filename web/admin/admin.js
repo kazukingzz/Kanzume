@@ -1606,6 +1606,44 @@ async function viewSettings(main) {
   );
 }
 
+/** ルートドメイン（サブドメインなし）で配信するサイトを選ぶ。管理画面と同じオリジンで動くので、管理者だけが決める */
+function rootSiteCard() {
+  const error = h("div", { class: "error" });
+  const deployed = state.sites.sites.filter((x) => x.deployed);
+  const select = h(
+    "select",
+    { class: "wide", "aria-label": "ルートドメインで配信するサイト" },
+    h("option", { value: "", text: "配信しない" }),
+    ...deployed.map((x) => h("option", { value: x.name, text: x.name })),
+  );
+  select.value = state.sites.root ?? "";
+  const save = h("button", { class: "primary", text: "保存" });
+  save.addEventListener("click", async () => {
+    error.textContent = "";
+    save.disabled = true;
+    try {
+      await api("/root-site", { method: "POST", body: JSON.stringify({ name: select.value || null }) });
+      await loadOverview();
+      route();
+    } catch (err) {
+      error.textContent = err.message;
+      save.disabled = false;
+    }
+  });
+  const host = state.overview.domain?.effective ?? location.host;
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "ルートドメインのサイト" }),
+    h("p", {
+      class: "muted",
+      text: `${host} （サブドメインなし）で配信するサイトを 1 つ選べます。ルートのサイトは管理画面と同じオリジンで動くので、そのサイトにデプロイできる人は管理者と同等になります。選べるのはデプロイ済みのサイトだけです。`,
+    }),
+    h("div", { class: "row narrow" }, h("div", { class: "grow" }, select), save),
+    error,
+  );
+}
+
 /** 個人トークン（git push のパスワードと、GitHub Actions の KANZUME_TOKEN に使う） */
 function personalTokensCard() {
   const list = h("div", { class: "list token-list" });
@@ -1732,6 +1770,16 @@ function usersCard() {
                       ),
                     )
                   : h("span", { class: "muted", text: "参加しているサイトなし" });
+            // メンバーに扱えるサイトを足す（招待リンクを使わずに）
+            const addable = state.sites.sites.map((x) => x.name).filter((n) => !u.sites.includes(n));
+            const attach =
+              u.role === "member" && addable.length
+                ? (() => {
+                    const pick = h("select", { "aria-label": `${u.name} に足すサイト` }, h("option", { value: "", text: "サイトを足す…" }), ...addable.map((n) => h("option", { value: n, text: n })));
+                    pick.addEventListener("change", () => pick.value && act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ addSite: pick.value }) }))());
+                    return pick;
+                  })()
+                : null;
             return h(
               "li",
               { class: "user" },
@@ -1740,7 +1788,7 @@ function usersCard() {
                 { class: "grow" },
                 h("div", { class: "user-name" }, h("b", { text: u.name }), u.me ? h("span", { class: "tag", text: "自分" }) : null),
                 h("div", { class: "muted user-meta" }, `パスキー ${u.passkeys} 個 · ${u.lastUsedAt ? `最終利用 ${fmtAgo(u.lastUsedAt)}` : "未使用"}`),
-                h("div", { class: "user-sites" }, sitesView),
+                h("div", { class: "user-sites" }, sitesView, attach),
               ),
               u.me ? null : role,
               u.me ? null : armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "DELETE" }))),
@@ -1757,7 +1805,7 @@ function usersCard() {
     "section",
     { class: "card" },
     h("h2", { text: "メンバー" }),
-    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。新しい人は、各サイトの「サイト設定 > メンバー」で作る招待リンクから参加します。ロールを管理者にすると、全体の設定とすべてのサイトを扱えるようになります。削除するとそのユーザーのパスキーも消えます。" }),
+    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。扱えるサイトは「サイトを足す…」と × で変えられます。新しい人は、各サイトの「サイト設定 > メンバー」で作る招待リンクから参加します。ロールを管理者にすると、全体の設定とすべてのサイトを扱えるようになります。削除するとそのユーザーのパスキーも消えます。" }),
     body,
     error,
   );
@@ -1766,7 +1814,7 @@ function usersCard() {
 // ---------- 管理者設定 ----------
 
 async function viewAdmin(main) {
-  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), backupCard(), usersCard()));
+  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), rootSiteCard(), backupCard(), usersCard()));
 }
 
 // ---------- サイト設定 ----------
@@ -1792,22 +1840,6 @@ async function viewSite(main) {
   ];
   const settings = await api(siteApi("/settings"));
 
-  const rootError = h("div", { class: "error" });
-  const rootOrigin = `${location.protocol}//${state.overview.domain?.effective ?? location.host}`;
-  const rootToggle = h("button", {
-    class: detail.root ? "" : "primary",
-    text: detail.root ? "ルートドメインでの配信をやめる" : "ルートドメインで配信する",
-    onclick: async () => {
-      try {
-        await api("/root-site", { method: "POST", body: JSON.stringify({ name: detail.root ? null : state.siteName }) });
-        await loadOverview();
-        route();
-      } catch (err) {
-        rootError.textContent = err.message;
-      }
-    },
-  });
-  const otherRoot = !detail.root && state.sites.root;
 
   const delError = h("div", { class: "error" });
   // 権限や未デプロイで出さないカードは null になるので、DOM の append（null を文字として足す）ではなく fill を使う
@@ -1822,21 +1854,6 @@ async function viewSite(main) {
     ),
     ...siteSettingsCards(settings),
     isAdmin() ? siteMembersCard() : null,
-    // ルートドメインは管理画面と同じオリジンなので、切り替えは管理者だけ
-    isAdmin() && r
-      ? h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "ルートドメイン" }),
-      h("p", {
-        class: "muted",
-        text: detail.root
-          ? `このサイトは ${rootOrigin}/ でも配信しています。ルートのサイトは管理画面と同じオリジンで動くので、このサイトにデプロイできる人は管理者と同等です。`
-          : `${rootOrigin}/ で配信するサイトを 1 つ選べます。${otherRoot ? `今は ${otherRoot} を配信しています。` : "今は何も配信していません。"}ルートのサイトは管理画面と同じオリジンで動くので、そのサイトにデプロイできる人は管理者と同等になります。`,
-      }),
-      rootToggle,
-      rootError,
-    ) : null,
     h(
       "section",
       { class: "card" },

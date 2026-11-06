@@ -409,3 +409,19 @@ test("KV / R2 のプレビューは、途中で切れた日本語もテキスト
   const r2 = (await (await app.admin("/sites/blog/r2/files/preview?key=long.txt")).json()) as { text: string | null };
   assert.ok(r2.text?.startsWith("ああ"));
 });
+
+test("管理者はメンバーに扱えるサイトを足せる（未デプロイのサイトも）。ルートのサイトは管理者が選ぶ", async (t) => {
+  const app = await start(t);
+  await app.deploy("blog");
+  await app.admin("/sites", "POST", { name: "draft" });
+  const { user, api } = await member(app, []);
+  assert.equal((await app.admin(`/users/${user.id}`, "PUT", { addSite: "draft" })).status, 200);
+  assert.equal((await app.admin(`/users/${user.id}`, "PUT", { addSite: "blog" })).status, 200);
+  assert.deepEqual(app.state.user(user.id)!.sites, ["draft", "blog"]);
+  assert.equal((await api("/sites/draft")).status, 200);
+
+  assert.equal((await app.admin("/root-site", "POST", { name: "draft" })).status, 404, "未デプロイのサイトはルートにできない");
+  assert.equal((await app.admin("/root-site", "POST", { name: null })).status, 200);
+  assert.equal(app.sites.root, null);
+  assert.equal((await api("/root-site", "POST", { name: "blog" })).status, 403);
+});
