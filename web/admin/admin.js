@@ -1798,7 +1798,10 @@ async function viewSite(main) {
   const otherRoot = !detail.root && state.sites.root;
 
   const delError = h("div", { class: "error" });
-  page.append(
+  // 権限や未デプロイで出さないカードは null になるので、DOM の append（null を文字として足す）ではなく fill を使う
+  fill(
+    page,
+    ...page.childNodes,
     h(
       "section",
       { class: "card" },
