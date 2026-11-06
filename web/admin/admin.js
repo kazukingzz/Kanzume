@@ -2180,7 +2180,7 @@ async function viewDatabase(main) {
     );
     const open = async () => {
       const value = await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`));
-      const edit = h("button", { text: "編集", onclick: () => fill(detail, editor({ key: k.key, value: value.text ?? "", metadata: value.metadata })) });
+      const edit = h("button", { text: "編集", onclick: () => fill(detail, editor({ key: k.key, value: value.text ?? "", metadata: value.metadata, expiration: value.expiration })) });
       const del = armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", async () => {
         try {
           await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`), { method: "DELETE" });
@@ -2217,12 +2217,16 @@ async function viewDatabase(main) {
     return item;
   };
 
+  // 読み込みが重なったら、最後に始めたものの結果だけを使う（絞り込みの入力中や「さらに読み込む」の連打）
+  let seq = 0;
   const load = async (reset) => {
-    if (reset) {
-      after = "";
-      fill(list);
-    }
-    const { keys, cursor } = await api(nsApi(`/keys?prefix=${encodeURIComponent(state.db.prefix)}&after=${encodeURIComponent(after)}`));
+    const mine = ++seq;
+    more.disabled = true;
+    const { keys, cursor } = await api(nsApi(`/keys?prefix=${encodeURIComponent(state.db.prefix)}&after=${encodeURIComponent(reset ? "" : after)}`)).finally(() => {
+      if (mine === seq) more.disabled = false;
+    });
+    if (mine !== seq) return;
+    if (reset) fill(list);
     for (const k of keys) list.append(row(k));
     if (reset && !keys.length) list.append(h("div", { class: "empty", text: state.db.prefix ? "このキーで始まるものはありません" : "まだキーがありません" }));
     after = cursor ?? "";
@@ -2244,6 +2248,8 @@ async function viewDatabase(main) {
     const value = h("textarea", { class: "mono", rows: "8", placeholder: "値（文字列・JSON）", "aria-label": "値" });
     value.value = initial?.value ?? "";
     const ttl = h("input", { type: "number", min: "60", placeholder: "なし", "aria-label": "有効期限（秒）" });
+    // 編集では今の有効期限を残す（空のまま保存すると期限なしになるので、残り秒数を入れておく）
+    if (initial?.expiration) ttl.value = String(Math.max(60, initial.expiration - Math.floor(Date.now() / 1000)));
     const formError = h("div", { class: "error" });
     const save = h("button", { class: "primary", text: "保存" });
     save.addEventListener("click", async () => {
@@ -2405,10 +2411,17 @@ async function viewStorage(main) {
     return item;
   };
 
+  let seq = 0;
   const load = async (reset) => {
-    const r = await api(bApi(`/objects?prefix=${encodeURIComponent(state.storage.prefix)}${!reset && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`));
-    if (reset) {
-      fill(list);
+    const mine = ++seq;
+    more.disabled = true;
+    const r = await api(bApi(`/objects?prefix=${encodeURIComponent(state.storage.prefix)}${!reset && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)).finally(() => {
+      if (mine === seq) more.disabled = false;
+    });
+    if (mine !== seq) return;
+    if (reset) fill(list);
+    {
+      // フォルダは 2 ページ目以降にも出てくる（キーの順に、オブジェクトと混ざって返る）
       for (const p of r.prefixes) {
         list.append(
           h(
@@ -2431,10 +2444,14 @@ async function viewStorage(main) {
   const upload = h("button", { text: "＋ アップロード", onclick: () => fileInput.click() });
   fileInput.addEventListener("change", async () => {
     error.textContent = "";
-    for (const file of fileInput.files) {
+    // アップロード中に画面を移っても、選んだときのサイト・バケット・フォルダに送る
+    const target = (key) => `${BASE}/api/sites/${encodeURIComponent(site)}/r2/${encodeURIComponent(bucket.name)}/object?key=${encodeURIComponent(key)}`;
+    const prefix = state.storage.prefix;
+    const failures = [];
+    for (const file of [...fileInput.files]) {
       busy(upload, `アップロード中… ${file.name}`);
       try {
-        const res = await fetch(`${BASE}/api${bApi(`/object?key=${encodeURIComponent(state.storage.prefix + file.name)}`)}`, {
+        const res = await fetch(target(prefix + file.name), {
           method: "PUT",
           body: file,
           headers: { "x-object-content-type": file.type || "application/octet-stream" },
@@ -2442,13 +2459,19 @@ async function viewStorage(main) {
         });
         if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
       } catch (err) {
-        error.textContent = `${file.name}: ${err.message}`;
+        failures.push(`${file.name}: ${err.message}`);
       }
     }
     fileInput.value = "";
     upload.disabled = false;
     upload.textContent = "＋ アップロード";
-    route();
+    // 同じ画面にいるときだけ一覧を読み直す（エラーの表示は残す）
+    if (page.isConnected) {
+      error.textContent = failures.join(" / ");
+      await load(true).catch((err) => (error.textContent = err.message));
+    } else if (failures.length) {
+      alert(`アップロードに失敗したファイルがあります\n${failures.join("\n")}`);
+    }
   });
 
   page.append(

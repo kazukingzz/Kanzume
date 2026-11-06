@@ -46,7 +46,6 @@ const ADMIN_ROUTES = new Set([
   "POST /api/domain",
   "GET /api/backup",
   "POST /api/backup/run",
-  "POST /api/token/rotate",
   "GET /api/resources",
   "POST /api/root-site",
   "GET /api/users",
@@ -494,10 +493,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     if (route === "GET /api/resources") return sendJson(res, 200, resources.snapshot());
 
-    if (route === "POST /api/token/rotate") {
-      return sendJson(res, 200, { token: await state.rotateDeployToken() });
-    }
-
     const siteUrls = (name: string) => sites.urls(siteRoot, name);
 
     /**
@@ -825,7 +820,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           const obj = (await bucket.get(key, { range: { offset: 0, length: PREVIEW_BYTES } })) as { size: number; arrayBuffer?: () => Promise<ArrayBuffer> } | null;
           if (!obj?.arrayBuffer) return sendJson(res, 404, { error: "オブジェクトが見つかりません" });
           const head = await bucket.head(key);
-          return sendJson(res, 200, { text: asText(new Uint8Array(await obj.arrayBuffer())), size: head?.size ?? 0, truncated: (head?.size ?? 0) > PREVIEW_BYTES });
+          const size = head?.size ?? 0;
+          return sendJson(res, 200, { text: asText(new Uint8Array(await obj.arrayBuffer()), size > PREVIEW_BYTES), size, truncated: size > PREVIEW_BYTES });
         }
         if (m === "GET" && what === "object") {
           const obj = (await bucket.get(key)) as { size: number; httpMetadata: { contentType?: string }; body?: ReadableStream<Uint8Array> } | null;

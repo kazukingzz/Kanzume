@@ -143,7 +143,6 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
     ["/sites/blog/members", "GET"],
     ["/domain", "POST"],
     ["/backup", "GET"],
-    ["/token/rotate", "POST"],
     ["/resources", "GET"],
     ["/root-site", "POST"],
     ["/users", "GET"],
@@ -392,4 +391,21 @@ test("URL にできないドメインは保存しない。サブドメインが�
   assert.match(((await res.json()) as { error: string }).error, /news/);
   assert.equal(app.history.list()[0].status, "failed");
   assert.equal(app.history.list()[0].name, "news");
+});
+
+test("KV / R2 のプレビューは、途中で切れた日本語もテキストとして出す", async (t) => {
+  const app = await start(t);
+  await app.admin("/sites", "POST", { name: "blog" });
+  const dir = app.sites.get("blog")!.siteDir;
+  const { siteDb } = await import("../src/bindings/db.ts");
+  const { KVNamespace } = await import("../src/bindings/kv.ts");
+  const { R2Bucket } = await import("../src/bindings/r2.ts");
+  const text = "あ".repeat(100_000); // 300 KB。256 KiB で切ると文字の途中になる
+  await new KVNamespace(siteDb(dir), "KV").put("long", text);
+  await new R2Bucket(siteDb(dir), dir, "files").put("long.txt", text);
+  const kv = (await (await app.admin("/sites/blog/kv/KV/value?key=long")).json()) as { text: string | null; truncated: boolean };
+  assert.equal(kv.truncated, true);
+  assert.ok(kv.text?.startsWith("ああ"));
+  const r2 = (await (await app.admin("/sites/blog/r2/files/preview?key=long.txt")).json()) as { text: string | null };
+  assert.ok(r2.text?.startsWith("ああ"));
 });

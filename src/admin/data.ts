@@ -20,14 +20,18 @@ function openDb(siteDir: string): DatabaseSync | null {
   return fs.existsSync(path.join(siteDir, "data.sqlite")) ? siteDb(siteDir) : null;
 }
 
-/** バイト列を文字列として見せられるか（UTF-8 として正しく、制御文字が少ない） */
-export function asText(data: Uint8Array): string | null {
+/**
+ * バイト列を文字列として見せられるか（UTF-8 として正しく、NUL を含まない）。
+ * truncated なら途中で切ったものなので、末尾で切れた文字（最大 3 バイト）は捨ててから確かめる
+ */
+export function asText(data: Uint8Array, truncated = false): string | null {
   if (data.includes(0)) return null;
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(data);
-  } catch {
-    return null;
+  for (let cut = 0; cut <= (truncated ? 3 : 0); cut++) {
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(data.subarray(0, data.length - cut));
+    } catch {}
   }
+  return null;
 }
 
 const parseJson = (s: string | null) => {
@@ -80,7 +84,7 @@ export function kvValue(siteDir: string, namespace: string, key: string) {
   return {
     key,
     size: row.value.byteLength,
-    text: asText(head),
+    text: asText(head, row.value.byteLength > PREVIEW_BYTES),
     truncated: row.value.byteLength > PREVIEW_BYTES,
     metadata: parseJson(row.metadata),
     expiration: row.expiration,
