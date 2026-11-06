@@ -537,15 +537,6 @@ async function viewDeployments(main) {
 
   if (!detail.deployed) {
     page.append(h("section", { class: "card" }, h("h2", { text: "デプロイ方法を選ぶ" }), h("p", { class: "muted", text: `サイト ${detail.name}（${hostOf(detail.subdomainUrl)}）はまだデプロイされていません。次のどれかの方法でデプロイしてください。` }), deployOptions(detail)));
-  } else {
-    page.append(
-      h(
-        "details",
-        { class: "card deploy-again" },
-        h("summary", {}, h("b", { text: "新しくデプロイ" }), h("span", { class: "muted", text: " — 別の方法でデプロイして、今のリリースを置き換えます" })),
-        deployOptions(detail),
-      ),
-    );
   }
 
   const latest = detail.latest;
@@ -581,6 +572,26 @@ async function viewDeployments(main) {
   for (const d of deployments) list.append(deploymentItem(d, d.release && d.release === active));
   if (!deployments.length) list.append(h("div", { class: "empty", text: "履歴はまだありません" }));
   page.append(list);
+
+  // デプロイ済みのサイトでは、別の方法でのデプロイを一番下に折りたたんで出す
+  if (detail.deployed) {
+    const icon = h("span", { class: "deploy-again-icon", html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15V3M7 8l5-5 5 5M5 21h14"/></svg>' });
+    const chevron = h("span", { class: "deploy-again-chevron", html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>' });
+    page.append(
+      h(
+        "details",
+        { class: "card deploy-again" },
+        h(
+          "summary",
+          {},
+          icon,
+          h("span", { class: "grow" }, h("b", { text: "新しくデプロイ" }), h("span", { class: "muted", text: "別の方法でデプロイして、今のリリースを置き換えます" })),
+          chevron,
+        ),
+        deployOptions(detail),
+      ),
+    );
+  }
   main.replaceChildren(page);
 }
 
