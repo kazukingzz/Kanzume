@@ -67,8 +67,8 @@ jobs:
 - **サイトのリポジトリから**: サイトの「リポジトリ」タブで Kanzume 上にサイトと同じ名前の Git リポジトリを作り、`main` に push するとデプロイします（GitHub は不要）。パスワードには「設定 > トークン」で発行した個人トークンを使います。
 
 ```sh
-git remote add kanzume https://example.com/_git/my-app.git
-git push kanzume main
+git remote add origin https://example.com/_git/my-app.git
+git push -u origin main
 ```
 
 GitHub の URL とリポジトリからのデプロイは Kanzume の中でバンドルするので、npm パッケージの import・ビルドが必要なものは Actions を使ってください。

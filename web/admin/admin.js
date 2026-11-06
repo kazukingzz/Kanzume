@@ -2122,7 +2122,7 @@ async function viewRepo(main, name) {
     ),
   );
 
-  const commands = `git remote add kanzume ${repo.cloneUrl}\ngit push kanzume ${repo.defaultBranch}`;
+  const commands = `git remote add origin ${repo.cloneUrl}\ngit push -u origin ${repo.defaultBranch}`;
   page.append(
     h(
       "section",
@@ -2131,6 +2131,7 @@ async function viewRepo(main, name) {
       h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
+      h("p", { class: "muted hint" }, "すでに origin がある（GitHub から clone した）リポジトリでは、1 行目の代わりに ", h("code", { text: `git remote set-url origin ${repo.cloneUrl}` }), " で付け替えるか、", h("code", { text: "origin" }), " を別の名前（例: ", h("code", { text: "kanzume" }), "）にしてください。"),
       h("p", { class: "muted hint" }, "ユーザー名は何でもよく、パスワードには「", h("a", { href: "#/settings", text: "設定 > トークン" }), `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`),
     ),
   );
