@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>メンバーと権限 — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: メンバーと権限">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members" aria-current="page">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>メンバーと権限</h1>
+<h2>管理者とメンバー</h2>
+<table>
+<tr><th>管理者</th><td>全体の設定（ドメイン・ルートのサイト・バックアップ・メンバー）と、すべてのサイト。新しいサイトを作れる</td></tr>
+<tr><th>メンバー</th><td>参加しているサイトだけ。そのサイトのデプロイ・設定・削除と、同じ名前のリポジトリ・KV・R2</td></tr>
+</table>
+<p>最初にパスキーを登録した人が管理者になります。「管理者設定 &gt; メンバー」でロールを変えられます（最後の管理者はメンバーにできません）。</p>
+<h2 id="invite">招待リンク</h2>
+<ol>
+<li>管理者が、サイトの「サイト設定 &gt; メンバー」で「招待リンクを作る」を押します。</li>
+<li>表示されたリンクを渡します。リンクは 1 人が 1 回だけ使え、7 日で無効になります。未使用のリンクは取り消せます。</li>
+<li>受け取った人がリンクを開き、名前を入れてパスキーを登録すると、そのサイトのメンバーになります。すでにパスキーを持っている人は、サインインしてから「参加する」を押します。</li>
+</ol>
+<h2>扱えるサイトを変える</h2>
+<p>「管理者設定 &gt; メンバー」で、メンバーごとに「サイトを足す…」から扱えるサイトを足し、サイト名の × で外せます。招待リンクを使わずに割り当てられます。</p>
+<h2 id="token">個人トークン</h2>
+<p>「設定 &gt; トークン」で、自分のトークンを発行します。git push のパスワードと、GitHub Actions の <code>KANZUME_TOKEN</code> に使います。</p>
+<ul>
+<li>トークンで扱えるサイトは、本人と同じです（管理者はすべて、メンバーは参加しているサイトだけ）。</li>
+<li>名前と期限（1 時間・1 日・30 日・無期限）を付けられます。値は発行したときに 1 回だけ表示されます。</li>
+<li>使い終わったら取り消してください。ユーザーを削除すると、そのトークンも使えなくなります。</li>
+</ul>
+<h2>設定（個人）</h2>
+<p>「設定」では、自分の名前、参加しているサイト、トークン、パスキーを管理します。別のデバイスでもサインインできるように、パスキーを追加できます（最後の 1 つは削除できません）。</p>
+    <nav class="docs-pager"><a href="/docs/deploy">← デプロイ</a><a href="/docs/data">データベースとストレージ →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

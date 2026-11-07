@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>サイト — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: サイト">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites" aria-current="page">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>サイト</h1>
+<h2>サイトを作る</h2>
+<p>管理画面のサイトの切り替えから「＋ サイトを追加」を選び、サイト名を決めます。サイト名がそのままサブドメインになります（<code>blog</code> → <code>blog.example.com</code>）。英小文字・数字・ハイフンで 63 文字までです。</p>
+<p>作っただけのサイトは「未デプロイ」で、まだ配信しません。「デプロイ」タブで <a href="/docs/deploy">デプロイの方法</a> を選びます。環境変数・シークレット・メンバーは、デプロイの前でも設定できます。</p>
+<h2>タブ</h2>
+<table>
+<tr><th>デプロイ</th><td>今のリリースとデプロイ履歴（ビルドログ・失敗の理由）。「新しくデプロイ」から別の方法でデプロイできる</td></tr>
+<tr><th>コード</th><td>デプロイ中のソース・設定・バンドル・アセット</td></tr>
+<tr><th>可観測性</th><td><a href="/docs/observability">リクエスト数・エラー・実行時間・イベントのログ</a></td></tr>
+<tr><th>データベース</th><td><a href="/docs/data">KV のキーと値</a></td></tr>
+<tr><th>ストレージ</th><td><a href="data#r2">R2 のオブジェクト</a></td></tr>
+<tr><th>リポジトリ</th><td><a href="/docs/deploy#repo">このサイトの Git リポジトリ</a></td></tr>
+<tr><th>サイト設定</th><td>サブドメイン・環境変数・シークレット・メンバー・削除</td></tr>
+</table>
+<h2>サブドメインを変える</h2>
+<p>「サイト設定 &gt; サブドメイン」で変えられます。変えると、前のサブドメインでは配信しなくなります。サイトの ID（作ったときの名前）は変わらず、git push や GitHub Actions では引き続き ID を wrangler の <code>name</code> に使います。</p>
+<h2 id="root">ルートドメインのサイト</h2>
+<p>「管理者設定 &gt; ルートドメインのサイト」で、ルートドメイン（<code>example.com</code>）で配信するサイトを 1 つ選べます。最初に管理者がデプロイしたサイトは、自動でルートになります。</p>
+<p class="callout">ルートのサイトは管理画面と同じオリジンで動きます。そのサイトにデプロイできる人は、管理者と同等になる点に注意してください。</p>
+<h2 id="env">環境変数とシークレット</h2>
+<p>「サイト設定」の「環境変数」と「シークレット」で、Worker の <code>env</code> に入る値を決めます（<code>nodejs_compat</code> なら <code>process.env</code> にも入ります）。</p>
+<ul>
+<li>wrangler の設定の <code>vars</code> と同じ名前なら、管理画面の値が優先されます。</li>
+<li>保存すると、再デプロイしなくても次のリクエストから反映されます。</li>
+<li>シークレットは保存したあと値を表示しません。値の変更と削除だけができます。</li>
+<li>名前は英数字と <code>_</code> で、数字以外から始めます。値は 1 つ 5KB まで、全体で 64KB までです。</li>
+</ul>
+<h2>サイトを削除する</h2>
+<p>「サイト設定 &gt; サイトの削除」で、公開を止め、KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。</p>
+    <nav class="docs-pager"><a href="/docs/setup">← 立てる</a><a href="/docs/deploy">デプロイ →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

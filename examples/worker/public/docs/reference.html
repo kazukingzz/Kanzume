@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>リファレンス — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: リファレンス">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference" aria-current="page">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>リファレンス</h1>
+<h2 id="features">対応している機能</h2>
+<table>
+<tr><th>fetch ハンドラ</th><td class="ok">○</td><td>ES Modules 形式。オブジェクトと <code>WorkerEntrypoint</code></td></tr>
+<tr><th><code>ctx.waitUntil</code></th><td class="ok">○</td><td>レスポンスのあと最大 30 秒</td></tr>
+<tr><th>vars・シークレット</th><td class="ok">○</td><td>wrangler の <code>vars</code> と、管理画面の環境変数・シークレット</td></tr>
+<tr><th>KV</th><td class="ok">○</td><td>get / getWithMetadata / put / delete / list、metadata、expiration / expirationTtl</td></tr>
+<tr><th>R2</th><td class="ok">○</td><td>get / put / head / delete / list、range、onlyIf、httpMetadata、customMetadata（マルチパートは ×）</td></tr>
+<tr><th>Static Assets</th><td class="ok">○</td><td>html_handling / not_found_handling / run_worker_first</td></tr>
+<tr><th>Web 標準 API</th><td class="ok">○</td><td>fetch・Request / Response・URL・crypto.subtle・Streams など</td></tr>
+<tr><th>nodejs_compat</th><td class="partial">△</td><td>buffer・crypto・stream・util など。fs・net・child_process は不可</td></tr>
+<tr><th>Cron Triggers・D1・Durable Objects・Queues</th><td class="ng">×</td><td>未対応</td></tr>
+<tr><th>WebSocket・HTMLRewriter・Service Worker 形式</th><td class="ng">×</td><td>未対応</td></tr>
+</table>
+<h2 id="env">環境変数</h2>
+<table>
+<tr><th><code>PORT</code></th><td>待ち受けるポート（8080）</td></tr>
+<tr><th><code>KANZUME_DATA_DIR</code></th><td>データの置き場所（/data）</td></tr>
+<tr><th><code>KANZUME_ORIGIN</code></th><td>ルートドメインの URL。管理者設定のドメインより優先する</td></tr>
+<tr><th><code>KANZUME_SETUP_TOKEN</code></th><td>最初のパスキー登録に使うトークン。未設定なら起動ログに出る</td></tr>
+<tr><th><code>KANZUME_BACKUP_URL</code></th><td><a href="/docs/backup">バックアップ</a> の保存先</td></tr>
+<tr><th><code>KANZUME_MAX_UPLOAD_MB</code></th><td>デプロイ・アップロードの上限（50）</td></tr>
+<tr><th><code>KANZUME_REPO_QUOTA_MB</code></th><td>Git リポジトリ 1 つの容量の上限（200）</td></tr>
+<tr><th><code>KANZUME_CPU_TIMEOUT_MS</code></th><td>Worker の同期処理の打ち切り時間（5000）</td></tr>
+<tr><th><code>KANZUME_WORKER_IDLE_SEC</code></th><td>使われていない Worker をメモリから外すまでの時間（600）</td></tr>
+<tr><th><code>KANZUME_MAX_WORKERS</code></th><td>同時にメモリに載せる Worker の数（5）</td></tr>
+<tr><th><code>KANZUME_LOG_RETENTION_HOURS</code></th><td>リクエストのログを残す時間（72）</td></tr>
+<tr><th><code>KANZUME_SAMPLES_REPO</code></th><td>管理画面のサンプルの取得元（fork したら自分のリポジトリの <code>https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;branch&gt;</code>）</td></tr>
+</table>
+<h2>制限</h2>
+<table>
+<tr><th>KV</th><td>キー 512 バイト、値 25 MiB、metadata 1024 バイト、有効期限は 60 秒以上</td></tr>
+<tr><th>R2</th><td>キー 1024 バイト、マルチパートアップロードは不可</td></tr>
+<tr><th>環境変数・シークレット</th><td>値 1 つ 5KB、全体で 64KB</td></tr>
+<tr><th>招待リンク</th><td>1 人 1 回、7 日間</td></tr>
+<tr><th>リリース</th><td>新しいものから 3 つを残す</td></tr>
+</table>
+<h2>URL</h2>
+<table>
+<tr><th><code>/_admin/kanzume</code></th><td>管理画面（サイトのホストでは管理画面のホストへ移動）</td></tr>
+<tr><th><code>/_api/deploy</code></th><td>GitHub Actions からのデプロイ（どのホストでも Kanzume が受ける）</td></tr>
+<tr><th><code>/_git/&lt;サイト&gt;.git</code></th><td>サイトの Git リポジトリ</td></tr>
+<tr><th><code>/_health</code></th><td>ヘルスチェック</td></tr>
+</table>
+<h2>開発</h2>
+<pre><code>npm install
+npm run dev
+npm test</code></pre>
+<p>Node 24 の型ストリップで TypeScript をそのまま実行します（ビルド不要）。</p>
+    <nav class="docs-pager"><a href="/docs/observability">← 可観測性とリソース</a><span></span></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

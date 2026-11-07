@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>デプロイ — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: デプロイ">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy" aria-current="page">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>デプロイ</h1>
+<p>サイトの「デプロイ」タブで、4 つの方法から選びます。デプロイ済みのサイトでも、ページの下の「新しくデプロイ」から選べます（今のリリースを置き換えます）。</p>
+<h2 id="sample">サンプルから</h2>
+<p>用意してあるサンプル（このページの <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker">examples/worker</a> と、<a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/portfolio">examples/portfolio</a>）を、そのサイトとしてデプロイします。</p>
+<h2 id="github">GitHub の公開リポジトリから</h2>
+<p>public リポジトリの URL（トップか <code>/tree/&lt;ブランチ&gt;/&lt;ディレクトリ&gt;</code>）を入れて「次へ」を押すと、wrangler の設定の <code>vars</code> を初期値にした環境変数とシークレットの確認画面になります。Kanzume の中でバンドルするので、npm パッケージの import やビルドが必要なものは、次の GitHub Actions を使ってください。</p>
+<h2 id="actions">GitHub Actions から</h2>
+<ol>
+<li>wrangler の設定の <code>name</code> をサイトの ID にします。</li>
+<li><a href="/docs/members#token">「設定 &gt; トークン」</a> で個人トークンを発行し、GitHub のリポジトリの Secrets に <code>KANZUME_TOKEN</code> として登録します。</li>
+<li>Variables に <code>KANZUME_URL</code>（管理画面の URL。例: <code>https://admin.example.com</code>）を登録します。</li>
+<li>次のワークフローを <code>.github/workflows/deploy.yml</code> に置いて push します。</li>
+</ol>
+<pre><code>name: Deploy to Kanzume
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: kazukingzz/Kanzume/action@main
+        with:
+          url: ${{ vars.KANZUME_URL }}
+          token: ${{ secrets.KANZUME_TOKEN }}</code></pre>
+<p>Action が wrangler でバンドルし、ビルドに失敗したときもその理由が管理画面のデプロイ履歴に残ります。</p>
+<h2 id="repo">サイトのリポジトリから（git push）</h2>
+<p>サイトの「リポジトリ」タブで「リポジトリを作成」を押すと、Kanzume 上にサイトと同じ名前の Git リポジトリができます。GitHub は要りません。</p>
+<pre><code>git remote add origin https://admin.example.com/_git/blog.git
+git push -u origin main</code></pre>
+<ul>
+<li>ユーザー名は何でもよく、パスワードには個人トークンを入力します。</li>
+<li>デフォルトブランチ（<code>main</code>）への push だけをデプロイします。ほかのブランチは保存だけします。</li>
+<li>wrangler の <code>name</code> がリポジトリ名と違うコミットはデプロイしません。</li>
+<li>デフォルトブランチは削除できません。リポジトリの容量には上限があります（<code>KANZUME_REPO_QUOTA_MB</code>）。</li>
+<li>すでに origin がある（GitHub から clone した）ときは、<code>git remote set-url origin …</code> で付け替えるか、別の名前で追加します。</li>
+<li>GitHub の URL からのデプロイと同じく Kanzume の中でバンドルするので、npm パッケージが必要なものは Actions を使ってください。</li>
+</ul>
+<h2 id="wrangler">wrangler の設定</h2>
+<p><code>wrangler.jsonc</code>・<code>wrangler.json</code>・<code>wrangler.toml</code> のどれかを読みます。使う項目は次のとおりです。</p>
+<table>
+<tr><th><code>name</code></th><td>サイトの ID（Actions と git push では必須）</td></tr>
+<tr><th><code>main</code></th><td>Worker のエントリ。なければ静的サイト</td></tr>
+<tr><th><code>compatibility_date</code> / <code>compatibility_flags</code></th><td><code>nodejs_compat</code> で node: のモジュールの一部が使える</td></tr>
+<tr><th><code>assets</code></th><td><code>directory</code>・<code>binding</code>・<code>html_handling</code>・<code>not_found_handling</code>・<code>run_worker_first</code></td></tr>
+<tr><th><code>vars</code></th><td>環境変数（管理画面の値が優先）</td></tr>
+<tr><th><code>kv_namespaces</code></th><td><code>binding</code> だけを使う（<code>id</code> は無視）</td></tr>
+<tr><th><code>r2_buckets</code></th><td><code>binding</code> と <code>bucket_name</code>（英小文字・数字・ハイフンで 2〜63 文字）</td></tr>
+</table>
+<p>サンプルの設定は、そのまま <code>wrangler deploy</code> でも Cloudflare にデプロイできます。</p>
+<pre><code>{
+  "name": "blog",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": { "directory": "./public", "binding": "ASSETS" },
+  "vars": { "GREETING": "hello" },
+  "kv_namespaces": [{ "binding": "KV", "id": "x" }],
+  "r2_buckets": [{ "binding": "BUCKET", "bucket_name": "blog" }]
+}</code></pre>
+<h2>リリース</h2>
+<p>新しいリリースは、Worker の読み込みまで成功してから切り替えます。失敗したデプロイは公開中のリリースに影響しません。リリースは新しいものから 3 つまで残します。</p>
+    <nav class="docs-pager"><a href="/docs/sites">← サイト</a><a href="/docs/members">メンバーと権限 →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

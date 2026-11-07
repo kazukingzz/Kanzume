@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>可観測性とリソース — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: 可観測性とリソース">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability" aria-current="page">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>可観測性とリソース</h1>
+<h2>可観測性</h2>
+<p>サイトの「可観測性」タブで、そのサイトへのリクエストを見られます。</p>
+<ul>
+<li>概要: 1 時間・24 時間・3 日のリクエスト数・エラー率・実行時間（p50 / p95 / p99）と、そのグラフ</li>
+<li>イベント: リクエストごとの時刻・ステータス・メソッド・パス・実行時間。結果（成功・エラー）と種類（Worker・アセット）で絞り込み、パスやログで検索できる</li>
+<li>イベントを開くと、Worker の <code>console.log</code> と例外が見られる</li>
+<li>「ライブ」で新しいリクエストを流しながら見られる</li>
+</ul>
+<p>ログは <code>KANZUME_LOG_RETENTION_HOURS</code>（既定 72 時間）だけ残します。</p>
+<h2>リソース</h2>
+<p>管理者は「リソース」タブで、コンテナの CPU とメモリの使用量・上限（cgroup の値）を見られます。</p>
+    <nav class="docs-pager"><a href="/docs/backup">← バックアップと復元</a><a href="/docs/reference">リファレンス →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

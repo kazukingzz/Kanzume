@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Kanzume — ハッカソンのための小さな Workers ホスティング</title>
-<meta name="description" content="Workers 向けのコードを書き換えずに、自分のサーバー 1 台で動かせるセルフホスト環境。Render の無料プランで動き、GitHub Actions から URL と Token だけでデプロイできます。">
+<meta name="description" content="Workers 向けのコードを書き換えずに、自分のサーバー 1 台で動かせるセルフホスト環境。サイトごとにメンバーを招待し、4 つの方法でデプロイできます。">
 <link rel="icon" href="logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 </head>
@@ -16,6 +16,7 @@
       <a href="#why">特徴</a>
       <a href="#start">始め方</a>
       <a href="#features">対応機能</a>
+      <a href="/docs/">ドキュメント</a>
       <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
     </nav>
   </div>
@@ -26,9 +27,10 @@
     <div class="wrap">
       <p class="eyebrow">ハッカソンのための小さな Workers ホスティング</p>
       <h1>Workers のコードを、<br>自分のサーバーでそのまま。</h1>
-      <p class="lead">Kanzume は、Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Render の無料プランに置けて、GitHub Actions からは URL と Token の 2 つだけでデプロイできます。</p>
+      <p class="lead">Kanzume は、Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Docker が動く小さなサーバー 1 台に置けて、サンプル・GitHub・GitHub Actions・git push の 4 つの方法でデプロイできます。</p>
       <div class="actions">
-        <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
+        <a class="button primary" href="/docs/">ドキュメントを読む</a>
+        <a class="button" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
       </div>
 
       <div class="live" aria-live="polite">
@@ -47,19 +49,19 @@
       <div class="grid">
         <article class="card">
           <h3>無料のサーバー 1 台で動く</h3>
-          <p>Render の無料プラン（512MB RAM / 0.1 CPU）を想定して、軽さを最優先に作っています。起動直後のメモリは約 35MiB です。</p>
+          <p>512MB RAM / 0.1 CPU 程度の無料プランを想定して、軽さを最優先に作っています。データは R2 などに暗号化してバックアップでき、空の状態で起動しても自動で戻ります。</p>
         </article>
         <article class="card">
           <h3>wrangler の書き方のまま</h3>
           <p>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから <code>wrangler deploy</code> でほかへ移すときも、コードはそのままです。</p>
         </article>
         <article class="card">
-          <h3>URL と Token だけでデプロイ</h3>
-          <p>GitHub Actions にステップを 1 つ足すだけです。wrangler でのバンドルも Action が引き受けるので、ほかのサービスのアカウントは要りません。</p>
+          <h3>4 つの方法でデプロイ</h3>
+          <p>サンプル、GitHub の公開リポジトリ、GitHub Actions、Kanzume 上の Git リポジトリへの push から選べます。ほかのサービスのアカウントは要りません。</p>
         </article>
         <article class="card">
           <h3>チームで見られる管理画面</h3>
-          <p>パスキーでログインし、デプロイ履歴・ビルドログ・デプロイ中のコード・リクエストごとのログやエラーを確認できます。メンバーはチーム ID で参加します。</p>
+          <p>パスキーでログインし、デプロイ履歴・コード・リクエストのログ・KV と R2 の中身を確認できます。チームには招待リンクで、そのサイトだけを任せられます。</p>
         </article>
       </div>
     </div>
@@ -71,38 +73,25 @@
       <ol class="steps">
         <li>
           <h3>Kanzume を立てる</h3>
-          <p>Docker で動かします。Render などの Docker が動くサービスにもそのまま置けます。</p>
-          <pre><code>docker build -t kanzume .
-docker run -d -p 8080:8080 -v kanzume-data:/data kanzume</code></pre>
+          <p>Docker で動かします。Railway などの Docker が動くサービスにもそのまま置けます。</p>
+          <pre><code>git clone https://github.com/kazukingzz/Kanzume.git
+cd Kanzume
+docker compose up -d</code></pre>
         </li>
         <li>
           <h3>管理画面でパスキーを登録する</h3>
-          <p><code>/_admin/kanzume</code> を開き、環境変数 <code>KANZUME_SETUP_TOKEN</code> を入力して最初のパスキーを登録します。2 人目以降は、設定に出るチーム ID を入力して登録します。</p>
+          <p><code>/_admin/kanzume</code> を開き、起動ログに出るセットアップトークンで最初のパスキーを登録し、ルートドメインを決めます。</p>
         </li>
         <li>
-          <h3>リポジトリに URL と Token を登録する</h3>
-          <p>管理画面の設定に出ている値を、デプロイしたいリポジトリの Variables（<code>KANZUME_URL</code>）と Secrets（<code>KANZUME_TOKEN</code>）に登録します。</p>
+          <h3>サイトを作ってデプロイする</h3>
+          <p>サイト名（サブドメイン）を決めてサイトを作り、サンプル・GitHub・GitHub Actions・git push のどれかでデプロイします。</p>
         </li>
         <li>
-          <h3>ワークフローを置いて push する</h3>
-          <p>あとは main に push するたびにデプロイされます。</p>
-          <pre><code>name: Deploy to Kanzume
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: kazukingzz/Kanzume/action@main
-        with:
-          url: ${{ vars.KANZUME_URL }}
-          token: ${{ secrets.KANZUME_TOKEN }}</code></pre>
+          <h3>チームを招待する</h3>
+          <p>サイトごとに招待リンクを作って渡すと、受け取った人はそのサイトだけを扱えるメンバーになります。</p>
         </li>
       </ol>
-      <p class="note">まだ何もデプロイしていない Kanzume なら、管理画面に GitHub の public リポジトリの URL を貼るだけでもデプロイできます。このページのソースは <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker" target="_blank" rel="noopener">examples/worker</a> にあります。</p>
+      <p class="note">詳しい手順は <a href="/docs/">ドキュメント</a> にあります。このページのソースは <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker" target="_blank" rel="noopener">examples/worker</a> にあります。</p>
     </div>
   </section>
 
@@ -121,7 +110,7 @@ jobs:
           </tbody>
         </table>
       </div>
-      <p class="note">Worker は 1 台のサーバーの中で動かすので、デプロイできる人（Token とチーム ID を持つ人）は信頼する前提です。詳しくは <a href="https://github.com/kazukingzz/Kanzume#readme" target="_blank" rel="noopener">README</a> を見てください。</p>
+      <p class="note">Worker は 1 台のサーバーの中で動かすので、デプロイできる人（サイトのメンバー）は信頼する前提です。詳しくは <a href="/docs/reference">リファレンス</a> を見てください。</p>
     </div>
   </section>
 

@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>データベースとストレージ — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: データベースとストレージ">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data" aria-current="page">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>データベースとストレージ</h1>
+<p>KV と R2 のデータはサイトごとに分かれます（同じ binding 名でも、別のサイトのデータとは混ざりません）。管理画面では、デプロイ前のサイトでもタブが表示され、データがなければ wrangler の設定の例が出ます。</p>
+<h2 id="kv">データベース（KV）</h2>
+<ul>
+<li>名前空間（binding）ごとにキーを一覧し、キーの先頭で絞り込めます。</li>
+<li>キーを開くと、値（JSON は整形して表示）・metadata・有効期限が見られます。</li>
+<li>キーの追加・値の編集・削除ができます。値は文字列で保存し、有効期限（60 秒以上）も付けられます。</li>
+<li>バイナリの値は表示・編集できません。大きな値は先頭の 256 KiB だけを表示します。</li>
+</ul>
+<h2 id="r2">ストレージ（R2）</h2>
+<ul>
+<li>バケットごとに、<code>/</code> 区切りのキーをフォルダとしてたどれます。</li>
+<li>オブジェクトを開くと、テキストならプレビューが出て、サイズ・Content-Type・アップロード日時・ETag が見られます。</li>
+<li>ダウンロード・削除と、今のフォルダへのアップロード（複数ファイル可。<code>KANZUME_MAX_UPLOAD_MB</code> まで）ができます。</li>
+<li>ダウンロードは常にファイルとして保存されます（管理画面のオリジンで開かれないようにするため）。</li>
+</ul>
+<p>wrangler の設定から外したあともデータが残っている名前空間・バケットは「設定にない」と表示されます。</p>
+    <nav class="docs-pager"><a href="/docs/members">← メンバーと権限</a><a href="/docs/backup">バックアップと復元 →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

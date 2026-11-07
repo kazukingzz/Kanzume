@@ -136,3 +136,31 @@ td.ng { color: var(--bad); }
   .cta { padding: 48px 0; }
   .cta h2 { font-size: 21px; }
 }
+
+/* ドキュメント（/docs/） */
+.docs { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 48px; padding-top: 40px; padding-bottom: 64px; }
+.docs-toc { position: sticky; top: 80px; align-self: start; display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.docs-toc a { color: var(--muted); text-decoration: none; padding: 6px 10px; border-radius: 6px; }
+.docs-toc a:hover { color: var(--text); background: var(--alt); }
+.docs-toc a[aria-current="page"] { color: var(--accent); background: var(--alt); font-weight: 600; }
+.docs-body { min-width: 0; max-width: 760px; }
+.docs-body h1 { font-size: 32px; margin-bottom: 20px; }
+.docs-body h2 { font-size: 22px; margin: 40px 0 12px; padding-top: 8px; border-top: 1px solid var(--line); }
+.docs-body p { margin: 0 0 14px; }
+.docs-body .lead { margin-bottom: 8px; }
+.docs-body ul, .docs-body ol { margin: 0 0 14px; padding-left: 22px; }
+.docs-body li { margin: 4px 0; }
+.docs-body pre { margin: 0 0 16px; padding: 14px 16px; background: var(--code); border-radius: 8px; overflow-x: auto; line-height: 1.6; }
+.docs-body table { margin: 0 0 16px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; border-collapse: separate; border-spacing: 0; overflow: hidden; }
+.docs-body th { width: 30%; white-space: normal; }
+.callout { padding: 12px 16px; background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--warn); border-radius: 8px; font-size: 15px; }
+.docs-pager { display: flex; justify-content: space-between; gap: 16px; margin-top: 48px; padding-top: 20px; border-top: 1px solid var(--line); font-size: 15px; }
+.docs-pager a { text-decoration: none; font-weight: 600; }
+@media (max-width: 860px) {
+  .docs { grid-template-columns: minmax(0, 1fr); gap: 24px; padding-top: 24px; }
+  .docs-toc { position: static; flex-direction: row; flex-wrap: wrap; gap: 6px; }
+  .docs-toc a { border: 1px solid var(--line); background: var(--panel); }
+  .docs-body h1 { font-size: 26px; }
+  .docs-body th { width: auto; min-width: 6.5em; }
+  .docs-body table { display: block; overflow-x: auto; }
+}

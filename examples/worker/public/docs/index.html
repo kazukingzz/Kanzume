@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kanzume ドキュメント — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: Kanzume ドキュメント">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/" aria-current="page">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>Kanzume ドキュメント</h1>
+<p class="lead">Kanzume は、Cloudflare Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を、書き換えずに自分のサーバー 1 台で動かせるセルフホスト環境です。ハッカソンのように、短い期間に複数のチームがそれぞれのサイトを公開する場面を想定しています。</p>
+<h2>できること</h2>
+<ul>
+<li>サイトをいくつでも置き、<code>&lt;サイト名&gt;.example.com</code> のサブドメインで配信する（1 つはルートドメインでも配信できる）</li>
+<li>Worker・静的アセット・KV・R2・環境変数・シークレットを wrangler の設定どおりに使う</li>
+<li>4 つの方法でデプロイする（サンプル・GitHub の公開リポジトリ・GitHub Actions・Kanzume 上の Git リポジトリへの push）</li>
+<li>パスキーでログインする管理画面で、デプロイ履歴・コード・リクエストのログ・KV / R2 の中身を見る</li>
+<li>サイトごとにメンバーを招待し、そのサイトだけを任せる</li>
+<li>データを S3 互換ストレージ（Cloudflare R2 など）に暗号化してバックアップし、空の状態で起動したら自動で復元する</li>
+</ul>
+<h2>できないこと・注意</h2>
+<ul>
+<li>Cron Triggers・D1・Durable Objects・Queues・WebSocket などには対応していません（<a href="/docs/reference">対応している機能</a>）。</li>
+<li>Worker は <code>node:vm</code> で Kanzume と同じプロセスの中で動きます。セキュリティ境界ではないので、デプロイできる人は信頼できる相手に限ってください。</li>
+<li>npm パッケージを使うコードは、GitHub Actions でバンドルしてからデプロイします。</li>
+</ul>
+<h2>このドキュメント</h2>
+<ol class="toc-list">
+<li><a href="/docs/setup">立てる</a> — Docker で動かし、最初のパスキーとドメインを決める</li>
+<li><a href="/docs/sites">サイト</a> — サイトの作成・サブドメイン・環境変数・シークレット</li>
+<li><a href="/docs/deploy">デプロイ</a> — 4 つのデプロイ方法と wrangler の設定</li>
+<li><a href="/docs/members">メンバーと権限</a> — 管理者・メンバー・招待・個人トークン</li>
+<li><a href="/docs/data">データベースとストレージ</a> — KV と R2 の中身を見る・直す</li>
+<li><a href="/docs/backup">バックアップと復元</a> — 外部ストレージへの保存と自動復元</li>
+<li><a href="/docs/observability">可観測性とリソース</a> — リクエストのログ・実行時間・CPU とメモリ</li>
+<li><a href="/docs/reference">リファレンス</a> — 対応している機能・環境変数・制限</li>
+</ol>
+    <nav class="docs-pager"><span></span><a href="/docs/setup">立てる →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

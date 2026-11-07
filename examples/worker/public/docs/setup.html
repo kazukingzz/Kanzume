@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>立てる — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: 立てる">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup" aria-current="page">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>立てる</h1>
+<h2>Docker で動かす</h2>
+<p>リポジトリを取得して、Docker Compose で起動します。データはすべて <code>/data</code>（Compose ではボリューム <code>kanzume-data</code>）に置かれます。</p>
+<pre><code>git clone https://github.com/kazukingzz/Kanzume.git
+cd Kanzume
+docker compose up -d</code></pre>
+<p>Compose を使わない場合は次のとおりです。</p>
+<pre><code>docker build -t kanzume .
+docker run -d -p 8080:8080 -v kanzume-data:/data kanzume</code></pre>
+<p><code>KANZUME_ORIGIN</code>・<code>KANZUME_SETUP_TOKEN</code>・<code>KANZUME_BACKUP_URL</code>・<code>KANZUME_PORT</code>（公開するポート。既定 8080）は、<code>.env</code> か環境変数で渡します。ほかの設定は <a href="/docs/reference#env">環境変数の一覧</a> を見てください。</p>
+<h2>最初のパスキーを登録する</h2>
+<ol>
+<li><code>https://&lt;あなたのホスト&gt;/_admin/kanzume</code> を開きます。</li>
+<li>セットアップトークンを入力します。<code>KANZUME_SETUP_TOKEN</code> を渡していなければ、起動ログ（<code>docker compose logs</code>）に出ています。</li>
+<li>ルートドメイン（例: <code>example.com</code>）を確かめて、「パスキーを登録」を押します。</li>
+</ol>
+<p>最初にパスキーを登録した人が管理者になります。ほかの人は、管理者が作る <a href="/docs/members#invite">招待リンク</a> から参加します。</p>
+<h2>ドメインと DNS</h2>
+<p>サイトは <code>&lt;サイト名&gt;.&lt;ルートドメイン&gt;</code> で配信します。DNS は、ドメイン本体（<code>example.com</code>）とワイルドカード（<code>*.example.com</code>）の両方を Kanzume に向けてください。</p>
+<ul>
+<li>ルートドメインは「管理者設定 &gt; ドメイン」で変えられます。環境変数 <code>KANZUME_ORIGIN</code>（例: <code>https://example.com</code>）を渡すと、そちらが優先されます。</li>
+<li>管理画面は、サイトに使っていないホスト（例: <code>admin.example.com</code>）でも開けます。管理画面を開いているホスト名は、サイトのサブドメインには使えません。</li>
+<li>パスキーは管理画面を開いたホスト名に結び付きます。ホストを変えると、そのホストでパスキーを登録し直す必要があります。</li>
+</ul>
+<h2>PaaS で動かすとき</h2>
+<p>Railway・Render などの Docker が動くサービスにも置けます。ワイルドカードのカスタムドメイン（<code>*.example.com</code>）を設定できるサービスを選んでください。</p>
+<ul>
+<li><code>/data</code> に永続ボリュームを付けられるなら付けます。</li>
+<li>付けられない（再デプロイでデータが消える）場合は、<a href="/docs/backup">バックアップ</a> を設定してください。空の <code>/data</code> で起動したときに、最新の状態が自動で戻ります。</li>
+<li>メモリ 512MB・0.1 CPU 程度でも動くように作っています。</li>
+</ul>
+    <nav class="docs-pager"><a href="/docs/">← はじめに</a><a href="/docs/sites">サイト →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>

@@ -1,0 +1,65 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>バックアップと復元 — Kanzume ドキュメント</title>
+<meta name="description" content="Kanzume のドキュメント: バックアップと復元">
+<link rel="icon" href="/logo.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="nav">
+  <div class="wrap nav-inner">
+    <a class="logo" href="/"><img src="/logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <nav class="nav-links">
+      <a href="/docs/">ドキュメント</a>
+      <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
+    </nav>
+  </div>
+</header>
+<div class="wrap docs">
+  <nav class="docs-toc" aria-label="ドキュメントの目次">
+    <a href="/docs/">はじめに</a>
+    <a href="/docs/setup">立てる</a>
+    <a href="/docs/sites">サイト</a>
+    <a href="/docs/deploy">デプロイ</a>
+    <a href="/docs/members">メンバーと権限</a>
+    <a href="/docs/data">データベースとストレージ</a>
+    <a href="/docs/backup" aria-current="page">バックアップと復元</a>
+    <a href="/docs/observability">可観測性とリソース</a>
+    <a href="/docs/reference">リファレンス</a>
+  </nav>
+  <main class="docs-body">
+    <h1>バックアップと復元</h1>
+<p>環境変数 <code>KANZUME_BACKUP_URL</code> に S3 互換ストレージ（Cloudflare R2・AWS S3・B2・MinIO）を指定すると、<code>/data</code> の中身を暗号化して保存し、<code>/data</code> が空の状態で起動したときに最新の世代を自動で復元します。復元が終わるまで、リクエストは受け付けません。未設定ならバックアップしません。</p>
+<h2>設定</h2>
+<pre><code>KANZUME_BACKUP_URL=s3://&lt;ACCESS_KEY_ID&gt;:&lt;SECRET_ACCESS_KEY&gt;@&lt;ACCOUNT_ID&gt;.r2.cloudflarestorage.com/&lt;BUCKET&gt;[/&lt;PREFIX&gt;]</code></pre>
+<ul>
+<li>Cloudflare R2 の API トークンは「Object Read &amp; Write」で、対象をそのバケットだけに絞って作ります。エンドポイントは R2 のバケットの設定にある「S3 API」の URL です。</li>
+<li>鍵に <code>/</code> <code>+</code> <code>@</code> などが入るときはパーセントエンコードします。</li>
+<li>クエリで <code>keep</code>（残す世代数。既定 48）と <code>interval</code>（定期実行の間隔・分。既定 60）を変えられます。</li>
+<li><code>s3+http://</code> は http のエンドポイント（手元の MinIO など）、<code>file:///path</code> はローカルのディレクトリ（開発用）です。</li>
+</ul>
+<h2>いつ保存されるか</h2>
+<ul>
+<li>デプロイ・設定の変更・パスキーの登録・リポジトリの作成や削除のあと（30 秒まとめてから）</li>
+<li>定期実行（既定 1 時間ごと）。KV / R2 への書き込みや、デプロイしない git push はここで拾います</li>
+<li>止まる前（停止のシグナルを受けたとき、数秒の猶予の中で）</li>
+<li>管理者設定の「今すぐバックアップ」</li>
+</ul>
+<p>変わったファイルだけを送ります（中身ごとに一度だけ保存）。前回から変更がなければ、新しい世代は作りません。パスキーが 1 つも登録されていない（空・作りかけの）状態は保存しません。</p>
+<h2>保存されるもの</h2>
+<p>パスキー・ユーザー・トークン・ドメイン、サイト（リリース・設定・環境変数・シークレット）、KV と R2 のデータ、Git リポジトリ、デプロイ履歴とログです。SQLite は一貫したスナップショットを取ってから送ります。データは AES-256-GCM で暗号化し、保存先に平文は残りません。</p>
+<h2>鍵の入れ替え</h2>
+<p>暗号化の鍵は SECRET_ACCESS_KEY から導出します。API トークンを作り直して SECRET が変わったら、一度だけ URL に <code>?previous=&lt;旧 SECRET&gt;</code> を付けて起動してください。鍵が引き継がれ、以後は外して構いません（古い世代もそのまま読めます）。</p>
+<h2>状態の確認</h2>
+<p>「管理者設定 &gt; バックアップ」に、保存先・最新の世代・最後の実行の結果・起動時の復元の結果が出ます。ログにも <code>[backup]</code> で始まる行が出ます。認証情報はどこにも表示しません。</p>
+    <nav class="docs-pager"><a href="/docs/data">← データベースとストレージ</a><a href="/docs/observability">可観測性とリソース →</a></nav>
+  </main>
+</div>
+<footer class="footer">
+  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
+</footer>
+</body>
+</html>
