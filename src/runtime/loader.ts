@@ -138,7 +138,7 @@ export class LoadedWorker {
 }
 
 /** wrangler の vars に、管理画面で設定した環境変数とシークレットを上書きしたもの */
-function siteVars(release: Release, siteDir: string): Record<string, unknown> {
+export function siteVars(release: Release, siteDir: string): Record<string, unknown> {
   const settings = readSiteSettings(siteDir);
   return { ...release.manifest.vars, ...settings.vars, ...settings.secrets };
 }
@@ -164,11 +164,12 @@ function message(err: unknown): string {
  * GC されず、再デプロイや LRU で捨てた Worker のメモリが戻らないため。Action 側で CommonJS に変換したものを
  * vm.Script で読み込む。
  */
-export async function loadWorker(release: Release, siteDir: string, timeout: number): Promise<LoadedWorker> {
+/** vars を渡すとそれを使う（子プロセスは settings.json を読めないので、本体が読んで渡す） */
+export async function loadWorker(release: Release, siteDir: string, timeout: number, givenVars?: Record<string, unknown>): Promise<LoadedWorker> {
   const { manifest } = release;
   if (!manifest.main) throw new WorkerError("Worker がありません");
   const workerDir = path.join(release.dir, "worker");
-  const vars = siteVars(release, siteDir);
+  const vars = givenVars ?? siteVars(release, siteDir);
   const env = buildEnv(release, siteDir, vars);
   const context = vm.createContext(createGlobals(manifest.name, manifest.compatibilityFlags, vars), {
     name: `kanzume:${manifest.name}`,

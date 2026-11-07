@@ -45,7 +45,7 @@
 <h2>できないこと・注意</h2>
 <ul>
 <li>Cron Triggers・D1・Durable Objects・Queues・WebSocket などには対応していません（<a href="/docs/reference">対応している機能</a>）。</li>
-<li>Worker は <code>node:vm</code> で Kanzume と同じプロセスの中で動きます。セキュリティ境界ではないので、デプロイできる人は信頼できる相手に限ってください。</li>
+<li>Worker はサイトごとに別のユーザーの子プロセスで動き、自分のサイトのデータにしか触れません（<a href="/docs/reference#isolation">Worker の分離</a>）。静的サイトはプロセスを使いません。</li>
 <li>npm パッケージを使うコードは、GitHub Actions でバンドルしてからデプロイします。</li>
 </ul>
 <h2>このドキュメント</h2>

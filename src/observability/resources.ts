@@ -173,3 +173,13 @@ export class ResourceMonitor {
     clearInterval(this.#timer);
   }
 }
+
+/** プロセスの常駐メモリ（バイト）。/proc が読めなければ null */
+export function processRss(pid: number): number | null {
+  try {
+    const kb = /^VmRSS:\s+(\d+)\s+kB$/m.exec(fs.readFileSync(`/proc/${pid}/status`, "utf8"))?.[1];
+    return kb ? Number(kb) * 1024 : null;
+  } catch {
+    return null;
+  }
+}

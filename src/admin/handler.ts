@@ -1,3 +1,4 @@
+import path from "node:path";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -17,7 +18,7 @@ import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import type { DeployHistory } from "../deploy/history.ts";
 import { configuredRootHost, readBody, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
 import type { Observability } from "../observability/events.ts";
-import type { ResourceMonitor } from "../observability/resources.ts";
+import { processRss, type ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SettingsError, type SettingsPatch, type SiteSettings, type Sites } from "../sites.ts";
 import { PROJECT_NAME } from "../store.ts";
@@ -491,7 +492,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, { worker: sample("worker"), portfolio: sample("portfolio") });
     }
 
-    if (route === "GET /api/resources") return sendJson(res, 200, resources.snapshot());
+    if (route === "GET /api/resources") {
+      const workers = runtime.processes().map((p) => ({ site: path.basename(p.siteDir), pid: p.pid, rss: processRss(p.pid) }));
+      return sendJson(res, 200, { ...resources.snapshot(), workers });
+    }
 
     const siteUrls = (name: string) => sites.urls(siteRoot, name);
 

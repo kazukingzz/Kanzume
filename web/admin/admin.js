@@ -969,6 +969,8 @@ function drawResources(body, r, prev) {
   const buckets = r.samples.map((s) => ({ t: s.t, cpu: cpuPct(s.cpu), memory: s.memory / 1024 / 1024, heap: s.heap / 1024 / 1024 }));
   const peakCpu = Math.max(0, ...buckets.map((b) => b.cpu ?? 0));
   const peakMem = Math.max(0, ...r.samples.map((s) => s.memory));
+  const workers = r.workers ?? [];
+  const workerRss = workers.reduce((sum, w) => sum + (w.rss ?? 0), 0);
   const tile = (label, value, note) => h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
   const xLabel = (v) => fmtTime(v);
 
@@ -977,6 +979,7 @@ function drawResources(body, r, prev) {
     const memory = h("div", { class: "chart" });
     const tiles = h("div", { class: "tiles" });
     const tables = [h("div"), h("div")];
+    const workers = h("div");
     body.replaceChildren(
       tiles,
       h(
@@ -985,9 +988,10 @@ function drawResources(body, r, prev) {
         h("section", { class: "chart-card" }, h("h2", { text: "CPU" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), cpuLimit ? "上限に対する使用率" : "使用率（1 コア = 100%）")), cpu, tables[0]),
         h("section", { class: "chart-card" }, h("h2", { text: "メモリ" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), "コンテナ"), h("span", {}, h("i", { class: "key line s2" }), "JS ヒープ")), memory, tables[1]),
       ),
+      workers,
       h("p", { class: "muted hint", text: `${SOURCE_NOTE[r.source]}${r.limits.cpuRaw ? `CPU の上限は ${r.limits.cpuRaw} から計算した、実際にかかっている上限です（ホスティングの公称値と違うことがあります）。` : ""}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。` }),
     );
-    prev = { cpu, memory, tiles, tables, data: null };
+    prev = { cpu, memory, tiles, tables, workers, data: null };
     new ResizeObserver(() => prev.data && prev.render()).observe(cpu);
   }
   prev.data = { buckets, xLabel };
@@ -1003,6 +1007,18 @@ function drawResources(body, r, prev) {
     tile("CPU（30 分の最大）", fmtPct(peakCpu), `${fmtCores((peakCpu / 100) * (cpuLimit ?? 1))} CPU`),
     tile("メモリ", fmtMiB(latest?.memory), `${memLimit ? `上限 ${fmtMiB(memLimit)}（${fmtPct((latest.memory / memLimit) * 100)}）` : "上限なし"} · 30 分の最大 ${fmtMiB(peakMem)}`),
     tile("Node プロセス", fmtMiB(latest?.rss), `JS ヒープ ${fmtMiB(latest?.heap)}`),
+  );
+  fill(
+    prev.workers,
+    h(
+      "section",
+      { class: "card workers-card" },
+      h("div", { class: "card-head" }, h("h2", { text: "Worker のプロセス" }), h("span", { class: "muted", text: workers.length ? `${workers.length} 個 · 合計 ${fmtMiB(workerRss)}` : "0 個" })),
+      h("p", { class: "muted hint", text: "Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。" }),
+      workers.length
+        ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "サイト" }), h("th", { class: "num", text: "PID" }), h("th", { class: "num", text: "メモリ" }))), h("tbody", {}, ...workers.map((w) => h("tr", {}, h("td", { text: w.site }), h("td", { class: "num", text: String(w.pid) }), h("td", { class: "num", text: fmtMiB(w.rss) }))))))
+        : null,
+    ),
   );
   const keepOpen = (el) => el.querySelector("details")?.open;
   const [t0, t1] = prev.tables;

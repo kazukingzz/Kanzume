@@ -45,6 +45,15 @@
 <tr><th>Cron Triggers・D1・Durable Objects・Queues</th><td class="ng">×</td><td>未対応</td></tr>
 <tr><th>WebSocket・HTMLRewriter・Service Worker 形式</th><td class="ng">×</td><td>未対応</td></tr>
 </table>
+<h2 id="isolation">Worker の分離</h2>
+<p>Worker 付きのサイトは、サイトごとに 1 つの子プロセスで動きます。Kanzume 本体（管理画面・静的アセット・Git・バックアップ）は Worker のコードを動かしません。</p>
+<ul>
+<li>子プロセスはサイトごとに別のユーザー（uid 20000〜）で動き、Node の権限モデル（<code>--permission</code>）で、読み書きできるのはそのサイトのディレクトリだけです。<code>child_process</code>・<code>worker_threads</code> は使えません。</li>
+<li>ほかのサイトの KV・R2・シークレット、Kanzume のセッションやトークン（<code>admin.json</code>）、Kanzume の環境変数（<code>KANZUME_BACKUP_URL</code> など）には届きません。シークレットは起動時に本体から渡します。</li>
+<li>子プロセスのヒープは 64 MiB までです。しばらく使われない子は止まり、次のアクセスで起動し直します（<code>KANZUME_WORKER_IDLE_SEC</code>・<code>KANZUME_MAX_WORKERS</code>）。落ちても次のリクエストで起動し直します。</li>
+<li>別のユーザーで子を起動するため、Kanzume 本体は root で動きます（Docker イメージの既定）。root でないときは権限モデルだけで守り、起動ログに警告を出します。</li>
+<li>静的サイト（Worker のないサイト）は本体が配信し、子プロセスは起動しません。</li>
+</ul>
 <h2 id="env">環境変数</h2>
 <table>
 <tr><th><code>PORT</code></th><td>待ち受けるポート（8080）</td></tr>
@@ -55,8 +64,9 @@
 <tr><th><code>KANZUME_MAX_UPLOAD_MB</code></th><td>デプロイ・アップロードの上限（50）</td></tr>
 <tr><th><code>KANZUME_REPO_QUOTA_MB</code></th><td>Git リポジトリ 1 つの容量の上限（200）</td></tr>
 <tr><th><code>KANZUME_CPU_TIMEOUT_MS</code></th><td>Worker の同期処理の打ち切り時間（5000）</td></tr>
-<tr><th><code>KANZUME_WORKER_IDLE_SEC</code></th><td>使われていない Worker をメモリから外すまでの時間（600）</td></tr>
-<tr><th><code>KANZUME_MAX_WORKERS</code></th><td>同時にメモリに載せる Worker の数（5）</td></tr>
+<tr><th><code>KANZUME_WORKER_IDLE_SEC</code></th><td>使われていない Worker の子プロセスを止めるまでの時間（600）</td></tr>
+<tr><th><code>KANZUME_MAX_WORKERS</code></th><td>同時に動かす Worker の子プロセスの数（5）</td></tr>
+<tr><th><code>KANZUME_ISOLATION</code></th><td><code>inline</code> にすると Worker を子プロセスに分けず本体の中で動かす（開発・切り分け用。分離されません）</td></tr>
 <tr><th><code>KANZUME_LOG_RETENTION_HOURS</code></th><td>リクエストのログを残す時間（72）</td></tr>
 <tr><th><code>KANZUME_SAMPLES_REPO</code></th><td>管理画面のサンプルの取得元（fork したら自分のリポジトリの <code>https://github.com/&lt;owner&gt;/&lt;repo&gt;/tree/&lt;branch&gt;</code>）</td></tr>
 </table>

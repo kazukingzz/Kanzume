@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { setImmediate as tick } from "node:timers/promises";
 import { test } from "node:test";
 import { closeSiteDb } from "../src/bindings/db.ts";
-import { loadWorker, WorkerError } from "../src/runtime/loader.ts";
+import { loadWorker, WorkerError, type LoadedWorker } from "../src/runtime/loader.ts";
 import { Runtime } from "../src/runtime/runtime.ts";
 import type { Manifest } from "../src/store.ts";
 import { manifest, release, toCjs } from "./helpers.ts";
@@ -181,7 +181,7 @@ test("再デプロイで差し替えた古い Worker のコンテキストは GC
   await (async () => {
     const old = await runtime.get(a.r);
     await old.fetch(new Request("http://x/"));
-    registry.register(old.context, "old");
+    registry.register((old as LoadedWorker).context, "old");
   })();
 
   const v2 = toCjs(t, { "worker/index.js": `export default { fetch() { return new Response("v2"); } }` });

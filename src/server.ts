@@ -15,15 +15,38 @@ import { Sites } from "./sites.ts";
 import { Repos } from "./git/repos.ts";
 import { createGitHandler, installHooks } from "./git/server.ts";
 import { closeAllSiteDbs } from "./bindings/db.ts";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { isRoot } from "./runtime/process.ts";
 import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
+
+/**
+ * Worker の子プロセス（サイトごとの別ユーザー）から、本体のデータが見えないようにする。
+ * 本体が作るファイルは本人とグループだけが読み書きできるようにし（umask 007）、/data の直下は一覧を見せない
+ */
+async function protectDataDir(dataDir: string): Promise<void> {
+  if (!isRoot()) {
+    console.warn("[kanzume] root で動いていないので、Worker の子プロセスを別のユーザーに分けられません（Node の権限モデルだけで制限します）");
+    return;
+  }
+  process.umask(0o007);
+  await fs.mkdir(path.join(dataDir, "sites"), { recursive: true });
+  await fs.chmod(dataDir, 0o711);
+  await fs.chmod(path.join(dataDir, "sites"), 0o711);
+  for (const name of ["admin.json", "meta.sqlite", "meta.sqlite-wal", "meta.sqlite-shm", "sites/_root", "sites/_uids.json"]) {
+    await fs.chmod(path.join(dataDir, name), 0o600).catch(() => {});
+  }
+  for (const name of ["repos", "git-hooks"]) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
+}
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions>; backup?: Backup | null } = {}) {
   const sites = new Sites(config.dataDir);
   await sites.init();
   const state = new AdminState(config.dataDir);
   await state.init();
-  const runtime = new Runtime({ idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs, maxWorkers: config.maxWorkers });
+  if (config.isolation === "process") await protectDataDir(config.dataDir);
+  const runtime = new Runtime({ idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs, maxWorkers: config.maxWorkers, isolation: config.isolation, dataDir: config.dataDir });
 
   const metaDb = openMetaDb(config.dataDir);
   const history = new DeployHistory(metaDb);

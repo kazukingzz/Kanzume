@@ -20,6 +20,8 @@ export interface Config {
   /** 管理画面の「サンプルからデプロイ」が使う examples の場所（fork したら自分のリポジトリにする） */
   samplesRepo: string;
   logRetentionHours: number;
+  /** Worker の動かし方。process はサイトごとの子プロセス（既定）、inline は本体と同じプロセス（開発用） */
+  isolation: "process" | "inline";
   /** KANZUME_BACKUP_URL。未設定なら null（バックアップしない） */
   backup: BackupConfig | null;
 }
@@ -47,5 +49,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     samplesRepo: (env.KANZUME_SAMPLES_REPO || "https://github.com/kazukingzz/Kanzume/tree/main").replace(/\/+$/, ""),
     logRetentionHours: Number(env.KANZUME_LOG_RETENTION_HOURS || 72),
     backup: parseBackupUrl(env.KANZUME_BACKUP_URL),
+    isolation: env.KANZUME_ISOLATION === "inline" ? "inline" : "process",
   };
 }
