@@ -13,10 +13,9 @@
 <body>
 <header class="nav">
   <div class="wrap nav-inner">
-    <a class="logo" href="./"><img src="logo.svg" alt="" width="36" height="36"><span>Kanzume</span></a>
+    <a class="logo" href="./"><img src="logo.svg" alt="" width="24" height="24"><span>Kanzume</span></a>
     <nav class="nav-links">
       <a href="#why">特徴</a>
-      <a href="#start">始め方</a>
       <a href="#features">対応機能</a>
       <a href="/docs/">ドキュメント</a>
       <a class="button small" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub</a>
@@ -26,74 +25,103 @@
 
 <main>
   <section class="hero">
+    <svg class="hero-bg" aria-hidden="true" focusable="false">
+      <g class="grid">
+        <line pathLength="1" x1="0" y1="10%" x2="100%" y2="10%"/>
+        <line pathLength="1" x1="0" y1="20%" x2="100%" y2="20%"/>
+        <line pathLength="1" x1="0" y1="30%" x2="100%" y2="30%"/>
+        <line pathLength="1" x1="0" y1="40%" x2="100%" y2="40%"/>
+        <line pathLength="1" x1="0" y1="50%" x2="100%" y2="50%"/>
+        <line pathLength="1" x1="0" y1="60%" x2="100%" y2="60%"/>
+        <line pathLength="1" x1="0" y1="70%" x2="100%" y2="70%"/>
+        <line pathLength="1" x1="0" y1="80%" x2="100%" y2="80%"/>
+        <line pathLength="1" x1="0" y1="90%" x2="100%" y2="90%"/>
+        <line x1="8%" y1="0" pathLength="1" x2="8%" y2="100%"/>
+        <line x1="16%" y1="0" pathLength="1" x2="16%" y2="100%"/>
+        <line x1="24%" y1="0" pathLength="1" x2="24%" y2="100%"/>
+        <line x1="32%" y1="0" pathLength="1" x2="32%" y2="100%"/>
+        <line x1="40%" y1="0" pathLength="1" x2="40%" y2="100%"/>
+        <line x1="48%" y1="0" pathLength="1" x2="48%" y2="100%"/>
+        <line x1="56%" y1="0" pathLength="1" x2="56%" y2="100%"/>
+        <line x1="64%" y1="0" pathLength="1" x2="64%" y2="100%"/>
+        <line x1="72%" y1="0" pathLength="1" x2="72%" y2="100%"/>
+        <line x1="80%" y1="0" pathLength="1" x2="80%" y2="100%"/>
+        <line x1="88%" y1="0" pathLength="1" x2="88%" y2="100%"/>
+        <line x1="96%" y1="0" pathLength="1" x2="96%" y2="100%"/>
+      </g>
+      <g class="pulses">
+        <g class="pulse" style="--d:14s;--delay:-3s"><line x1="-120" y1="20%" x2="0" y2="20%"/><circle cx="0" cy="20%" r="2"/></g>
+        <g class="pulse" style="--d:11s;--delay:-9s"><line x1="-120" y1="40%" x2="0" y2="40%"/><circle cx="0" cy="40%" r="2"/></g>
+        <g class="pulse" style="--d:17s;--delay:-1s"><line x1="-120" y1="50%" x2="0" y2="50%"/><circle cx="0" cy="50%" r="2"/></g>
+        <g class="pulse" style="--d:12s;--delay:-6s"><line x1="-120" y1="70%" x2="0" y2="70%"/><circle cx="0" cy="70%" r="2"/></g>
+        <g class="pulse" style="--d:15s;--delay:-11s"><line x1="-120" y1="80%" x2="0" y2="80%"/><circle cx="0" cy="80%" r="2"/></g>
+      </g>
+    </svg>
+    <div class="hero-shade" aria-hidden="true"></div>
     <div class="wrap">
-      <p class="eyebrow">ハッカソンのための小さな Workers ホスティング</p>
-      <h1>Workers のコードを、<br>自分のサーバーでそのまま。</h1>
-      <p class="lead">Kanzume は、Workers 向けに書いたコード（<code>export default { fetch }</code> と <code>wrangler.jsonc</code>）を書き換えずに動かせるセルフホスト環境です。Docker が動く小さなサーバー 1 台に置けて、サンプル・GitHub・GitHub Actions・git push の 4 つの方法でデプロイできます。</p>
+      <p class="eyebrow" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="live-text">このページも Kanzume 上の Worker が配信中</span></p>
+      <h1><span>Workers の</span><span>コードを、</span><br><span>自分の</span><span>サーバーで</span><span>そのまま。</span></h1>
       <div class="actions">
-        <a class="button primary" href="/docs/">ドキュメントを読む</a>
-        <a class="button" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub で見る</a>
-      </div>
-
-      <div class="live" aria-live="polite">
-        <span class="dot" aria-hidden="true"></span>
-        <div>
-          <strong>このページも Kanzume で動いています。</strong>
-          <span id="live-text">Worker に問い合わせ中…</span>
-        </div>
+        <a class="button" href="/docs/">ドキュメントを読む</a>
+        <a class="button" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub でソースを見る</a>
       </div>
     </div>
   </section>
 
   <section id="why" class="section">
-    <div class="wrap">
-      <h2>ハッカソンで使いやすい理由</h2>
-      <div class="grid">
-        <article class="card">
-          <h3>無料のサーバー 1 台で動く</h3>
-          <p>512MB RAM / 0.1 CPU 程度の無料プランを想定して、軽さを最優先に作っています。データは R2 などに暗号化してバックアップでき、空の状態で起動しても自動で戻ります。</p>
-        </article>
-        <article class="card">
-          <h3>wrangler の書き方のまま</h3>
-          <p>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから <code>wrangler deploy</code> でほかへ移すときも、コードはそのままです。</p>
-        </article>
-        <article class="card">
-          <h3>4 つの方法でデプロイ</h3>
-          <p>サンプル、GitHub の公開リポジトリ、GitHub Actions、Kanzume 上の Git リポジトリへの push から選べます。ほかのサービスのアカウントは要りません。</p>
-        </article>
-        <article class="card">
-          <h3>チームで見られる管理画面</h3>
-          <p>パスキーでログインし、デプロイ履歴・コード・リクエストのログ・KV と R2 の中身を確認できます。チームには招待リンクで、そのサイトだけを任せられます。</p>
-        </article>
+    <div class="wrap feature">
+      <div class="feature-text">
+        <h2>ハッカソンで使いやすい理由</h2>
+        <p class="feature-lead">Cloudflare に出す前のコードを、そのまま自分の缶に詰めて配る。Kanzume がやるのはそれだけです。</p>
+        <ul class="checks">
+          <li><strong>無料のサーバー 1 台で動く</strong><span>512MB RAM / 0.1 CPU 程度の無料プランを想定して、軽さを最優先に作っています。データは R2 などに暗号化してバックアップでき、空の状態で起動しても自動で戻ります。</span></li>
+          <li><strong>wrangler の書き方のまま</strong><span>fetch ハンドラ・KV・R2・静的アセットを wrangler の設定どおりに使えます。あとから <code>wrangler deploy</code> でほかへ移すときも、コードはそのままです。</span></li>
+          <li><strong>4 つの方法でデプロイ</strong><span>サンプル、GitHub の公開リポジトリ、GitHub Actions、Kanzume 上の Git リポジトリへの push から選べます。ほかのサービスのアカウントは要りません。</span></li>
+          <li><strong>チームで見られる管理画面</strong><span>パスキーでログインし、デプロイ履歴・コード・リクエストのログ・KV と R2 の中身を確認できます。チームには招待リンクで、そのサイトだけを任せられます。</span></li>
+        </ul>
       </div>
-    </div>
-  </section>
-
-  <section id="start" class="section alt">
-    <div class="wrap">
-      <h2>始め方</h2>
-      <ol class="steps">
-        <li>
-          <h3>Kanzume を立てる</h3>
-          <p>Docker で動かします。Railway などの Docker が動くサービスにもそのまま置けます。</p>
-          <pre><code>git clone https://github.com/kazukingzz/Kanzume.git
-cd Kanzume
-docker compose up -d</code></pre>
-        </li>
-        <li>
-          <h3>管理画面でパスキーを登録する</h3>
-          <p><code>/_admin/kanzume</code> を開き、起動ログに出るセットアップトークンで最初のパスキーを登録し、ルートドメインを決めます。</p>
-        </li>
-        <li>
-          <h3>サイトを作ってデプロイする</h3>
-          <p>サイト名（サブドメイン）を決めてサイトを作り、サンプル・GitHub・GitHub Actions・git push のどれかでデプロイします。</p>
-        </li>
-        <li>
-          <h3>チームを招待する</h3>
-          <p>サイトごとに招待リンクを作って渡すと、受け取った人はそのサイトだけを扱えるメンバーになります。</p>
-        </li>
-      </ol>
-      <p class="note">詳しい手順は <a href="/docs/">ドキュメント</a> にあります。このページのソースは <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker" target="_blank" rel="noopener">examples/worker</a> にあります。</p>
+      <figure class="figure" aria-label="缶の中で Worker がリクエストを受けて返す様子の線画">
+        <div class="figure-3d" aria-hidden="true"></div>
+        <svg class="figure-fallback" viewBox="0 0 400 400" role="img">
+          <g fill="none" stroke="#7089ba" stroke-width="1" stroke-linecap="round">
+            <!-- 缶の胴 -->
+            <line x1="100" y1="120" x2="100" y2="290"/>
+            <line x1="300" y1="120" x2="300" y2="290"/>
+            <ellipse cx="200" cy="120" rx="100" ry="34"/>
+            <path d="M100 290 A100 34 0 0 0 300 290"/>
+            <path d="M100 290 A100 34 0 0 1 300 290" stroke-dasharray="3 5"/>
+            <!-- 蓋の縁とプルタブ -->
+            <ellipse cx="200" cy="120" rx="84" ry="27" stroke-dasharray="3 5"/>
+            <path d="M190 112 h20 a7 5 0 0 1 0 10 h-20 a7 5 0 0 1 0 -10 z"/>
+            <line x1="200" y1="117" x2="200" y2="102"/>
+            <!-- 中身の層（断面図の隠れ線） -->
+            <path d="M100 175 A100 34 0 0 0 300 175" stroke-dasharray="3 5"/>
+            <path d="M100 230 A100 34 0 0 0 300 230" stroke-dasharray="3 5"/>
+            <!-- リクエストの入出力 -->
+            <line x1="20" y1="205" x2="92" y2="205"/>
+            <path d="M84 200 l8 5 -8 5"/>
+            <line x1="308" y1="205" x2="380" y2="205"/>
+            <path d="M372 200 l8 5 -8 5"/>
+            <!-- 寸法線 -->
+            <line x1="100" y1="340" x2="300" y2="340"/>
+            <line x1="100" y1="334" x2="100" y2="346"/>
+            <line x1="300" y1="334" x2="300" y2="346"/>
+          </g>
+          <g fill="#ffffff">
+            <circle cx="150" cy="60" r="1.5"/><circle cx="262" cy="52" r="1.5"/><circle cx="40" cy="110" r="1.5"/>
+            <circle cx="360" cy="124" r="1.5"/><circle cx="60" cy="300" r="1.5"/><circle cx="340" cy="306" r="1.5"/>
+            <circle cx="30" cy="262" r="1.5"/><circle cx="380" cy="256" r="1.5"/><circle cx="212" cy="30" r="1.5"/>
+          </g>
+          <g font-family="Geist Mono, ui-monospace, Menlo, monospace" font-size="11" fill="#ababab">
+            <text x="20" y="194">request</text>
+            <text x="308" y="194">response</text>
+            <text x="200" y="160" text-anchor="middle" fill="#ffffff">fetch</text>
+            <text x="200" y="214" text-anchor="middle" fill="#ffffff">KV</text>
+            <text x="200" y="268" text-anchor="middle" fill="#ffffff">R2</text>
+            <text x="200" y="362" text-anchor="middle">サーバー 1 台</text>
+          </g>
+        </svg>
+      </figure>
     </div>
   </section>
 
@@ -112,34 +140,140 @@ docker compose up -d</code></pre>
           </tbody>
         </table>
       </div>
-      <p class="note">Worker は 1 台のサーバーの中で動かすので、デプロイできる人（サイトのメンバー）は信頼する前提です。詳しくは <a href="/docs/reference">リファレンス</a> を見てください。</p>
     </div>
   </section>
 
   <section class="cta">
     <div class="wrap">
       <h2>次のハッカソンで、すぐ使える。</h2>
-      <a class="button primary" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">github.com/kazukingzz/Kanzume</a>
+      <a class="button" href="https://github.com/kazukingzz/Kanzume" target="_blank" rel="noopener">GitHub でソースを見る</a>
     </div>
   </section>
 </main>
 
-<footer class="footer">
-  <div class="wrap">Kanzume — Workers + KV + R2 だけの小さなホスティング</div>
-</footer>
-
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js", "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/" } }
+</script>
 <script>
-  Promise.all([
-    fetch("api/hello").then((r) => r.json()),
-    fetch("api/counter").then((r) => r.json()),
-  ])
-    .then(([hello, counter]) => {
-      document.getElementById("live-text").textContent =
-        `vars の値は「${hello.message}」、KV に保存した訪問回数は ${counter.count.toLocaleString("ja-JP")} 回目です。`;
+  document.documentElement.classList.add("js");
+  const reducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+  const nav = document.querySelector(".nav");
+  const onScroll = () => nav.classList.toggle("is-scrolled", window.scrollY > 8);
+  addEventListener("scroll", onScroll, { passive: true });
+  onScroll();
+
+  fetch("api/counter")
+    .then((r) => r.json())
+    .then(({ count }) => {
+      document.getElementById("live-text").textContent +=
+        `・KV に数えた訪問は ${count.toLocaleString("ja-JP")} 回目`;
     })
-    .catch(() => {
-      document.getElementById("live-text").textContent = "Worker に接続できませんでした。";
+    .catch(() => {});
+
+  const seen = new IntersectionObserver((entries) => {
+    for (const e of entries) {
+      if (!e.isIntersecting) continue;
+      e.target.classList.add("in");
+      seen.unobserve(e.target);
+    }
+  }, { threshold: 0.15 });
+  document.querySelectorAll(".section > .wrap").forEach((box) => seen.observe(box));
+</script>
+<script type="module">
+  import * as THREE from "three";
+  import { CSS2DRenderer, CSS2DObject } from "three/addons/renderers/CSS2DRenderer.js";
+
+  const host = document.querySelector(".figure-3d");
+  try {
+    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+    renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    host.append(renderer.domElement);
+    const labels = new CSS2DRenderer();
+    labels.domElement.className = "figure-labels";
+    host.append(labels.domElement);
+
+    const scene = new THREE.Scene();
+    const camera = new THREE.PerspectiveCamera(28, 1, 0.1, 100);
+    camera.position.set(0, 1.6, 7.6);
+    camera.lookAt(0, -0.1, 0);
+
+    const ink = new THREE.LineBasicMaterial({ color: 0x7089ba });
+    const hidden = new THREE.LineDashedMaterial({ color: 0x7089ba, dashSize: 0.07, gapSize: 0.09, transparent: true, opacity: 0.7 });
+    const line = (pts, mat) => {
+      const l = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), mat);
+      l.computeLineDistances();
+      return l;
+    };
+    const ring = (y, r, mat) => {
+      const pts = [];
+      for (let i = 0; i <= 72; i++) { const a = (i / 72) * Math.PI * 2; pts.push(new THREE.Vector3(Math.cos(a) * r, y, Math.sin(a) * r)); }
+      return line(pts, mat);
+    };
+    const R = 1, H = 2.2;
+    const can = new THREE.Group();
+    scene.add(can);
+    can.add(ring(H / 2, R, ink), ring(-H / 2, R, ink), ring(H / 2, R * 0.84, hidden), ring(H / 6, R, hidden), ring(-H / 6, R, hidden));
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      can.add(line([new THREE.Vector3(Math.cos(a) * R, H / 2, Math.sin(a) * R), new THREE.Vector3(Math.cos(a) * R, -H / 2, Math.sin(a) * R)], i % 2 ? hidden : ink));
+    }
+    // プルタブ
+    const tab = ring(0, 0.16, ink);
+    tab.position.set(0.3, H / 2 + 0.01, 0);
+    can.add(tab, line([new THREE.Vector3(0.14, H / 2 + 0.01, 0), new THREE.Vector3(-0.2, H / 2 + 0.01, 0)], ink));
+
+    const label = (text, x, y, z, cls = "") => {
+      const el = document.createElement("span");
+      el.className = `figure-label ${cls}`;
+      el.textContent = text;
+      const o = new CSS2DObject(el);
+      o.position.set(x, y, z);
+      return o;
+    };
+    can.add(label("fetch", 0, H / 3, 0, "is-paper"), label("KV", 0, 0, 0, "is-paper"), label("R2", 0, -H / 3, 0, "is-paper"));
+    scene.add(label("request", -2.7, 0.3, 0), label("response", 2.7, 0.3, 0));
+
+    // 寸法線
+    const dy = -H / 2 - 0.55;
+    scene.add(
+      line([new THREE.Vector3(-R, dy, 0), new THREE.Vector3(R, dy, 0)], ink),
+      line([new THREE.Vector3(-R, dy - 0.1, 0), new THREE.Vector3(-R, dy + 0.1, 0)], ink),
+      line([new THREE.Vector3(R, dy - 0.1, 0), new THREE.Vector3(R, dy + 0.1, 0)], ink),
+      label("サーバー 1 台", 0, dy - 0.3, 0),
+    );
+
+    let tiltX = 0, tiltY = 0;
+    host.parentElement.addEventListener("pointermove", (e) => {
+      const r = host.getBoundingClientRect();
+      tiltY = ((e.clientX - r.left) / r.width - 0.5) * 0.8;
+      tiltX = ((e.clientY - r.top) / r.height - 0.5) * 0.4;
     });
+    host.parentElement.addEventListener("pointerleave", () => { tiltX = tiltY = 0; });
+
+    const resize = () => { const s = host.clientWidth; renderer.setSize(s, s, false); labels.setSize(s, s); };
+    new ResizeObserver(resize).observe(host);
+    resize();
+
+    const clock = new THREE.Clock();
+    let spin = 0, visible = true;
+    new IntersectionObserver(([e]) => { visible = e.isIntersecting; }).observe(host);
+    const frame = () => {
+      requestAnimationFrame(frame);
+      const dt = Math.min(clock.getDelta(), 0.1);
+      if (!visible) return;
+      if (!reducedMotion) spin += dt * 0.25;
+      can.rotation.y += (spin + tiltY - can.rotation.y) * 0.08;
+      can.rotation.x += (tiltX - can.rotation.x) * 0.08;
+      renderer.render(scene, camera);
+      labels.render(scene, camera);
+    };
+    frame();
+    host.parentElement.classList.add("is-3d");
+  } catch {
+    // WebGL が使えなければ SVG の線画のまま
+  }
+
 </script>
 </body>
 </html>
