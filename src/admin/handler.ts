@@ -38,6 +38,9 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/admin.js": { file: "admin.js", type: "text/javascript; charset=utf-8" },
   "/admin.css": { file: "admin.css", type: "text/css; charset=utf-8" },
   "/logo.svg": { file: "logo.svg", type: "image/svg+xml" },
+  "/favicon.svg": { file: "favicon.svg", type: "image/svg+xml" },
+  "/favicon.ico": { file: "favicon.ico", type: "image/x-icon" },
+  "/apple-touch-icon.png": { file: "apple-touch-icon.png", type: "image/png" },
 };
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 /** 管理者だけが呼べる API（全体の設定） */

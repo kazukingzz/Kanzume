@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-label="Kanzume">
+  <style>
+    .mark { fill: #171717; }
+    @media (prefers-color-scheme: dark) {
+      .mark { fill: #ececec; }
+    }
+  </style>
+  <g transform="translate(-23.3 -23.3) scale(1.182)">
+    <path class="mark" d="M44 24H76V232H44A20 20 0 0 1 24 212V44A20 20 0 0 1 44 24Z M104 24H176L104 96Z M216 24A16 16 0 0 1 232 40V216A16 16 0 0 1 216 232L112 128Z M104 160L176 232H104Z"/>
+  </g>
+</svg>
