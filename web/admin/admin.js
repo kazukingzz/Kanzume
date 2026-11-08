@@ -644,17 +644,6 @@ function bindingTags(release) {
   ].filter(Boolean);
 }
 
-// url はサーバーの GET /api/samples から埋める（KANZUME_SAMPLES_REPO で fork 先に変えられる）
-const SAMPLES = [
-  {
-    name: "kanzume-example",
-    title: "Kanzume の紹介ページ",
-    description: "KV のカウンター・R2 へのアップロード・vars を使った、機能の一覧を兼ねたページ。",
-    key: "worker",
-    tags: ["Worker", "Assets", "KV", "R2"],
-  },
-];
-
 async function deployGitHub(body, onError) {
   let site;
   try {
@@ -2896,13 +2885,12 @@ async function viewNewSite(main) {
 
 const DEPLOY_METHODS = [
   { key: "upload", title: "ファイルから", description: "フォルダ・ファイル・zip をドラッグ＆ドロップしてデプロイします。" },
-  { key: "sample", title: "サンプルから", description: "用意してあるサンプルをそのままデプロイします。" },
   { key: "github", title: "GitHub の公開リポジトリから", description: "public リポジトリの URL を指定して、Kanzume の中でバンドルしてデプロイします。" },
   { key: "actions", title: "GitHub Actions から", description: "push のたびに Actions でビルドしてデプロイします。npm パッケージやビルドが必要なときに。" },
   { key: "repo", title: "サイトのリポジトリから", description: "Kanzume にこのサイトの Git リポジトリを作り、git push でデプロイします。GitHub は不要です。" },
 ];
 
-/** サイトにデプロイする 5 つの方法。選んだ方法の中身を下に出す */
+/** サイトにデプロイする 4 つの方法。選んだ方法の中身を下に出す */
 function deployOptions(detail) {
   const site = detail.name;
   const panel = h("div", { class: "deploy-panel" });
@@ -3201,41 +3189,9 @@ const METHOD_VIEWS = {
     ];
   },
 
-  async sample(detail) {
-    const urls = await api("/samples");
-    const error = h("div", { class: "error" });
-    const buttons = [];
-    const items = SAMPLES.map((sample) => {
-      const url = urls[sample.key];
-      const button = h("button", { class: "primary", text: "このサイトにデプロイ" });
-      buttons.push(button);
-      button.addEventListener("click", async () => {
-        error.textContent = "";
-        for (const b of buttons) b.disabled = true;
-        busy(button, "デプロイ中…");
-        await deployGitHub({ url, name: detail.name }, (message) => {
-          error.textContent = message;
-          for (const b of buttons) b.disabled = false;
-          button.textContent = "このサイトにデプロイ";
-        });
-      });
-      return h(
-        "li",
-        { class: "sample" },
-        h(
-          "div",
-          { class: "grow" },
-          h("div", { class: "sample-title" }, h("b", { text: sample.title })),
-          h("p", { class: "muted", text: sample.description }),
-          h("div", { class: "tags" }, ...sample.tags.map((t) => h("span", { class: "tag", text: t })), h("a", { href: url, target: "_blank", rel: "noopener", text: "コードを見る ↗" })),
-        ),
-        button,
-      );
-    });
-    return [h("section", { class: "card" }, h("h2", { text: "サンプルから" }), h("p", { class: "muted", text: `サンプルを ${detail.name} としてデプロイします。環境変数はサンプルの wrangler の設定のものを使います（サイト設定で上書きできます）。` }), h("ul", { class: "samples" }, ...items), error)];
-  },
-
   async github(detail, reset) {
+    // サンプル（KANZUME_SAMPLES_REPO で fork 先に変えられる）。取れなくてもデプロイはできるので、リンクを出さないだけにする
+    const sample = (await api("/samples").catch(() => null))?.worker ?? null;
     const input = h("input", { type: "url", placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>", spellcheck: "false", "aria-label": "GitHub の URL" });
     const error = h("div", { class: "error" });
     const next = h("button", { class: "primary", text: "次へ" });
@@ -3266,6 +3222,7 @@ const METHOD_VIEWS = {
       h("h2", { text: "GitHub の公開リポジトリから" }),
       h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。次の画面で環境変数とシークレットを確かめてからデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions を使ってください。" }),
       h("div", { class: "row" }, h("div", { class: "grow" }, input), next),
+      sample ? h("p", { class: "field-hint" }, h("a", { href: sample, target: "_blank", rel: "noopener", text: "サンプルリポジトリはこちら ↗" })) : null,
       error,
     );
     setTimeout(() => input.focus());
