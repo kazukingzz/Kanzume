@@ -66,6 +66,8 @@ export class Sites {
   #settings = new Map<string, SiteSettings>();
   #queue = new SerialQueue();
   #root: string | null = null;
+  /** ルートを一度でも決めた（外した）か。_root ファイルがあれば決めたことにする（空ならルートなし） */
+  #rootDecided = false;
   /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
 
@@ -82,7 +84,9 @@ export class Sites {
       this.#stores.set(entry.name, store);
       this.#settings.set(entry.name, readSiteSettings(store.siteDir));
     }
-    const root = (await fs.readFile(path.join(this.dir, ROOT_FILE), "utf8").catch(() => "")).trim();
+    const raw = await fs.readFile(path.join(this.dir, ROOT_FILE), "utf8").catch(() => null);
+    this.#rootDecided = raw !== null;
+    const root = (raw ?? "").trim();
     this.#root = root && this.#stores.has(root) ? root : null;
   }
 
@@ -206,12 +210,18 @@ export class Sites {
     return this.#root;
   }
 
+  /** ルートを一度でも決めた（外した）か */
+  get rootDecided(): boolean {
+    return this.#rootDecided;
+  }
+
   async setRoot(name: string | null): Promise<void> {
     if (name !== null && !this.#stores.has(name)) throw new Error(`サイトがありません: ${name}`);
     const file = path.join(this.dir, ROOT_FILE);
-    if (name === null) await fs.rm(file, { force: true });
-    else await fs.writeFile(file, name);
+    // 外したときもファイルは残す（空にする）。一度決めたら、デプロイで自動でルートにしないため
+    await fs.writeFile(file, name ?? "");
     this.#root = name;
+    this.#rootDecided = true;
     this.onChange?.();
   }
 }

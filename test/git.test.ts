@@ -317,15 +317,21 @@ test("リポジトリの容量の上限を超える push は受け付けない",
   assert.deepEqual(await app.repos.refs("blog"), []);
 });
 
-test("メンバーの個人トークンでの push はルートにならず、全体の Token での push はルートになる", { skip: NO_GIT }, async (t) => {
+test("メンバーの個人トークンでの push はルートにならず、全体の Token での push はルートになる（Kanzume で最初のデプロイのときだけ）", { skip: NO_GIT }, async (t) => {
   const { remote, repos, sites, state } = await start(t);
-  for (const name of ["blog", "shop"]) await repos.create(name);
+  for (const name of ["blog", "shop", "docs"]) await repos.create(name);
   const token = await memberToken(state, ["shop"]);
   const shop = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "shop", main: "src/index.js" }) });
   assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
   assert.equal(sites.root, null, "メンバーのトークンでは自動でルートにしない");
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, "blog");
+  assert.equal(sites.root, null, "最初のデプロイではないので、全体の Token でもルートにしない");
+
+  // ほかにデプロイ済みのサイトがなければ、全体の Token の push でルートになる
+  for (const name of ["shop", "blog"]) await sites.remove(name);
+  const docs = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "docs", main: "src/index.js" }) });
+  assert.match((await git(docs, ["push", remote("docs"), "main"])).output, /remote: デプロイしました/);
+  assert.equal(sites.root, "docs");
 });
 
 test("name が違う push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {

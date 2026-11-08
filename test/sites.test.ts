@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import { loadConfig } from "../src/config.ts";
@@ -81,6 +83,39 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
   assert.equal(reserved.status, 401);
   assert.equal((await site("shop.localhost:8080", "/_git/shop.git/info/refs?service=git-upload-pack")).status, 401);
   assert.equal(((await (await site("shop.localhost:8080", "/_api/other")).json()) as { site: string }).site, "shop", "ほかの /_api/ はサイトのパス");
+});
+
+test("自動でルートになるのは Kanzume で最初にデプロイしたサイトだけ。外したり消したりしても、ほかのサイトは自動でルートにならない", async (t) => {
+  const { deploy, sites } = await start(t);
+  await deploy(counter(t, "blog"));
+  assert.equal(sites.root, "blog");
+
+  await sites.setRoot(null);
+  await deploy(counter(t, "shop"));
+  assert.equal(sites.root, null, "ルートを外した後のデプロイではルートにしない");
+
+  await sites.setRoot("shop");
+  await sites.remove("shop");
+  assert.equal(sites.root, null);
+  await deploy(counter(t, "docs"));
+  assert.equal(sites.root, null, "ルートのサイトを消した後のデプロイでもルートにしない");
+
+  // 再起動しても覚えている
+  await sites.init();
+  assert.equal(sites.rootDecided, true);
+});
+
+test("_root がなくても、ほかのサイトがデプロイ済みなら自動でルートにしない（以前から使っている環境）", async (t) => {
+  const { deploy, sites } = await start(t);
+  await deploy(counter(t, "blog"));
+  fs.rmSync(path.join(sites.dir, "_root"));
+  await sites.init();
+  assert.equal(sites.root, null);
+  assert.equal(sites.rootDecided, false);
+  await deploy(counter(t, "shop"));
+  assert.equal(sites.root, null);
+  await deploy(counter(t, "blog"));
+  assert.equal(sites.root, null);
 });
 
 test("KANZUME_ORIGIN を設定すると、存在しないサブドメインは 404 になる", async (t) => {

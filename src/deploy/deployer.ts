@@ -175,8 +175,11 @@ export class Deployer {
         }
       }
       await store.activate(release);
-      // 最初のサイトはルートドメインでも配信する（1 サイトだけなら今までどおり / で開ける）
-      if (input.autoRoot && this.#sites.root === null) await this.#sites.setRoot(manifest.name);
+      // Kanzume で最初にデプロイしたサイトだけ、ルートドメインでも配信する（1 サイトだけなら / で開ける）。
+      // 一度ルートを決めたり外したりしたら、あとは管理者設定で選んだときだけ変わる
+      if (input.autoRoot && !this.#sites.rootDecided && !this.#sites.list().some((s) => s.name !== manifest.name && s.store.get())) {
+        await this.#sites.setRoot(manifest.name);
+      }
       if (worker) this.#runtime.install(worker);
       else this.#runtime.evict(store.siteDir);
       log.add("新しいリリースに切り替えました");
