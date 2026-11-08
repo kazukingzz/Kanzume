@@ -653,13 +653,6 @@ const SAMPLES = [
     key: "worker",
     tags: ["Worker", "Assets", "KV", "R2"],
   },
-  {
-    name: "portfolio",
-    title: "ポートフォリオ",
-    description: "作品の「いいね」と、お問い合わせフォームのメッセージを KV に保存する個人サイト。",
-    key: "portfolio",
-    tags: ["Worker", "Assets", "KV"],
-  },
 ];
 
 async function deployGitHub(body, onError) {

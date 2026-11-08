@@ -492,7 +492,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     if (route === "GET /api/samples") {
       const sample = (dir: string) => `${config.samplesRepo}/examples/${dir}`;
-      return sendJson(res, 200, { worker: sample("worker"), portfolio: sample("portfolio") });
+      return sendJson(res, 200, { worker: sample("worker") });
     }
 
     if (route === "GET /api/resources") {

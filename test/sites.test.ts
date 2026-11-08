@@ -153,7 +153,6 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   assert.equal((await api("/sites/nope")).status, 404);
   assert.deepEqual(await (await api("/samples")).json(), {
     worker: "https://github.com/kazukingzz/Kanzume/tree/main/examples/worker",
-    portfolio: "https://github.com/kazukingzz/Kanzume/tree/main/examples/portfolio",
   });
 
   assert.equal((await api("/root-site", { method: "POST", body: JSON.stringify({ name: "shop" }) })).status, 200);
