@@ -341,7 +341,7 @@ function renderPickerMenu() {
         h(
           "span",
           { class: "site-option-text" },
-          h("span", { class: "site-option-name", text: x.name }),
+          h("span", { class: "site-option-name" }, x.name, kindBadge(x.kind)),
           h("span", { class: "site-option-host" }, x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null, x.deployed ? hostOf(x.url) : `${hostOf(x.subdomainUrl)}・未デプロイ`),
         ),
       ),
@@ -422,7 +422,7 @@ function renderShell() {
   const name = $("site-trigger-name");
   name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : isAdmin() ? "サイトがありません" : "参加しているサイトはありません";
   name.classList.toggle("placeholder", !current && state.tab !== "new");
-  $("site-trigger-host").textContent = current ? (current.deployed ? hostOf(current.url) : `${hostOf(current.subdomainUrl)}・未デプロイ`) : "";
+  fill($("site-trigger-host"), current ? [kindBadge(current.kind), current.deployed ? hostOf(current.url) : `${hostOf(current.subdomainUrl)}・未デプロイ`] : []);
   closePicker();
   for (const a of $("nav").querySelectorAll("a")) {
     a.classList.toggle("current", a.dataset.tab === state.tab);
@@ -538,6 +538,7 @@ async function loadSite() {
 async function viewDeployments(main) {
   const [detail, { deployments, active }] = await Promise.all([loadSite(), api(siteApi("/deployments"))]);
   const page = h("div", { class: "page" }, pageHead("デプロイ"));
+  if (detail.release) page.append(kindBanner(releaseKind(detail.release)));
 
   if (!detail.deployed) {
     page.append(h("section", { class: "card" }, h("h2", { text: "デプロイ方法を選ぶ" }), h("p", { class: "muted", text: `サイト ${detail.name}（${hostOf(detail.subdomainUrl)}）はまだデプロイされていません。次のどれかの方法でデプロイしてください。` }), deployOptions(detail)));
@@ -599,9 +600,44 @@ async function viewDeployments(main) {
   main.replaceChildren(page);
 }
 
+// ---------- 動的 / 静的 ----------
+
+const KIND = {
+  dynamic: {
+    label: "動的",
+    title: "動的サイト（Worker）",
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L4 14h7l-1 8 9-12h-7l1-8z"/></svg>',
+    text: "リクエストごとにサーバーで Worker（JavaScript）を実行します。アクセスがあるとこのサイト専用のプロセスが起動し、メモリと CPU を使います。",
+  },
+  static: {
+    label: "静的",
+    title: "静的サイト",
+    icon: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5M9 13h6M9 17h6"/></svg>',
+    text: "HTML・画像などのファイルをそのまま配信します。Worker を実行しないので、プロセスやメモリをほとんど使いません。",
+  },
+};
+const releaseKind = (release) => (release ? (release.main ? "dynamic" : "static") : null);
+
+/** 小さいバッジ（サイトの切り替え・一覧用） */
+function kindBadge(kind) {
+  if (!kind) return null;
+  return h("span", { class: `kind-badge ${kind}`, text: KIND[kind].label, title: KIND[kind].title });
+}
+
+/** 大きめの表示（デプロイ・サイト設定の上） */
+function kindBanner(kind) {
+  const k = KIND[kind];
+  return h(
+    "section",
+    { class: `kind-banner ${kind}` },
+    h("span", { class: "kind-icon", html: k.icon }),
+    h("div", { class: "kind-body" }, h("div", { class: "kind-eyebrow", text: "サイトの種類" }), h("div", { class: "kind-title", text: k.title }), h("p", { text: k.text })),
+  );
+}
+
 function bindingTags(release) {
   return [
-    release.main ? h("span", { class: "tag", text: "Worker" }) : h("span", { class: "tag", text: "静的サイト" }),
+    release.main ? h("span", { class: "tag", text: "Worker" }) : null,
     release.assets ? h("span", { class: "tag", text: "Assets" }) : null,
     ...release.kv.map((b) => h("span", { class: "tag", text: `KV: ${b}` })),
     ...release.r2.map((b) => h("span", { class: "tag", text: `R2: ${b.binding}` })),
@@ -1014,7 +1050,7 @@ function drawResources(body, r, prev) {
       "section",
       { class: "card workers-card" },
       h("div", { class: "card-head" }, h("h2", { text: "Worker のプロセス" }), h("span", { class: "muted", text: workers.length ? `${workers.length} 個 · 合計 ${fmtMiB(workerRss)}` : "0 個" })),
-      h("p", { class: "muted hint", text: "Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。" }),
+      h("p", { class: "muted hint", text: `動的サイト ${state.sites.sites.filter((x) => x.kind === "dynamic").length} 個・静的サイト ${state.sites.sites.filter((x) => x.kind === "static").length} 個。` + "Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。" }),
       workers.length
         ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "サイト" }), h("th", { class: "num", text: "PID" }), h("th", { class: "num", text: "メモリ" }))), h("tbody", {}, ...workers.map((w) => h("tr", {}, h("td", { text: w.site }), h("td", { class: "num", text: String(w.pid) }), h("td", { class: "num", text: fmtMiB(w.rss) }))))))
         : null,
@@ -1839,6 +1875,7 @@ async function viewSite(main) {
   const detail = await loadSite();
   const r = detail.release;
   const page = h("div", { class: "page" }, pageHead("サイト設定"));
+  if (r) page.append(kindBanner(releaseKind(r)));
   const rows = !r
     ? [
         ["名前", detail.name],
@@ -1847,7 +1884,8 @@ async function viewSite(main) {
     : [
     ["名前", r.name],
     ["URL", siteUrlCell(detail)],
-    ["Worker", r.main ? `worker/${r.main}` : "なし（静的サイト）"],
+    ["種類", h("span", {}, kindBadge(releaseKind(r)), " ", KIND[releaseKind(r)].title)],
+    ["Worker", r.main ? `worker/${r.main}` : "なし"],
     ["compatibility_date", r.compatibilityDate ?? "–"],
     ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],
     ["KV", r.kv.length ? r.kv.join(", ") : "–"],

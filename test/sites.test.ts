@@ -143,7 +143,8 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   const cookie = `kanzume_session=${await state.createSession()}`;
   const api = (path: string, init: RequestInit = {}) =>
     fetch(`${base}/_admin/kanzume/api${path}`, { ...init, headers: { cookie, origin: base, "content-type": "application/json", ...(init.headers ?? {}) } });
-  const list = (await (await api("/sites")).json()) as { root: string; sites: { name: string; url: string; subdomainUrl: string }[] };
+  const list = (await (await api("/sites")).json()) as { root: string; sites: { name: string; url: string; subdomainUrl: string; kind: string | null }[] };
+  assert.deepEqual(list.sites.map((s) => s.kind), ["dynamic", "dynamic"], "Worker のあるサイトは動的");
   assert.deepEqual(list.sites.map((s) => [s.name, s.url, s.subdomainUrl]), [
     ["blog", `${base}/`, `${base.replace("://", "://blog.")}/`],
     ["shop", `${base.replace("://", "://shop.")}/`, `${base.replace("://", "://shop.")}/`],

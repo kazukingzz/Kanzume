@@ -536,7 +536,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         root: sites.root,
         sites: listed.map(({ name, store }) => {
           const release = store.get();
-          return { name, ...siteUrls(name), deployed: !!release, deployedAt: release?.deployedAt ?? null, latest: history.latest(name) ?? null };
+          // dynamic: Worker を動かす（子プロセス・メモリ・CPU を使う）、static: ファイルを配信するだけ
+          const kind = release ? (release.manifest.main ? "dynamic" : "static") : null;
+          return { name, ...siteUrls(name), deployed: !!release, kind, deployedAt: release?.deployedAt ?? null, latest: history.latest(name) ?? null };
         }),
         // 初回のデプロイに失敗して、まだ一覧に出ないサイトのデプロイ
         pending: isAdmin
