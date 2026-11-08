@@ -44,6 +44,12 @@
 <li><code>.git</code>・<code>node_modules</code>・<code>.DS_Store</code>・<code>__MACOSX</code> は含めません。パスワード付きの zip と ZIP64 形式の zip には対応していません。</li>
 <li>大きさの上限は、圧縮した状態で <code>KANZUME_MAX_UPLOAD_MB</code>（50 MB）です。</li>
 </ul>
+<p>デプロイに成功すると、そのファイルを<a href="#repo">サイトのリポジトリ</a>のデフォルトブランチにコミットとして保存します（リポジトリがなければ作ります）。手元にファイルがなくなっても <code>git clone</code> で取り出せ、直して <code>git push</code> すればそのままデプロイできます。</p>
+<ul>
+<li>コミットの中身はアップロードしたものだけです（前のコミットのファイルは引き継ぎません）。デプロイ履歴にはコミットが付きます。</li>
+<li>静的サイトは、<code>git push</code> し直せるように <code>wrangler.jsonc</code> と <code>public/</code> の形で保存します。wrangler の設定の <code>name</code> は、サイトの ID に書き換えて保存します（コメントなどはそのまま）。</li>
+<li>リポジトリの容量の上限（<code>KANZUME_REPO_QUOTA_MB</code>）を超えるときや、デプロイの間に push があったときは、デプロイだけして保存しません（画面に出ます）。</li>
+</ul>
 <h2 id="github">GitHub の公開リポジトリから</h2>
 <p>public リポジトリの URL（トップか <code>/tree/&lt;ブランチ&gt;/&lt;ディレクトリ&gt;</code>）を入れて「次へ」を押すと、wrangler の設定の <code>vars</code> を初期値にした環境変数とシークレットの確認画面になります。Kanzume の中でバンドルするので、npm パッケージの import やビルドが必要なものは、次の GitHub Actions を使ってください。</p>
 <p>入力欄の下の「サンプルリポジトリはこちら」から、サンプル（このページの <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker">examples/worker</a>）の GitHub を開けます。その URL を入れれば、このページと同じものをデプロイできます。</p>

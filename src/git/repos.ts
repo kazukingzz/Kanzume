@@ -1,8 +1,9 @@
 import { execFile } from "node:child_process";
+import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { PROJECT_NAME } from "../store.ts";
+import { PROJECT_NAME, type UploadedFile } from "../store.ts";
 
 const run = promisify(execFile);
 const MAX_BLOB = 1024 * 1024;
@@ -73,7 +74,7 @@ export class Repos {
   }
 
   git(name: string, args: string[], options: { maxBuffer?: number; encoding?: "buffer"; env?: Record<string, string> } = {}) {
-    return run("git", ["--git-dir", this.path(name), ...args], {
+    return run("git", ["--git-dir", path.resolve(this.path(name)), ...args], {
       maxBuffer: options.maxBuffer ?? 16 * 1024 * 1024,
       encoding: (options.encoding ?? "utf8") as BufferEncoding,
       env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0", ...options.env },
@@ -211,5 +212,57 @@ export class Repos {
     } finally {
       await fs.rm(index, { force: true });
     }
+  }
+
+  /**
+   * ファイル一式を、デフォルトブランチの次のコミットとして作る（ブランチはまだ動かさない。動かすのは updateBranch）。
+   * 管理画面のファイルのアップロードで、手元にファイルがなくなっても clone で取り出せるようにするため。
+   * 中身はアップロードしたものだけにする（前のコミットのファイルは引き継がない）
+   */
+  async commitFiles(name: string, files: UploadedFile[], options: { message: string; author: string; email: string }) {
+    const created = !(await this.exists(name));
+    if (created) await this.create(name);
+    const branch = await this.defaultBranch(name);
+    const parent = await this.git(name, ["rev-parse", "--verify", "--quiet", `refs/heads/${safeRef(branch)}^{commit}`])
+      .then((r) => String(r.stdout).trim() || null)
+      .catch(() => null);
+    const work = await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-commit-"));
+    const index = `${work}.index`;
+    try {
+      for (const f of files) {
+        const dest = path.join(work, safePath(f.path));
+        if (!dest.startsWith(work + path.sep)) continue;
+        await fs.mkdir(path.dirname(dest), { recursive: true });
+        await fs.writeFile(dest, f.data);
+      }
+      const env = {
+        GIT_INDEX_FILE: index,
+        GIT_AUTHOR_NAME: options.author,
+        GIT_AUTHOR_EMAIL: options.email,
+        GIT_COMMITTER_NAME: "Kanzume",
+        GIT_COMMITTER_EMAIL: "kanzume@localhost",
+      };
+      // -f: アップロードに .gitignore があっても、デプロイしたファイルはすべて入れる
+      await this.git(name, ["-C", work, "-c", "core.autocrlf=false", "--work-tree", work, "add", "--all", "--force", "."], { env });
+      const tree = String((await this.git(name, ["write-tree"], { env })).stdout).trim();
+      const sha = String((await this.git(name, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", options.message], { env })).stdout).trim();
+      return { sha, branch, parent, created };
+    } finally {
+      await fs.rm(work, { recursive: true, force: true });
+      await fs.rm(index, { force: true });
+    }
+  }
+
+  /**
+   * ブランチを sha に進める。old は作ったときの親で、その間に push があれば動かさずに false を返す。
+   * 容量の上限（push と同じ）を超えるときも動かさない
+   */
+  async updateBranch(name: string, branch: string, sha: string, old: string | null): Promise<"ok" | "moved" | "quota"> {
+    if (this.quotaBytes > 0 && (await dirSize(path.join(this.path(name), "objects"))) > this.quotaBytes) return "quota";
+    const ok = await this.git(name, ["update-ref", "-m", "kanzume: upload", `refs/heads/${safeRef(branch)}`, sha, old ?? "0".repeat(40)])
+      .then(() => true)
+      .catch(() => false);
+    if (ok) this.onChange?.();
+    return ok ? "ok" : "moved";
   }
 }

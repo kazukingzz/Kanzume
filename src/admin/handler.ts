@@ -14,7 +14,7 @@ import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { DeployLog } from "../deploy/deployer.ts";
 import { deployFromFiles, deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
-import { BINDING_NAME, CONFIG_FILES, ConfigError } from "../deploy/wrangler.ts";
+import { BINDING_NAME, CONFIG_FILES, ConfigError, parseWranglerConfig, withConfigName } from "../deploy/wrangler.ts";
 import { readTar, TarError } from "../deploy/tar.ts";
 import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import type { DeployHistory } from "../deploy/history.ts";
@@ -691,20 +691,43 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         return sendJson(res, 400, { error: "アップロードされたファイルを読めませんでした" });
       }
       if (!files.length) return sendJson(res, 400, { error: "ファイルがありません" });
-      const hasConfig = files.some((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
-      if (!hasConfig) {
+      const configFile = files.find((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
+      const hasConfig = !!configFile;
+      const count = files.length;
+      if (configFile) {
+        // リポジトリに入れたものをそのまま git push し直せるように、name をサイトの ID にそろえる
+        let current: unknown;
+        try {
+          current = parseWranglerConfig(configFile.path, configFile.data.toString("utf8")).name;
+        } catch {}
+        if (current !== name) {
+          const renamed = withConfigName(configFile.path, configFile.data.toString("utf8"), name);
+          if (renamed !== null) configFile.data = Buffer.from(renamed);
+        }
+      } else {
         const today = new Date().toISOString().slice(0, 10);
         files = [
-          { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name, compatibility_date: today, assets: { directory: "./public" } })) },
+          { path: "wrangler.jsonc", data: Buffer.from(`${JSON.stringify({ name, compatibility_date: today, assets: { directory: "./public" } }, null, 2)}\n`) },
           ...files.map((f) => ({ path: `public/${f.path}`, data: f.data })),
         ];
       }
       if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
       githubDeploying = true;
       try {
-        const count = hasConfig ? files.length : files.length - 1;
+        const message = `ファイルをアップロード（${count} ファイル${hasConfig ? "" : "・静的サイト"}）`;
+        // 手元にファイルがなくなっても clone で取り出せるように、サイトのリポジトリのコミットにする。
+        // ブランチはデプロイに成功してから進める（リポジトリの先頭と動いているものをそろえる）
+        let commit: Awaited<ReturnType<Repos["commitFiles"]>> | null = null;
+        let repoWarning: string | null = null;
+        try {
+          commit = await repos.commitFiles(name, files, { message, author: user.name, email: `${user.id}@users.kanzume` });
+        } catch (err) {
+          console.error("[upload] リポジトリへのコミットに失敗:", err);
+          repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
+        }
+        const source = commit ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user.name } : { actor: user.name, commitMessage: message };
         const result = await deployFromFiles(files, deployer, {
-          source: { actor: user.name, commitMessage: `ファイルをアップロード（${count} ファイル${hasConfig ? "" : "・静的サイト"}）` },
+          source,
           log: new DeployLog(name),
           buildLog: [],
           where: "アップロードしたファイルのトップ",
@@ -712,8 +735,17 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
           autoRoot: isAdmin,
         });
-        if (!result.ok) return sendJson(res, 400, { error: result.error });
-        return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig });
+        if (!result.ok) {
+          // このアップロードのために作ったリポジトリは残さない
+          if (commit?.created) await repos.remove(name).catch(() => {});
+          return sendJson(res, 400, { error: result.error });
+        }
+        if (commit) {
+          const moved = await repos.updateBranch(name, commit.branch, commit.sha, commit.parent);
+          if (moved === "quota") repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
+          else if (moved === "moved") repoWarning = "デプロイはしましたが、その間にリポジトリに push があったので保存しませんでした";
+        }
+        return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig, commit: repoWarning ? null : (commit?.sha ?? null), repoWarning });
       } finally {
         githubDeploying = false;
       }

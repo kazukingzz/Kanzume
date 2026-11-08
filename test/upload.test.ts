@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { test, type TestContext } from "node:test";
@@ -74,4 +77,40 @@ test("権限のないメンバー・存在しないサイト・上限超え・�
   assert.equal((await upload("blog", Buffer.from("not gzip"))).status, 400);
   assert.equal((await upload("blog", {})).status, 400);
   assert.equal((await upload("blog", { "index.html": "x", "../evil.txt": "x" })).status, 400, "サイトの外を指すパスは受け付けない");
+});
+
+test("アップロードしたファイルはサイトのリポジトリのコミットになり、clone で取り出せる", async (t) => {
+  const { upload, sites, repos, history } = await start(t);
+  await sites.ensure("blog");
+  assert.equal((await upload("blog", { "index.html": "v1" })).status, 200);
+  assert.equal(await repos.exists("blog"), true, "リポジトリがなければ作る");
+  const first = await repos.commit("blog", "refs/heads/main");
+  assert.equal(first.subject, "ファイルをアップロード（1 ファイル・静的サイト）");
+  assert.deepEqual((await repos.tree("blog", "main")).map((f) => f.path), ["public/index.html", "wrangler.jsonc"], "静的サイトは git push し直せる形（wrangler.jsonc と public/）で保存する");
+  assert.equal(JSON.parse((await repos.readFile("blog", first.sha, "wrangler.jsonc"))!).name, "blog");
+  assert.equal(history.latest("blog")?.source.sha, first.sha, "デプロイ履歴にコミットが付く");
+
+  const res = await upload("blog", { "index.html": "v2", ".gitignore": "*.html\n" });
+  assert.equal(((await res.json()) as { commit: string }).commit, (await repos.commit("blog", "refs/heads/main")).sha);
+  const log = await repos.log("blog", "main");
+  assert.equal(log.length, 2, "前のコミットの次に積む");
+  assert.deepEqual((await repos.tree("blog", "main")).map((f) => f.path), ["public/.gitignore", "public/index.html", "wrangler.jsonc"], "前のファイルは引き継がず、.gitignore があってもすべて入れる");
+
+  const dest = path.join(tmpDir(t), "clone");
+  execFileSync("git", ["clone", "--quiet", repos.path("blog"), dest]);
+  assert.equal(fs.readFileSync(path.join(dest, "public/index.html"), "utf8"), "v2");
+});
+
+test("wrangler の name はサイトの ID にそろえて保存し、デプロイに失敗したら作ったリポジトリは残さない", async (t) => {
+  const { upload, sites, repos } = await start(t);
+  await sites.ensure("api");
+  const config = `{\n  // コメントは残る\n  "name": "something-else",\n  "main": "index.js",\n  "compatibility_date": "2026-10-01"\n}\n`;
+  assert.equal((await upload("api", { "wrangler.jsonc": config, "index.js": "export default { fetch: () => new Response('ok') };" })).status, 200);
+  const saved = (await repos.readFile("api", (await repos.commit("api", "refs/heads/main")).sha, "wrangler.jsonc"))!;
+  assert.equal(saved, config.replace("something-else", "api"));
+
+  await sites.ensure("broken");
+  const bad = await upload("broken", { "wrangler.jsonc": JSON.stringify({ name: "broken", main: "index.js" }), "index.js": "syntax error (" });
+  assert.equal(bad.status, 400);
+  assert.equal(await repos.exists("broken"), false);
 });

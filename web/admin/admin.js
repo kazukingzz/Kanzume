@@ -3145,7 +3145,8 @@ const METHOD_VIEWS = {
           const body = await tarGz(files);
           const max = state.overview?.maxUploadBytes;
           if (max && body.size > max) throw new Error(`圧縮後 ${fmtBytes(body.size)} で、上限（${fmtBytes(max)}）を超えています`);
-          await api(siteApi("/deploy-upload"), { method: "POST", body, headers: { "content-type": "application/gzip" } });
+          const result = await api(siteApi("/deploy-upload"), { method: "POST", body, headers: { "content-type": "application/gzip" } });
+          if (result.repoWarning) alert(result.repoWarning);
           await afterDeploy(detail.name);
         } catch (err) {
           error.textContent = err.message;
@@ -3180,6 +3181,7 @@ const METHOD_VIEWS = {
         { class: "card" },
         h("h2", { text: "ファイルから" }),
         h("p", { class: "muted", text: `ビルドしたフォルダやファイルを ${detail.name} にデプロイします。wrangler.jsonc / wrangler.toml があればその設定に従い（Worker はここでバンドルします）、なければ全体を静的サイトとして配信します。` }),
+        h("p", { class: "muted", text: `デプロイしたファイルは、このサイトのリポジトリ（リポジトリタブ）にコミットとして保存します。手元にファイルがなくなっても git clone で取り出せます。` }),
         zone,
         fileInput,
         dirInput,
