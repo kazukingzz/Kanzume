@@ -34,7 +34,16 @@
   </nav>
   <main class="docs-body">
     <h1>デプロイ</h1>
-<p>サイトの「デプロイ」タブで、4 つの方法から選びます。デプロイ済みのサイトでも、ページの下の「新しくデプロイ」から選べます（今のリリースを置き換えます）。</p>
+<p>サイトの「デプロイ」タブで、5 つの方法から選びます。デプロイ済みのサイトでも、ページの下の「新しくデプロイ」から選べます（今のリリースを置き換えます）。</p>
+<h2 id="upload">ファイルから（ドラッグ＆ドロップ）</h2>
+<p>手元のフォルダ・ファイル・zip を、ドロップするか「ファイルを選ぶ」「フォルダを選ぶ」で選ぶと、デプロイの内容を確かめる画面になります。</p>
+<ul>
+<li><strong>wrangler の設定（<code>wrangler.jsonc</code> / <code>wrangler.json</code> / <code>wrangler.toml</code>）があるとき</strong>: その設定でデプロイします。Worker は GitHub の公開リポジトリと同じく Kanzume の中でバンドルします（npm パッケージは使えないので、ビルドしたものを落とすか GitHub Actions を使ってください）。<code>name</code> は違っていても、そのサイトにデプロイします。</li>
+<li><strong>ないとき</strong>: 全体を静的サイトとして配信します。トップの <code>index.html</code> が <code>/</code> になります。</li>
+<li><code>dist/</code> などのフォルダを丸ごと落としたときは、その中身をトップとして扱います。zip も中のフォルダ 1 つだけなら同じです。</li>
+<li><code>.git</code>・<code>node_modules</code>・<code>.DS_Store</code>・<code>__MACOSX</code> は含めません。パスワード付きの zip と ZIP64 形式の zip には対応していません。</li>
+<li>大きさの上限は、圧縮した状態で <code>KANZUME_MAX_UPLOAD_MB</code>（50 MB）です。</li>
+</ul>
 <h2 id="sample">サンプルから</h2>
 <p>用意してあるサンプル（このページの <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker">examples/worker</a>）を、そのサイトとしてデプロイします。</p>
 <h2 id="github">GitHub の公開リポジトリから</h2>

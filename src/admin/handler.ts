@@ -1,6 +1,7 @@
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 import fs from "node:fs";
+import { gunzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   generateAuthenticationOptions,
@@ -12,8 +13,9 @@ import type { Backup } from "../backup/backup.ts";
 import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { DeployLog } from "../deploy/deployer.ts";
-import { deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
-import { BINDING_NAME, ConfigError } from "../deploy/wrangler.ts";
+import { deployFromFiles, deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
+import { BINDING_NAME, CONFIG_FILES, ConfigError } from "../deploy/wrangler.ts";
+import { readTar, TarError } from "../deploy/tar.ts";
 import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import type { DeployHistory } from "../deploy/history.ts";
 import { configuredRootHost, readBody, readJson, requestOrigin, rootOrigin, sendJson, sendText, siteOrigin } from "../http.ts";
@@ -42,6 +44,8 @@ const STATIC: Record<string, { file: string; type: string }> = {
   "/favicon.ico": { file: "favicon.ico", type: "image/x-icon" },
   "/apple-touch-icon.png": { file: "apple-touch-icon.png", type: "image/png" },
 };
+/** 展開後の大きさの上限（アップロードの上限の何倍か。src/deploy/handler.ts と同じ） */
+const EXTRACT_RATIO = 4;
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 /** 管理者だけが呼べる API（全体の設定） */
 /** サイト名にできない名前（管理画面の URL の #/invite・#/repos と重なるもの） */
@@ -286,6 +290,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, {
         url: origin,
         me: { id: user.id, name: user.name, role: user.role, sites: user.sites },
+        maxUploadBytes: config.maxUploadBytes,
         members: state.users.length,
         domain: {
           value: state.domain,
@@ -671,6 +676,48 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     // まだデプロイしていないサイトでは undefined
     const release = store.get();
     const siteRouteKey = `${method} ${rest}`;
+
+    // ファイルのドラッグ＆ドロップでデプロイする（本文は管理画面で作った tar.gz）。
+    // wrangler の設定があればそれに従い、なければ全体を静的サイトとして配信する
+    if (siteRouteKey === "POST /deploy-upload") {
+      const body = await readBody(req, config.maxUploadBytes);
+      if (!body) return sendJson(res, 413, { error: `アップロードは ${Math.round(config.maxUploadBytes / 1024 / 1024)} MB 以内にしてください` });
+      let files;
+      try {
+        files = readTar(gunzipSync(body, { maxOutputLength: config.maxUploadBytes * EXTRACT_RATIO }), { skipLinks: true });
+      } catch (err) {
+        if (err instanceof TarError) return sendJson(res, 400, { error: err.message });
+        if ((err as NodeJS.ErrnoException)?.code === "ERR_BUFFER_TOO_LARGE") return sendJson(res, 413, { error: "展開後のファイルが大きすぎます" });
+        return sendJson(res, 400, { error: "アップロードされたファイルを読めませんでした" });
+      }
+      if (!files.length) return sendJson(res, 400, { error: "ファイルがありません" });
+      const hasConfig = files.some((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
+      if (!hasConfig) {
+        const today = new Date().toISOString().slice(0, 10);
+        files = [
+          { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name, compatibility_date: today, assets: { directory: "./public" } })) },
+          ...files.map((f) => ({ path: `public/${f.path}`, data: f.data })),
+        ];
+      }
+      if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
+      githubDeploying = true;
+      try {
+        const count = hasConfig ? files.length : files.length - 1;
+        const result = await deployFromFiles(files, deployer, {
+          source: { actor: user.name, commitMessage: `ファイルをアップロード（${count} ファイル${hasConfig ? "" : "・静的サイト"}）` },
+          log: new DeployLog(name),
+          buildLog: [],
+          where: "アップロードしたファイルのトップ",
+          siteName: name,
+          // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
+          autoRoot: isAdmin,
+        });
+        if (!result.ok) return sendJson(res, 400, { error: result.error });
+        return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig });
+      } finally {
+        githubDeploying = false;
+      }
+    }
 
     if (siteRouteKey === "GET " && !release) {
       return sendJson(res, 200, { name, ...siteUrls(name), root: sites.root === name, deployed: false, release: null, latest: history.latest(name) ?? null, repo: await repos.exists(name) });

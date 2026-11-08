@@ -668,11 +668,15 @@ async function deployGitHub(body, onError) {
     onError(err.message);
     return;
   }
+  await afterDeploy(site);
+}
+
+/** デプロイが終わったら、一覧を読み直してデプロイタブを開く */
+async function afterDeploy(site) {
   // デプロイは成功しているので、一覧の再読み込みに失敗してもエラーにしない
   await loadOverview().catch(() => {});
-  // 同じサイトのデプロイタブからデプロイしたときは hashchange が起きないので、描き直す
-  const next = siteHash("deployments", site);
-  go(next);
+  // 同じサイトのデプロイタブからデプロイしたときは hashchange が起きないので、go が描き直す
+  go(siteHash("deployments", site));
 }
 
 function busy(button, label) {
@@ -2891,13 +2895,14 @@ async function viewNewSite(main) {
 // ---------- デプロイ方法（サイトごと） ----------
 
 const DEPLOY_METHODS = [
+  { key: "upload", title: "ファイルから", description: "フォルダ・ファイル・zip をドラッグ＆ドロップしてデプロイします。" },
   { key: "sample", title: "サンプルから", description: "用意してあるサンプルをそのままデプロイします。" },
   { key: "github", title: "GitHub の公開リポジトリから", description: "public リポジトリの URL を指定して、Kanzume の中でバンドルしてデプロイします。" },
   { key: "actions", title: "GitHub Actions から", description: "push のたびに Actions でビルドしてデプロイします。npm パッケージやビルドが必要なときに。" },
   { key: "repo", title: "サイトのリポジトリから", description: "Kanzume にこのサイトの Git リポジトリを作り、git push でデプロイします。GitHub は不要です。" },
 ];
 
-/** サイトにデプロイする 4 つの方法。選んだ方法の中身を下に出す */
+/** サイトにデプロイする 5 つの方法。選んだ方法の中身を下に出す */
 function deployOptions(detail) {
   const site = detail.name;
   const panel = h("div", { class: "deploy-panel" });
@@ -2923,7 +2928,279 @@ function deployOptions(detail) {
   return h("div", {}, grid, panel);
 }
 
+// ---------- ファイルのドラッグ＆ドロップでデプロイ ----------
+
+const CONFIG_NAMES = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"];
+/** デプロイに含めないもの */
+const UPLOAD_SKIP = /(^|\/)(\.git|node_modules|__MACOSX)(\/|$)|(^|\/)\.DS_Store$/;
+
+// ドロップの場所を外したときに、ブラウザがファイルを開いて管理画面から離れないようにする
+for (const type of ["dragover", "drop"]) window.addEventListener(type, (e) => e.dataTransfer?.types?.includes("Files") && e.preventDefault());
+
+const readEntryFile = (entry) => new Promise((resolve, reject) => entry.file(resolve, reject));
+async function readDirEntries(dir) {
+  const reader = dir.createReader();
+  const all = [];
+  // readEntries は 100 件ずつしか返さないので、空になるまで読む
+  for (;;) {
+    const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+    if (!batch.length) return all;
+    all.push(...batch);
+  }
+}
+
+/** ドロップされたもの（フォルダを含む）を { path, file } の一覧にする */
+async function droppedFiles(dataTransfer) {
+  const entries = [...(dataTransfer.items ?? [])].map((i) => (i.kind === "file" ? i.webkitGetAsEntry?.() : null)).filter(Boolean);
+  if (!entries.length) return [...dataTransfer.files].map((file) => ({ path: file.name, file }));
+  const out = [];
+  const walk = async (entry) => {
+    if (UPLOAD_SKIP.test(entry.fullPath.slice(1))) return;
+    if (entry.isFile) out.push({ path: entry.fullPath.replace(/^\/+/, ""), file: await readEntryFile(entry) });
+    else if (entry.isDirectory) for (const child of await readDirEntries(entry)) await walk(child);
+  };
+  for (const e of entries) await walk(e);
+  return out;
+}
+
+/** zip を展開する（stored と deflate。暗号化・ZIP64 は非対応） */
+async function unzip(blob) {
+  const buf = new Uint8Array(await blob.arrayBuffer());
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  let eocd = -1;
+  for (let i = buf.length - 22; i >= Math.max(0, buf.length - 22 - 65535); i--) {
+    if (view.getUint32(i, true) === 0x06054b50) {
+      eocd = i;
+      break;
+    }
+  }
+  if (eocd < 0) throw new Error("zip を読めませんでした（壊れているか、zip ではありません）");
+  const count = view.getUint16(eocd + 10, true);
+  let p = view.getUint32(eocd + 16, true);
+  if (count === 0xffff || p === 0xffffffff) throw new Error("ZIP64 形式の zip には対応していません");
+  const decoder = new TextDecoder();
+  const out = [];
+  for (let n = 0; n < count; n++) {
+    if (view.getUint32(p, true) !== 0x02014b50) throw new Error("zip のディレクトリが壊れています");
+    const flags = view.getUint16(p + 8, true);
+    const method = view.getUint16(p + 10, true);
+    const compSize = view.getUint32(p + 20, true);
+    const nameLen = view.getUint16(p + 28, true);
+    const extraLen = view.getUint16(p + 30, true);
+    const commentLen = view.getUint16(p + 32, true);
+    const local = view.getUint32(p + 42, true);
+    const name = decoder.decode(buf.subarray(p + 46, p + 46 + nameLen));
+    p += 46 + nameLen + extraLen + commentLen;
+    if (name.endsWith("/")) continue;
+    if (flags & 1) throw new Error("パスワード付きの zip には対応していません");
+    if (compSize === 0xffffffff) throw new Error("ZIP64 形式の zip には対応していません");
+    const start = local + 30 + view.getUint16(local + 26, true) + view.getUint16(local + 28, true);
+    const raw = buf.subarray(start, start + compSize);
+    let data;
+    if (method === 0) data = new Blob([raw]);
+    else if (method === 8) data = await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream("deflate-raw"))).blob();
+    else throw new Error(`zip の圧縮方式（${method}）に対応していません: ${name}`);
+    out.push({ path: name, file: data });
+  }
+  return out;
+}
+
+/** 取り込むファイルを整える: 除くものを外し、zip を展開し、共通の先頭のフォルダを取る */
+async function prepareUpload(files) {
+  if (files.length === 1 && /\.zip$/i.test(files[0].path)) files = await unzip(files[0].file);
+  files = files
+    .map((f) => ({ ...f, path: f.path.replace(/\\/g, "/").replace(/^\/+/, "") }))
+    .filter((f) => f.path && !UPLOAD_SKIP.test(f.path) && !f.path.split("/").some((s) => s === ".." || s === "."));
+  // dist/ などのフォルダを丸ごと落としたときは、その中身をトップにする
+  for (;;) {
+    const first = files[0]?.path.split("/")[0];
+    if (!first || !files.every((f) => f.path.startsWith(`${first}/`))) break;
+    files = files.map((f) => ({ ...f, path: f.path.slice(first.length + 1) }));
+  }
+  return files.sort((a, b) => a.path.localeCompare(b.path));
+}
+
+/** ustar の tar（パスは pax ヘッダーに入れるので、長い名前や日本語も使える）を gzip にする */
+async function tarGz(files) {
+  const enc = new TextEncoder();
+  const parts = [];
+  const header = (name, size, type) => {
+    const b = new Uint8Array(512);
+    const put = (s, off, len) => b.set(enc.encode(s).subarray(0, len), off);
+    const octal = (v, len) => v.toString(8).padStart(len - 1, "0") + "\0";
+    put(name, 0, 100);
+    put(octal(0o644, 8), 100, 8);
+    put(octal(0, 8), 108, 8);
+    put(octal(0, 8), 116, 8);
+    put(octal(size, 12), 124, 12);
+    put(octal(Math.floor(Date.now() / 1000), 12), 136, 12);
+    put("        ", 148, 8);
+    put(type, 156, 1);
+    put("ustar\0", 257, 6);
+    put("00", 263, 2);
+    let sum = 0;
+    for (const x of b) sum += x;
+    put(octal(sum, 7) + " ", 148, 8);
+    return b;
+  };
+  const pad = (n) => new Uint8Array((512 - (n % 512)) % 512);
+  for (const f of files) {
+    const body = ` path=${f.path}\n`;
+    let len = enc.encode(body).length;
+    let record = `${len}${body}`;
+    while (enc.encode(record).length !== len) {
+      len = enc.encode(record).length;
+      record = `${len}${body}`;
+    }
+    const pax = enc.encode(record);
+    parts.push(header("PaxHeader", pax.length, "x"), pax, pad(pax.length));
+    parts.push(header(f.path.slice(-100).replace(/[^\x20-\x7e]/g, "_"), f.file.size, "0"), f.file, pad(f.file.size));
+  }
+  parts.push(new Uint8Array(1024));
+  return new Response(new Blob(parts).stream().pipeThrough(new CompressionStream("gzip"))).blob();
+}
+
+/** 取り込むファイルから、どうデプロイされるかを決める */
+async function uploadPlan(files) {
+  const config = files.find((f) => CONFIG_NAMES.includes(f.path));
+  if (!config) return { config: null, worker: false, index: files.some((f) => f.path === "index.html") };
+  const text = await config.file.text();
+  const worker = config.path.endsWith(".toml") ? /^\s*main\s*=/m.test(text) : /"main"\s*:/.test(text);
+  return { config: config.path, worker, index: true };
+}
+
 const METHOD_VIEWS = {
+  async upload(detail) {
+    const error = h("div", { class: "error" });
+    const summary = h("div");
+    const fileInput = h("input", { type: "file", multiple: true, hidden: true });
+    const dirInput = h("input", { type: "file", webkitdirectory: true, hidden: true });
+    const zone = h(
+      "div",
+      { class: "dropzone", tabindex: "0", role: "button", "aria-label": "フォルダ・ファイル・zip を選ぶ" },
+      h("span", { class: "dropzone-icon", html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>' }),
+      // タッチの端末ではドラッグできないので、選ぶ案内にする
+      h("b", { text: matchMedia("(hover: none)").matches ? "タップしてファイル・zip を選ぶ" : "ここにフォルダ・ファイル・zip をドロップ" }),
+      h(
+        "span",
+        { class: "muted" },
+        "または ",
+        h("button", { type: "button", class: "link", text: "ファイルを選ぶ", onclick: (e) => (e.stopPropagation(), fileInput.click()) }),
+        "・",
+        h("button", { type: "button", class: "link", text: "フォルダを選ぶ", onclick: (e) => (e.stopPropagation(), dirInput.click()) }),
+      ),
+    );
+    zone.addEventListener("click", () => fileInput.click());
+    zone.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        fileInput.click();
+      }
+    });
+
+    const take = async (files) => {
+      error.textContent = "";
+      fill(summary, h("p", { class: "muted", text: "ファイルを読み込み中…" }));
+      try {
+        show(await prepareUpload(files));
+      } catch (err) {
+        fill(summary);
+        error.textContent = err.message;
+      }
+    };
+    for (const input of [fileInput, dirInput]) {
+      input.addEventListener("change", () => {
+        const files = [...input.files].map((file) => ({ path: file.webkitRelativePath || file.name, file }));
+        input.value = "";
+        if (files.length) take(files);
+      });
+    }
+    zone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "copy";
+      zone.classList.add("over");
+    });
+    zone.addEventListener("dragleave", (e) => {
+      if (!zone.contains(e.relatedTarget)) zone.classList.remove("over");
+    });
+    zone.addEventListener("drop", async (e) => {
+      e.preventDefault();
+      zone.classList.remove("over");
+      // items はイベントの中でしか読めないので、先にファイルの一覧にする
+      const pending = droppedFiles(e.dataTransfer);
+      error.textContent = "";
+      fill(summary, h("p", { class: "muted", text: "ファイルを読み込み中…" }));
+      const files = await pending.catch((err) => {
+        error.textContent = err.message;
+        return null;
+      });
+      if (files) take(files);
+      else fill(summary);
+    });
+
+    const show = async (files) => {
+      if (!files.length) {
+        fill(summary);
+        error.textContent = "デプロイできるファイルがありません（.git・node_modules・.DS_Store は含めません）";
+        return;
+      }
+      const plan = await uploadPlan(files);
+      const size = files.reduce((n, f) => n + f.file.size, 0);
+      const kind = plan.config ? (plan.worker ? "dynamic" : "static") : "static";
+      const deploy = h("button", { class: "primary", text: "このサイトにデプロイ" });
+      const again = h("button", { text: "選び直す", onclick: () => (fill(summary), (error.textContent = "")) });
+      deploy.addEventListener("click", async () => {
+        error.textContent = "";
+        busy(deploy, "デプロイ中…");
+        again.disabled = true;
+        try {
+          const body = await tarGz(files);
+          const max = state.overview?.maxUploadBytes;
+          if (max && body.size > max) throw new Error(`圧縮後 ${fmtBytes(body.size)} で、上限（${fmtBytes(max)}）を超えています`);
+          await api(siteApi("/deploy-upload"), { method: "POST", body, headers: { "content-type": "application/gzip" } });
+          await afterDeploy(detail.name);
+        } catch (err) {
+          error.textContent = err.message;
+          deploy.disabled = false;
+          deploy.textContent = "このサイトにデプロイ";
+          again.disabled = false;
+        }
+      });
+      const shown = files.slice(0, 8);
+      fill(
+        summary,
+        h(
+          "div",
+          { class: "upload-summary" },
+          h(
+            "div",
+            { class: "upload-head" },
+            kindBadge(kind),
+            h("b", { text: plan.config ? `${plan.config} の設定でデプロイします${plan.worker ? "（Worker あり）" : ""}` : "設定ファイルがないので、静的サイトとしてデプロイします" }),
+          ),
+          h("p", { class: "muted", text: `${files.length} ファイル・${fmtBytes(size)}` }),
+          !plan.config && !plan.index ? h("p", { class: "warn", text: "トップに index.html がありません。/ を開くと 404 になります。" }) : null,
+          h("ul", { class: "upload-files mono" }, ...shown.map((f) => h("li", {}, h("span", { text: f.path }), h("span", { class: "muted", text: fmtBytes(f.file.size) }))), files.length > shown.length ? h("li", { class: "muted", text: `ほか ${files.length - shown.length} ファイル` }) : null),
+          h("div", { class: "actions" }, deploy, again),
+        ),
+      );
+    };
+
+    return [
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "ファイルから" }),
+        h("p", { class: "muted", text: `ビルドしたフォルダやファイルを ${detail.name} にデプロイします。wrangler.jsonc / wrangler.toml があればその設定に従い（Worker はここでバンドルします）、なければ全体を静的サイトとして配信します。` }),
+        zone,
+        fileInput,
+        dirInput,
+        summary,
+        error,
+      ),
+    ];
+  },
+
   async sample(detail) {
     const urls = await api("/samples");
     const error = h("div", { class: "error" });

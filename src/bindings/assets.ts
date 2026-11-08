@@ -60,8 +60,9 @@ function stat(root: string, p: string): fs.Stats | null {
   }
 }
 
+/** location はデコード済みのパス。日本語などはヘッダーに入れられないので、区切りごとにエンコードし直す */
 function redirect(location: string, search: string): Response {
-  return new Response(null, { status: 307, headers: { location: location + search } });
+  return new Response(null, { status: 307, headers: { location: location.split("/").map(encodeURIComponent).join("/") + search } });
 }
 
 async function file(request: Request, root: string, p: string, s: fs.Stats, status = 200): Promise<Response> {

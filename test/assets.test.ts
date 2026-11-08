@@ -11,6 +11,7 @@ const files = {
   "assets/blog/404.html": "blog 404",
   "assets/404.html": "root 404",
   "assets/app.js": "console.log(1)",
+  "assets/日本語/ページ.html": "jp",
 };
 
 function withAssets(assets: Partial<NonNullable<Manifest["assets"]>> = {}) {
@@ -35,6 +36,9 @@ test("auto-trailing-slash で Workers Static Assets と同じように HTML を�
   assert.equal((await matchAsset(r, req("/about/")))!.headers.get("location"), "/about");
   assert.equal((await matchAsset(r, req("/index.html")))!.headers.get("location"), "/");
   assert.equal(await matchAsset(r, req("/nope")), null);
+  // 日本語のパスは、リダイレクト先をエンコードして返す（そのままではヘッダーに入れられない）
+  assert.equal((await matchAsset(r, req("/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8.html")))!.headers.get("location"), "/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8");
+  assert.equal(await (await matchAsset(r, req("/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8")))!.text(), "jp");
 });
 
 test("Content-Type と ETag を付け、If-None-Match で 304 を返す", async (t) => {
