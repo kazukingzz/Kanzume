@@ -31,7 +31,8 @@ jobs:
       - id: kanzume
         uses: ./action
         with:
-          url: ${{ vars.KANZUME_URL }}
+          # docs.tekitou.app のサイト（ID: docs）。/_api/deploy はどのホストでも Kanzume が受ける
+          url: https://docs.tekitou.app
           token: ${{ secrets.KANZUME_TOKEN }}
           working-directory: examples/${{ matrix.example }}
 

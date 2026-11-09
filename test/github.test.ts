@@ -82,7 +82,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 
   const release = app.sites.get(app.sites.root ?? "")?.get()!;
-  assert.equal(release.manifest.name, "kanzume-example");
+  assert.equal(release.manifest.name, "docs");
   const worker = await app.runtime.get(release);
   const hello = await worker.fetch(new Request("http://x/api/hello"));
   assert.deepEqual(await hello.response!.json(), { message: "Hello from Kanzume" });
