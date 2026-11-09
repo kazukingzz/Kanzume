@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { siteDataDir } from "./db.ts";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { Readable } from "node:stream";
 import { toBytes } from "./bytes.ts";
@@ -217,7 +218,7 @@ export class R2Bucket {
   constructor(db: DatabaseSync, siteDir: string, bucket: string) {
     if (!R2_BUCKET_NAME.test(bucket)) throw new TypeError(`R2 のバケット名が不正です: ${bucket}`);
     this.#bucket = bucket;
-    this.#dir = path.join(siteDir, "r2", bucket);
+    this.#dir = path.join(siteDataDir(siteDir), "r2", bucket);
     this.#get = db.prepare("SELECT * FROM r2 WHERE bucket = ? AND key = ?");
     this.#upsert = db.prepare(
       "INSERT OR REPLACE INTO r2 (bucket, key, version, size, etag, uploaded, http_metadata, custom_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",

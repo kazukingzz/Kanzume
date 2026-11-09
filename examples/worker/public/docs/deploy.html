@@ -47,7 +47,7 @@
 <p>デプロイに成功すると、そのファイルを<a href="#repo">サイトのリポジトリ</a>のデフォルトブランチにコミットとして保存します（リポジトリがなければ作ります）。手元にファイルがなくなっても <code>git clone</code> で取り出せ、直して <code>git push</code> すればそのままデプロイできます。</p>
 <ul>
 <li>コミットの中身はアップロードしたものだけです（前のコミットのファイルは引き継ぎません）。デプロイ履歴にはコミットが付きます。</li>
-<li>静的サイトは、<code>git push</code> し直せるように <code>wrangler.jsonc</code> と <code>public/</code> の形で保存します。wrangler の設定の <code>name</code> は、サイトの ID に書き換えて保存します（コメントなどはそのまま）。</li>
+<li>静的サイトは、<code>git push</code> し直せるように <code>wrangler.jsonc</code> と <code>public/</code> の形で保存します。wrangler の設定はそのまま保存します（サイトのリポジトリへの push は、<code>name</code> にかかわらずそのサイトにデプロイします）。</li>
 <li>リポジトリの容量の上限（<code>KANZUME_REPO_QUOTA_MB</code>）を超えるときや、デプロイの間に push があったときは、デプロイだけして保存しません（画面に出ます）。</li>
 </ul>
 <h2 id="github">GitHub の公開リポジトリから</h2>
@@ -81,7 +81,7 @@ git push -u origin main</code></pre>
 <ul>
 <li>ユーザー名は何でもよく、パスワードには個人トークンを入力します。</li>
 <li>デフォルトブランチ（<code>main</code>）への push だけをデプロイします。ほかのブランチは保存だけします。</li>
-<li>wrangler の <code>name</code> がリポジトリ名と違うコミットはデプロイしません。</li>
+<li>リポジトリはサイトのものなので、wrangler の <code>name</code> にかかわらずそのサイトにデプロイします。</li>
 <li>デフォルトブランチは削除できません。リポジトリの容量には上限があります（<code>KANZUME_REPO_QUOTA_MB</code>）。</li>
 <li>すでに origin がある（GitHub から clone した）ときは、<code>git remote set-url origin …</code> で付け替えるか、別の名前で追加します。</li>
 <li>GitHub の URL からのデプロイと同じく Kanzume の中でバンドルするので、npm パッケージが必要なものは Actions を使ってください。</li>
@@ -89,7 +89,7 @@ git push -u origin main</code></pre>
 <h2 id="wrangler">wrangler の設定</h2>
 <p><code>wrangler.jsonc</code>・<code>wrangler.json</code>・<code>wrangler.toml</code> のどれかを読みます。使う項目は次のとおりです。</p>
 <table>
-<tr><th><code>name</code></th><td>サイトの ID（Actions と git push では必須）</td></tr>
+<tr><th><code>name</code></th><td>サイトの ID（Actions では必須。git push・ファイル・GitHub の URL からのデプロイでは、選んだサイトが優先）</td></tr>
 <tr><th><code>main</code></th><td>Worker のエントリ。なければ静的サイト</td></tr>
 <tr><th><code>compatibility_date</code> / <code>compatibility_flags</code></th><td><code>nodejs_compat</code> で node: のモジュールの一部が使える</td></tr>
 <tr><th><code>assets</code></th><td><code>directory</code>・<code>binding</code>・<code>html_handling</code>・<code>not_found_handling</code>・<code>run_worker_first</code></td></tr>

@@ -28,11 +28,19 @@ CREATE TABLE IF NOT EXISTS r2 (
 
 const open = new Map<string, DatabaseSync>();
 
+/**
+ * サイトの KV / R2 の置き場所（<siteDir>/data）。Worker の子プロセスが書き込めるのはここだけ
+ * （サイトのディレクトリのほかの場所、settings.json やリリースには書かせない）
+ */
+export const siteDataDir = (siteDir: string) => path.join(siteDir, "data");
+
 export function siteDb(siteDir: string): DatabaseSync {
   let db = open.get(siteDir);
   if (!db) {
-    fs.mkdirSync(siteDir, { recursive: true });
-    db = new DatabaseSync(path.join(siteDir, "data.sqlite"));
+    fs.mkdirSync(siteDataDir(siteDir), { recursive: true });
+    db = new DatabaseSync(path.join(siteDataDir(siteDir), "data.sqlite"));
+    // Worker の子プロセスと本体（管理画面のデータタブ）が同時に書くことがあるので、ロックを少し待つ
+    db.exec("PRAGMA busy_timeout = 5000");
     db.exec(SCHEMA);
     open.set(siteDir, db);
   }

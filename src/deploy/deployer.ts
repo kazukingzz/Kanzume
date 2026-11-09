@@ -83,6 +83,7 @@ export class Deployer {
   #runtime: Runtime;
   #history: DeployHistory;
   #queue = new SerialQueue();
+  #sitesQueue = new SerialQueue();
   /** デプロイが成功したあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
 
@@ -90,6 +91,14 @@ export class Deployer {
     this.#sites = sites;
     this.#runtime = runtime;
     this.#history = history;
+  }
+
+  /**
+   * 同じサイトへの「リポジトリを読み書きしてデプロイする」一連の処理を 1 つずつにする
+   * （git push のデプロイと、ファイルのアップロードのコミット → デプロイ → ブランチを進める、が交ざらないように）
+   */
+  exclusive<T>(site: string, fn: () => Promise<T>): Promise<T> {
+    return this.#sitesQueue.run(site, fn);
   }
 
   #serialize<T>(fn: () => Promise<T>): Promise<T> {
@@ -174,14 +183,19 @@ export class Deployer {
           throw err;
         }
       }
-      await store.activate(release);
-      // Kanzume で最初にデプロイしたサイトだけ、ルートドメインでも配信する（1 サイトだけなら / で開ける）。
-      // 一度ルートを決めたり外したりしたら、あとは管理者設定で選んだときだけ変わる
-      if (input.autoRoot && !this.#sites.rootDecided && !this.#sites.list().some((s) => s.name !== manifest.name && s.store.get())) {
-        await this.#sites.setRoot(manifest.name);
+      try {
+        // 切り替えと同じタイミングで新しい Worker を入れる（間に来たリクエストが古い Worker や二重の起動に当たらないように）
+        await store.activate(release, () => {
+          if (worker) this.#runtime.install(worker);
+          else this.#runtime.evict(store.siteDir);
+        });
+      } catch (err) {
+        worker?.close?.();
+        throw err;
       }
-      if (worker) this.#runtime.install(worker);
-      else this.#runtime.evict(store.siteDir);
+      // ルートドメインのサイトは、Kanzume で最初のデプロイのときにだけ自動で決める。
+      // 管理者のデプロイならそのサイト、メンバーのデプロイなら「ルートなし」で確定させる（後からメンバーのサイトがルートにならないように）
+      if (!this.#sites.rootDecided) await this.#sites.setRoot(input.autoRoot ? manifest.name : null);
       log.add("新しいリリースに切り替えました");
       this.onChange?.();
       return { ok: true, release };

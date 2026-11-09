@@ -50,10 +50,10 @@
 <h2 id="isolation">Worker の分離</h2>
 <p>Worker 付きのサイトは、サイトごとに 1 つの子プロセスで動きます。Kanzume 本体（管理画面・静的アセット・Git・バックアップ）は Worker のコードを動かしません。</p>
 <ul>
-<li>子プロセスはサイトごとに別のユーザー（uid 20000〜）で動き、Node の権限モデル（<code>--permission</code>）で、読み書きできるのはそのサイトのディレクトリだけです。<code>child_process</code>・<code>worker_threads</code> は使えません。</li>
+<li>子プロセスはサイトごとに別のユーザー（uid 20000〜）で動きます。読めるのはそのサイトのリリースと KV / R2 だけ、書けるのは KV / R2 の置き場所（<code>sites/&lt;サイト&gt;/data/</code>）だけです。設定（シークレット）やリリースは書き換えられません。Node の権限モデル（<code>--permission</code>）でも制限し、<code>child_process</code>・<code>worker_threads</code> は使えません。</li>
 <li>ほかのサイトの KV・R2・シークレット、Kanzume のセッションやトークン（<code>admin.json</code>）、Kanzume の環境変数（<code>KANZUME_BACKUP_URL</code> など）には届きません。シークレットは起動時に本体から渡します。</li>
-<li>子プロセスのヒープは 64 MiB までです。しばらく使われない子は止まり、次のアクセスで起動し直します（<code>KANZUME_WORKER_IDLE_SEC</code>・<code>KANZUME_MAX_WORKERS</code>）。落ちても次のリクエストで起動し直します。</li>
-<li>別のユーザーで子を起動するため、Kanzume 本体は root で動きます（Docker イメージの既定）。root でないときは権限モデルだけで守り、起動ログに警告を出します。</li>
+<li>子プロセスのヒープは 64 MiB までです。しばらく使われない子は止まり、次のアクセスで起動し直します（<code>KANZUME_WORKER_IDLE_SEC</code>・<code>KANZUME_MAX_WORKERS</code>）。再デプロイや追い出しのときは、処理中のリクエストと <code>waitUntil</code> が終わってから止めます。落ちても次のリクエストで起動し直します。</li>
+<li>別のユーザーで子を起動するため、Kanzume 本体は root で動きます（Docker イメージの既定）。root でないときは権限モデルだけで守り、起動ログに警告を出します。権限モデルは <code>node:sqlite</code> などを制限しないため、root でないときは Worker が本体やほかのサイトのデータに届くことがあります。本番は root で動かしてください。</li>
 <li>静的サイト（Worker のないサイト）は本体が配信し、子プロセスは起動しません。</li>
 </ul>
 <h2 id="env">環境変数</h2>

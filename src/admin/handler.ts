@@ -14,7 +14,7 @@ import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
 import { DeployLog } from "../deploy/deployer.ts";
 import { deployFromFiles, deployFromGitHub, fetchFromGitHub, GitHubError, inspectFiles, type GitHubOptions } from "../deploy/github.ts";
-import { BINDING_NAME, CONFIG_FILES, ConfigError, parseWranglerConfig, withConfigName } from "../deploy/wrangler.ts";
+import { BINDING_NAME, CONFIG_FILES, ConfigError } from "../deploy/wrangler.ts";
 import { readTar, TarError } from "../deploy/tar.ts";
 import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import type { DeployHistory } from "../deploy/history.ts";
@@ -24,7 +24,7 @@ import { processRss, type ResourceMonitor } from "../observability/resources.ts"
 import type { Runtime } from "../runtime/runtime.ts";
 import { SettingsError, type SettingsPatch, type SiteSettings, type Sites } from "../sites.ts";
 import { PROJECT_NAME } from "../store.ts";
-import { RepoError, type Repos } from "../git/repos.ts";
+import { RepoError, type PendingCommit, type Repos } from "../git/repos.ts";
 import { GIT_PATH } from "../git/server.ts";
 import { asText, kvDelete, kvKeys, kvNamespaces, kvPut, kvValue, PREVIEW_BYTES, r2Bucket, r2Buckets, r2List } from "./data.ts";
 import { listFiles, readFile, type FileGroup } from "./files.ts";
@@ -691,42 +691,33 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         return sendJson(res, 400, { error: "アップロードされたファイルを読めませんでした" });
       }
       if (!files.length) return sendJson(res, 400, { error: "ファイルがありません" });
-      const configFile = files.find((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
-      const hasConfig = !!configFile;
+      // 設定ファイルの有無だけを見る（どれを使うかはデプロイと同じく CONFIG_FILES の順で決まる）。
+      // name はそのままでよい（サイトのリポジトリの push は、name にかかわらずこのサイトにデプロイする）
+      const hasConfig = files.some((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
       const count = files.length;
-      if (configFile) {
-        // リポジトリに入れたものをそのまま git push し直せるように、name をサイトの ID にそろえる
-        let current: unknown;
-        try {
-          current = parseWranglerConfig(configFile.path, configFile.data.toString("utf8")).name;
-        } catch {}
-        if (current !== name) {
-          const renamed = withConfigName(configFile.path, configFile.data.toString("utf8"), name);
-          if (renamed !== null) configFile.data = Buffer.from(renamed);
-        }
-      } else {
+      if (!hasConfig) {
         const today = new Date().toISOString().slice(0, 10);
         files = [
           { path: "wrangler.jsonc", data: Buffer.from(`${JSON.stringify({ name, compatibility_date: today, assets: { directory: "./public" } }, null, 2)}\n`) },
           ...files.map((f) => ({ path: `public/${f.path}`, data: f.data })),
         ];
       }
-      if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
-      githubDeploying = true;
-      try {
+      const uploaded = files;
+      // 同じサイトの git push とは 1 つずつ（コミット → デプロイ → ブランチを進める、の間に push を挟まない）
+      const out = await deployer.exclusive(name, async () => {
         const message = `ファイルをアップロード（${count} ファイル${hasConfig ? "" : "・静的サイト"}）`;
         // 手元にファイルがなくなっても clone で取り出せるように、サイトのリポジトリのコミットにする。
-        // ブランチはデプロイに成功してから進める（リポジトリの先頭と動いているものをそろえる）
-        let commit: Awaited<ReturnType<Repos["commitFiles"]>> | null = null;
+        // 取り込むのはデプロイに成功してから（リポジトリの先頭と動いているものをそろえる）
+        let commit: PendingCommit | null = null;
         let repoWarning: string | null = null;
         try {
-          commit = await repos.commitFiles(name, files, { message, author: user.name, email: `${user.id}@users.kanzume` });
+          commit = await repos.commitFiles(name, uploaded, { message, author: user.name, email: `${user.id}@users.kanzume` });
         } catch (err) {
           console.error("[upload] リポジトリへのコミットに失敗:", err);
           repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
         }
         const source = commit ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user.name } : { actor: user.name, commitMessage: message };
-        const result = await deployFromFiles(files, deployer, {
+        const result = await deployFromFiles(uploaded, deployer, {
           source,
           log: new DeployLog(name),
           buildLog: [],
@@ -734,21 +725,26 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           siteName: name,
           // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
           autoRoot: isAdmin,
+        }).catch(async (err) => {
+          if (commit) await repos.discardCommit(commit).catch(() => {});
+          throw err;
         });
         if (!result.ok) {
-          // このアップロードのために作ったリポジトリは残さない
-          if (commit?.created) await repos.remove(name).catch(() => {});
-          return sendJson(res, 400, { error: result.error });
+          // 取り込まない（このアップロードのために作ったリポジトリも消す）
+          if (commit) await repos.discardCommit(commit).catch(() => {});
+          return { status: 400, body: { error: result.error } };
         }
         if (commit) {
-          const moved = await repos.updateBranch(name, commit.branch, commit.sha, commit.parent);
+          const moved = await repos.updateBranch(commit);
           if (moved === "quota") repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
           else if (moved === "moved") repoWarning = "デプロイはしましたが、その間にリポジトリに push があったので保存しませんでした";
         }
-        return sendJson(res, 200, { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig, commit: repoWarning ? null : (commit?.sha ?? null), repoWarning });
-      } finally {
-        githubDeploying = false;
-      }
+        return {
+          status: 200,
+          body: { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig, commit: repoWarning ? null : (commit?.sha ?? null), repoWarning },
+        };
+      });
+      return sendJson(res, out.status, out.body);
     }
 
     if (siteRouteKey === "GET " && !release) {

@@ -117,18 +117,3 @@ export function toManifest(raw: Record<string, unknown>, hasWorker: boolean): Ma
     assets,
   };
 }
-
-/**
- * 設定ファイルの name を書き換えた文字列を返す（コメントや並びはそのまま）。
- * 書き換えられない（name がない・書き換えても読み直すと違う）ときは null
- */
-export function withConfigName(filename: string, text: string, name: string): string | null {
-  const re = filename.endsWith(".toml") ? /^(\s*name\s*=\s*)(["'])(?:(?!\2).)*\2/m : /("name"\s*:\s*)(")(?:[^"\\]|\\.)*"/;
-  if (!re.test(text)) return null;
-  const next = text.replace(re, (_m, head: string, q: string) => `${head}${q}${name}${q}`);
-  try {
-    return parseWranglerConfig(filename, next).name === name ? next : null;
-  } catch {
-    return null;
-  }
-}

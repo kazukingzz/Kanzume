@@ -7,7 +7,7 @@ import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 
 const ROOT_FILE = "_root";
-const SETTINGS_FILE = "settings.json";
+export const SETTINGS_FILE = "settings.json";
 const MAX_VALUE = 5 * 1024;
 const MAX_TOTAL = 64 * 1024;
 export const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -84,8 +84,34 @@ export class Sites {
       this.#stores.set(entry.name, store);
       this.#settings.set(entry.name, readSiteSettings(store.siteDir));
     }
+    // 変更のときと同じく、サブドメインの形と重なりを確かめる（ファイルを直接書き換えられても、ほかのサイトのサブドメインを取らせない）。
+    // サイトの ID と同じサブドメイン（既定）を先に確保し、それと重なる別名や不正な別名は無視する
+    for (const [id, settings] of this.#settings) {
+      if (settings.subdomain !== undefined && !PROJECT_NAME.test(settings.subdomain)) {
+        console.warn(`[kanzume] サイト ${id} のサブドメイン（${settings.subdomain}）は使えないので、${id} で配信します`);
+        this.#settings.set(id, { ...settings, subdomain: undefined });
+      }
+    }
+    const taken = new Set<string>();
+    for (const [id, settings] of this.#settings) if (settings.subdomain === undefined || settings.subdomain === id) taken.add(id);
+    for (const [id, settings] of this.#settings) {
+      const label = settings.subdomain;
+      if (label === undefined || label === id) continue;
+      if (taken.has(label)) {
+        console.warn(`[kanzume] サイト ${id} のサブドメイン（${label}）は使えないので、${id} で配信します`);
+        this.#settings.set(id, { ...settings, subdomain: undefined });
+        taken.add(id);
+        continue;
+      }
+      taken.add(label);
+    }
     const raw = await fs.readFile(path.join(this.dir, ROOT_FILE), "utf8").catch(() => null);
     this.#rootDecided = raw !== null;
+    // _root を記録する前から使っている環境: デプロイ済みのサイトがあれば、もう決めたものとして扱う
+    if (!this.#rootDecided && [...this.#stores.values()].some((s) => s.get())) {
+      await fs.writeFile(path.join(this.dir, ROOT_FILE), "");
+      this.#rootDecided = true;
+    }
     const root = (raw ?? "").trim();
     this.#root = root && this.#stores.has(root) ? root : null;
   }

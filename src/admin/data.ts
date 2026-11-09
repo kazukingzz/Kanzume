@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { DatabaseSync } from "node:sqlite";
-import { siteDb } from "../bindings/db.ts";
+import { siteDataDir, siteDb } from "../bindings/db.ts";
 import { KVNamespace } from "../bindings/kv.ts";
 import { R2Bucket } from "../bindings/r2.ts";
 import type { Release } from "../store.ts";
@@ -17,7 +17,7 @@ const now = () => Math.floor(Date.now() / 1000);
 
 /** まだ一度も KV / R2 を使っていないサイトでは data.sqlite を作らない */
 function openDb(siteDir: string): DatabaseSync | null {
-  return fs.existsSync(path.join(siteDir, "data.sqlite")) ? siteDb(siteDir) : null;
+  return fs.existsSync(path.join(siteDataDir(siteDir), "data.sqlite")) ? siteDb(siteDir) : null;
 }
 
 /**

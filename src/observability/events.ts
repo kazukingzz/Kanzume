@@ -9,6 +9,7 @@ const MAX_LOGS = 100;
 const MAX_MESSAGE = 4096;
 const MAX_SUBREQUESTS = 50;
 const MAX_PATH = 1024;
+const MAX_EXCEPTIONS = 20;
 
 export interface ExceptionInfo {
   name: string;
@@ -79,11 +80,56 @@ export class Invocation {
   }
 
   exception(err: unknown): void {
-    this.detail.exceptions.push(toException(err));
+    if (this.detail.exceptions.length < MAX_EXCEPTIONS) this.detail.exceptions.push(toException(err));
   }
 
   subrequest(entry: Detail["subrequests"][number]): void {
     if (this.detail.subrequests.length < MAX_SUBREQUESTS) this.detail.subrequests.push(entry);
+  }
+
+  /**
+   * 子プロセスで動いた Worker のログ・例外・サブリクエストを取り込む。子は信頼できないので、
+   * 形と件数・長さを確かめ、ここで直接記録したときと同じ上限に収める
+   */
+  merge(raw: unknown): void {
+    if (!raw || typeof raw !== "object") return;
+    const d = raw as Record<string, unknown>;
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : String(v ?? "").slice(0, max));
+    const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
+    if (Array.isArray(d.logs)) {
+      for (const log of d.logs.slice(0, MAX_LOGS * 2)) {
+        if (!log || typeof log !== "object") continue;
+        const l = log as Record<string, unknown>;
+        if (this.detail.logs.length >= MAX_LOGS) {
+          this.detail.droppedLogs++;
+          continue;
+        }
+        const level = (["log", "info", "warn", "error", "debug"] as const).find((x) => x === l.level) ?? "log";
+        this.detail.logs.push({ ts: num(l.ts) || Date.now(), level, message: str(l.message, MAX_MESSAGE) });
+      }
+    }
+    this.detail.droppedLogs += Math.min(Math.max(0, Math.floor(num(d.droppedLogs))), 1_000_000);
+    if (Array.isArray(d.exceptions)) {
+      for (const e of d.exceptions.slice(0, MAX_EXCEPTIONS)) {
+        if (!e || typeof e !== "object" || this.detail.exceptions.length >= MAX_EXCEPTIONS) continue;
+        const x = e as Record<string, unknown>;
+        this.detail.exceptions.push({ name: str(x.name, 200) || "Error", message: str(x.message, MAX_MESSAGE), stack: typeof x.stack === "string" ? x.stack.slice(0, MAX_MESSAGE * 4) : null });
+      }
+    }
+    if (Array.isArray(d.subrequests)) {
+      for (const s of d.subrequests.slice(0, MAX_SUBREQUESTS)) {
+        if (!s || typeof s !== "object") continue;
+        const x = s as Record<string, unknown>;
+        this.subrequest({
+          ts: num(x.ts),
+          method: str(x.method, 16),
+          url: str(x.url, MAX_PATH * 2),
+          status: typeof x.status === "number" && Number.isFinite(x.status) ? x.status : null,
+          durationMs: num(x.durationMs),
+          error: typeof x.error === "string" ? x.error.slice(0, MAX_MESSAGE) : null,
+        });
+      }
+    }
   }
 
   response(response: Response): void {

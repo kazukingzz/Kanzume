@@ -17,7 +17,7 @@ const gunzip = promisify(gunzipCb);
 /** バックアップしないもの（トップレベル） */
 const SKIP_TOP = new Set(["git-hooks", ".restoring", ".backup-tmp"]);
 /** Kanzume が管理する SQLite（VACUUM INTO で取る）。ほかの .sqlite（サイトのアセットなど）は普通のファイルとして扱う */
-const MANAGED_DB = /^(meta\.sqlite|sites\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/data\.sqlite)$/;
+const MANAGED_DB = /^(meta\.sqlite|sites\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/data\/data\.sqlite)$/;
 /** 秘密を含むので、復元したときも本人だけが読めるようにするファイル */
 const PRIVATE_FILE = /^(admin\.json|sites\/[^/]+\/settings\.json)$/;
 
@@ -403,7 +403,7 @@ export class Backup {
           const quoted = tmp.replace(/'/g, "''");
           // 動いている接続があればそれで取る。なければそのファイルだけを読み取り専用で開いて閉じる
           // （接続を開きっぱなしにせず、消されたサイトの DB を作り直さない）
-          const live = rel === "meta.sqlite" ? this.#metaDb : openedSiteDb(path.dirname(abs));
+          const live = rel === "meta.sqlite" ? this.#metaDb : openedSiteDb(path.dirname(path.dirname(abs)));
           if (live) live.exec(`VACUUM INTO '${quoted}'`);
           else {
             const db = new DatabaseSync(abs, { readOnly: true });

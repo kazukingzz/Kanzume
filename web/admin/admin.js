@@ -3050,7 +3050,8 @@ async function tarGz(files) {
 
 /** 取り込むファイルから、どうデプロイされるかを決める */
 async function uploadPlan(files) {
-  const config = files.find((f) => CONFIG_NAMES.includes(f.path));
+  // サーバーと同じ優先順（wrangler.jsonc → wrangler.json → wrangler.toml）で選ぶ
+  const config = CONFIG_NAMES.map((n) => files.find((f) => f.path === n)).find(Boolean);
   if (!config) return { config: null, worker: false, index: files.some((f) => f.path === "index.html") };
   const text = await config.file.text();
   const worker = config.path.endsWith(".toml") ? /^\s*main\s*=/m.test(text) : /"main"\s*:/.test(text);
@@ -3080,6 +3081,8 @@ const METHOD_VIEWS = {
     );
     zone.addEventListener("click", () => fileInput.click());
     zone.addEventListener("keydown", (e) => {
+      // 中の「ファイルを選ぶ」「フォルダを選ぶ」ボタンのキー操作は、そのボタンに任せる
+      if (e.target !== zone) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         fileInput.click();
@@ -3090,7 +3093,7 @@ const METHOD_VIEWS = {
       error.textContent = "";
       fill(summary, h("p", { class: "muted", text: "ファイルを読み込み中…" }));
       try {
-        show(await prepareUpload(files));
+        await show(await prepareUpload(files));
       } catch (err) {
         fill(summary);
         error.textContent = err.message;
@@ -3134,7 +3137,7 @@ const METHOD_VIEWS = {
       }
       const plan = await uploadPlan(files);
       const size = files.reduce((n, f) => n + f.file.size, 0);
-      const kind = plan.config ? (plan.worker ? "dynamic" : "static") : "static";
+      const kind = plan.worker ? "dynamic" : "static";
       const deploy = h("button", { class: "primary", text: "このサイトにデプロイ" });
       const again = h("button", { text: "選び直す", onclick: () => (fill(summary), (error.textContent = "")) });
       deploy.addEventListener("click", async () => {
@@ -3273,7 +3276,7 @@ const METHOD_VIEWS = {
           "section",
           { class: "card" },
           h("h2", { text: "サイトのリポジトリから" }),
-          h("p", { class: "muted", text: `Kanzume に Git リポジトリ ${site} を作ります。main に push すると、wrangler の設定どおりにこのサイトへデプロイします（name は ${site} にしてください）。` }),
+          h("p", { class: "muted", text: `Kanzume に Git リポジトリ ${site} を作ります。main に push すると、wrangler の設定どおりにこのサイトへデプロイします。` }),
           create,
           error,
         ),

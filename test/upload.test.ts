@@ -101,16 +101,34 @@ test("アップロードしたファイルはサイトのリポジトリのコ�
   assert.equal(fs.readFileSync(path.join(dest, "public/index.html"), "utf8"), "v2");
 });
 
-test("wrangler の name はサイトの ID にそろえて保存し、デプロイに失敗したら作ったリポジトリは残さない", async (t) => {
+test("wrangler の設定はそのまま保存して push し直せ、デプロイに失敗したら作ったリポジトリは残さない", async (t) => {
   const { upload, sites, repos } = await start(t);
   await sites.ensure("api");
-  const config = `{\n  // コメントは残る\n  "name": "something-else",\n  "main": "index.js",\n  "compatibility_date": "2026-10-01"\n}\n`;
+  const config = `{\n  // コメントも残る\n  "name": "something-else",\n  "main": "index.js",\n  "compatibility_date": "2026-10-01"\n}\n`;
   assert.equal((await upload("api", { "wrangler.jsonc": config, "index.js": "export default { fetch: () => new Response('ok') };" })).status, 200);
   const saved = (await repos.readFile("api", (await repos.commit("api", "refs/heads/main")).sha, "wrangler.jsonc"))!;
-  assert.equal(saved, config.replace("something-else", "api"));
+  assert.equal(saved, config);
 
   await sites.ensure("broken");
   const bad = await upload("broken", { "wrangler.jsonc": JSON.stringify({ name: "broken", main: "index.js" }), "index.js": "syntax error (" });
   assert.equal(bad.status, 400);
   assert.equal(await repos.exists("broken"), false);
+});
+
+
+test("容量の上限を超えるアップロードはリポジトリに取り込まず、オブジェクトも残さない", async (t) => {
+  const { upload, sites, repos } = await start(t, { KANZUME_REPO_QUOTA_MB: "0.05" });
+  await sites.ensure("blog");
+  assert.equal((await upload("blog", { "index.html": "small" })).status, 200);
+  const head = (await repos.commit("blog", "refs/heads/main")).sha;
+  const objects = path.join(repos.path("blog"), "objects");
+  const { dirSize } = await import("../src/git/repos.ts");
+  const before = await dirSize(objects);
+  // 圧縮が効かない 100 KB（上限は 50 KB）
+  const big = (await import("node:crypto")).randomBytes(100 * 1024).toString("base64");
+  const res = await upload("blog", { "index.html": "big", "big.txt": big });
+  assert.equal(res.status, 200, "デプロイはする");
+  assert.match(((await res.json()) as { repoWarning: string }).repoWarning, /容量の上限/);
+  assert.equal((await repos.commit("blog", "refs/heads/main")).sha, head, "ブランチは進めない");
+  assert.equal(await dirSize(objects), before, "リポジトリにオブジェクトを残さない（以後の push を止めない）");
 });

@@ -28,6 +28,19 @@ module.exports = {
     tryRead("otherDb", url.searchParams.get("otherDb"));
     tryRead("otherSettings", url.searchParams.get("otherSettings"));
     tryRead("ownSettings", url.searchParams.get("ownSettings"));
+    // シークレットの入った settings.json を差し替えられないこと（サブドメインの乗っ取りに使える）
+    try {
+      fs.unlinkSync(url.searchParams.get("ownSettings"));
+      out.replaceSettings = "replaced";
+    } catch (e) { out.replaceSettings = e.code || String(e); }
+    // node:sqlite は Node の権限モデルを通らないので、ほかのサイトの DB は uid で守る
+    try {
+      const { DatabaseSync } = host.getBuiltinModule("node:sqlite");
+      const db = new DatabaseSync(":memory:");
+      db.exec("ATTACH '" + url.searchParams.get("otherDb") + "' AS o");
+      db.prepare("SELECT count(*) FROM o.kv").get();
+      out.attach = "read";
+    } catch (e) { out.attach = e.code || String(e.message); }
     out.backupUrl = host.env.KANZUME_BACKUP_URL ?? null;
     try { host.getBuiltinModule("child_process").execFileSync("id"); out.spawn = "ran"; } catch (e) { out.spawn = e.code || String(e); }
     out.uid = typeof host.getuid === "function" ? host.getuid() : null;
@@ -64,7 +77,7 @@ const probeUrl = (dataDir: string, own: string, other: string, p = "/") =>
   `http://x${p}?` +
   new URLSearchParams({
     admin: path.join(dataDir, "admin.json"),
-    otherDb: path.join(dataDir, "sites", other, "data.sqlite"),
+    otherDb: path.join(dataDir, "sites", other, "data", "data.sqlite"),
     otherSettings: path.join(dataDir, "sites", other, "settings.json"),
     ownSettings: path.join(dataDir, "sites", own, "settings.json"),
   });
@@ -96,6 +109,8 @@ test("vm から抜け出しても、本体のデータ・ほかのサイト・�
 
   const outB = await probe(runtime, b, probeUrl(dataDir, "b", "a"));
   if (isRoot()) {
+    assert.notEqual(out.replaceSettings, "replaced", "settings.json は消せない（サイトのディレクトリには書けない）");
+    assert.notEqual(out.attach, "read", "ほかのサイトの DB は node:sqlite でも開けない");
     // root でないときは自分のサイトの settings.json は読める（中身は env に渡している自分のシークレットだけ）
     assert.notEqual(out.ownSettings, "read", "シークレットの入った settings.json は子から読めない（IPC で渡す）");
     assert.notEqual(out.uid, 0);
@@ -153,3 +168,84 @@ async function waitClosed(w: ChildWorker) {
   for (let i = 0; i < 300 && !w.closed; i++) await new Promise((r) => setTimeout(r, 10));
   assert.equal(w.closed, true);
 }
+
+// 訪問者や Worker の不具合で、子プロセス（同じサイトのほかのリクエスト）や本体を落とさない
+const EDGE = `${ESCAPE}
+module.exports = {
+  async fetch(request, env, ctx) {
+    const url = new URL(request.url);
+    if (url.pathname === "/error-response") return Response.error();
+    if (url.pathname === "/bad-header") return new Response("x", { headers: { location: url.searchParams.get("next") } });
+    if (url.pathname === "/long-error") throw new Error("あ".repeat(6000));
+    if (url.pathname === "/bad-ipc") {
+      host.send({ type: "done", id: "x", logs: 1 });
+      host.send({ type: "done", id: request.headers.get("x-probe-id"), logs: Array.from({ length: 100000 }, () => ({ message: "x".repeat(10) })) });
+      host.send("not an object");
+      return new Response("sent");
+    }
+    if (url.pathname === "/slow") {
+      ctx.waitUntil(new Promise((r) => setTimeout(r, 300)).then(() => env.KV.put("slow", "done")));
+      return new Response("later");
+    }
+    return Response.json({ url: request.url, host: request.headers.get("host"), id: request.headers.get("x-kanzume-id"), pid: host.pid });
+  },
+};`;
+
+test("訪問者が内部用のヘッダーを付けても、URL や ID を偽れず子も落ちない。Host は Worker に届く", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = await runtime.get(r);
+  const res = await w.fetch(new Request("http://a.example.com/path?q=1", { headers: { host: "a.example.com", "x-kanzume-url": "x", "x-kanzume-id": "spoof" } }));
+  const body = (await res.response!.json()) as { url: string; host: string; id: string | null; pid: number };
+  assert.equal(body.url, "http://a.example.com/path?q=1");
+  assert.equal(body.host, "a.example.com");
+  assert.equal(body.id, null, "内部用のヘッダーは Worker に見せない");
+  await Promise.all(res.waitUntil);
+  const again = (await (await w.fetch(new Request("http://a.example.com/"))).response!.json()) as { pid: number };
+  assert.equal(again.pid, body.pid, "子は落ちていない");
+});
+
+test("Worker の不正な応答や長い例外は、そのリクエストだけの失敗になり、子は動き続ける", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const pid = w.pid;
+  const bad = await w.fetch(new Request("http://x/error-response"));
+  assert.equal(bad.response?.status ?? 500, 500);
+  const header = await w.fetch(new Request("http://x/bad-header?next=%01"));
+  assert.equal(header.response?.status ?? 500, 500);
+  const long = await w.fetch(new Request("http://x/long-error"));
+  assert.equal(long.response, null);
+  assert.equal((long.error as Error).message, "あ".repeat(6000), "長い例外もそのまま届く");
+  await Promise.all([...bad.waitUntil, ...header.waitUntil, ...long.waitUntil]);
+  assert.equal(w.closed, false);
+  assert.equal(w.pid, pid);
+  assert.equal((await (await w.fetch(new Request("http://x/"))).response!.json() as { pid: number }).pid, pid);
+});
+
+test("子が不正な IPC を送っても本体は落ちず、ログは上限で切られる", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const res = await w.fetch(new Request("http://x/bad-ipc"));
+  assert.equal(await res.response!.text(), "sent");
+  await Promise.all(res.waitUntil);
+  assert.equal((await (await w.fetch(new Request("http://x/"))).response!.json() as { pid: number }).pid, w.pid);
+});
+
+test("再デプロイで外した子も、処理中の waitUntil は最後まで動く", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const v1 = await site(dataDir, "a", EDGE);
+  const w1 = (await runtime.get(v1)) as ChildWorker;
+  const slow = await w1.fetch(new Request("http://x/slow"));
+  assert.equal(await slow.response!.text(), "later");
+  const store = new Store(v1.siteDir);
+  const v2 = await store.createRelease(manifest({ name: "a", ...BINDINGS }), [{ path: "worker/index.cjs", data: Buffer.from(EDGE) }]);
+  runtime.install((await runtime.preload(v2)) as ChildWorker);
+  assert.equal(w1.closed, false, "処理中なのですぐには止めない");
+  await Promise.all(slow.waitUntil);
+  await waitClosed(w1);
+  const { siteDb } = await import("../src/bindings/db.ts");
+  const { KVNamespace } = await import("../src/bindings/kv.ts");
+  assert.equal(await new KVNamespace(siteDb(v1.siteDir), "KV").get("slow"), "done");
+});

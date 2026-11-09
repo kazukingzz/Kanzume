@@ -192,7 +192,7 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.deepEqual((await api("/repos")).body.repos, []);
 });
 
-test("リポジトリ名と違う name のコミットはデプロイせず、ほかのサイトを上書きできない", { skip: NO_GIT }, async (t) => {
+test("name がほかのサイトのコミットも、リポジトリのサイトにデプロイし、ほかのサイトは上書きできない", { skip: NO_GIT }, async (t) => {
   const { base, remote, repos, sites, state, history } = await start(t);
   await repos.create("blog");
   await repos.create("sample");
@@ -202,11 +202,12 @@ test("リポジトリ名と違う name のコミットはデプロイせず、�
   const evil = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "blog", main: "src/index.js", vars: { GREETING: "乗っ取り" } }) });
   const push = await git(evil, ["push", remote("sample", token), "main"]);
   assert.equal(push.status, 0, push.output);
-  assert.match(push.output, /remote: デプロイに失敗しました: wrangler の name（blog）がリポジトリ名（sample）と違う/);
+  assert.match(push.output, /remote: デプロイしました/);
   assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git", "blog はそのまま");
-  assert.deepEqual(sites.list().map((s) => s.name), ["blog"]);
-  assert.equal(history.list("blog").length, 1, "失敗の記録は blog の履歴に入らない");
-  assert.equal(history.list("sample")[0].status, "failed");
+  assert.deepEqual(sites.list().map((s) => s.name), ["blog", "sample"]);
+  assert.equal(history.list("blog").length, 1, "blog の履歴には入らない");
+  assert.equal(history.list("sample")[0].status, "success");
+  assert.equal(sites.settings("sample").vars.GREETING, undefined, "管理画面の設定は変わらない");
 });
 
 test("main の削除は拒否し（ほかのブランチは消せる）、続けて push したときは新しいコミットが残る", { skip: NO_GIT }, async (t) => {
@@ -317,7 +318,7 @@ test("リポジトリの容量の上限を超える push は受け付けない",
   assert.deepEqual(await app.repos.refs("blog"), []);
 });
 
-test("メンバーの個人トークンでの push はルートにならず、全体の Token での push はルートになる（Kanzume で最初のデプロイのときだけ）", { skip: NO_GIT }, async (t) => {
+test("メンバーの最初の push はルートにならず、その後の全体の Token での push でもルートにならない", { skip: NO_GIT }, async (t) => {
   const { remote, repos, sites, state } = await start(t);
   for (const name of ["blog", "shop", "docs"]) await repos.create(name);
   const token = await memberToken(state, ["shop"]);
@@ -327,25 +328,26 @@ test("メンバーの個人トークンでの push はルートにならず、�
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
   assert.equal(sites.root, null, "最初のデプロイではないので、全体の Token でもルートにしない");
 
-  // ほかにデプロイ済みのサイトがなければ、全体の Token の push でルートになる
-  for (const name of ["shop", "blog"]) await sites.remove(name);
-  const docs = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "docs", main: "src/index.js" }) });
-  assert.match((await git(docs, ["push", remote("docs"), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, "docs");
+  assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");
 });
 
-test("name が違う push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {
+test("全体の Token での最初の push はルートになる", { skip: NO_GIT }, async (t) => {
+  const { remote, repos, sites } = await start(t);
+  await repos.create("blog");
+  assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
+  assert.equal(sites.root, "blog");
+});
+
+test("設定のない push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {
   const { remote, repos, history } = await start(t);
   await repos.create("sample");
   const tmp = (await import("node:os")).tmpdir();
   const { readdirSync } = await import("node:fs");
   const before = readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length;
-  const push = await git(workTree(t, WORKER), ["push", remote("sample"), "main"]);
-  assert.match(push.output, /wrangler の name（blog）がリポジトリ名（sample）と違う/);
-  assert.equal(readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length, before, "作業ディレクトリを作っていない");
-  const noConfig = await git(workTree(t, { "index.js": "x" }), ["push", "--force", remote("sample"), "main"]);
+  const noConfig = await git(workTree(t, { "index.js": "x" }), ["push", remote("sample"), "main"]);
   assert.match(noConfig.output, /wrangler\.jsonc \/ wrangler\.json \/ wrangler\.toml がありません/);
-  assert.deepEqual(history.list("sample").map((d) => d.status), ["failed", "failed"], "設定がない失敗もリポジトリの履歴に入る");
+  assert.equal(readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length, before, "作業ディレクトリを作っていない");
+  assert.deepEqual(history.list("sample").map((d) => d.status), ["failed"], "設定がない失敗もリポジトリの履歴に入る");
 });
 
 test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", { skip: NO_GIT }, async (t) => {
@@ -366,7 +368,6 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack&service=git-receive-pack`, { headers: auth })).status, 404);
   assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, { headers: auth })).status, 200);
 
-  assert.match((await git(workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "blog2", assets: { directory: "public" } }) }), ["push", remote("blog"), "main"])).output, /違う/);
   // サイト shop を（GitHub からなどで）先に作っておく
   await repos.create("shop");
   const shop = workTree(t, { "wrangler.json": JSON.stringify({ name: "shop", assets: { directory: "p" } }), "p/index.html": "shop" });

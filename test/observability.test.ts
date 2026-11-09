@@ -39,6 +39,11 @@ const META = {
   ]),
 };
 
+/** 子プロセスの Worker は、done が届いてから記録される。記録されるまで少し待つ */
+async function until(cond: () => boolean, ms = 3000): Promise<void> {
+  for (let waited = 0; !cond() && waited < ms; waited += 20) await new Promise((r) => setTimeout(r, 20));
+}
+
 test("成功したデプロイがビルドログ・コミット情報・Kanzume のログ付きで履歴に残る", async (t) => {
   const { deploy, history } = await start(t);
   const res = await deploy(bundle(t, `export default { fetch() { return new Response("ok"); } }`, META));
@@ -142,6 +147,8 @@ test("同期処理の時間超過は exceededCpu として記録される", asyn
     body: new Uint8Array(bundle(t, `export default { fetch() { while (true) {} } }`)),
   });
   assert.equal((await fetch(`${base}/x`)).status, 500);
+  // 記録は子プロセスから done が届いてから
+  await until(() => app.observability.events("app").length > 0);
   const [e] = app.observability.events("app");
   assert.equal(e.outcome, "exceededCpu");
 });
@@ -153,6 +160,7 @@ test("メトリクスは期間内のリクエスト数・エラー数・実行�
   for (let i = 0; i < 2; i++) await fetch(`${base}/e`);
   await fetch(`${base}/`);
 
+  await until(() => observability.metrics("app", "1h").totals.requests === 8);
   const m = observability.metrics("app", "1h");
   assert.equal(m.totals.requests, 8);
   assert.equal(m.totals.worker, 7);

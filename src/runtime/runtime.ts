@@ -7,7 +7,11 @@ export interface WorkerHandle {
   readonly release: Release;
   fetch(request: Request): Promise<InvokeResult>;
   close?(): void;
+  /** 処理中のリクエストを終えてから止める（子プロセスのとき） */
+  retire?(): void;
   readonly closed?: boolean;
+  /** 処理中のリクエストがあるか（子プロセスのとき） */
+  readonly busy?: boolean;
   /** 子プロセスで動いているときのプロセス ID */
   readonly pid?: number;
 }
@@ -91,11 +95,11 @@ export class Runtime {
     this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now() });
   }
 
-  /** 捨てた Worker が子プロセスなら止める */
-  #drop(key: string): void {
+  /** 捨てた Worker が子プロセスなら、処理中のリクエストと waitUntil を終えてから止める */
+  #drop(key: string, now = false): void {
     const entry = this.#entries.get(key);
     this.#entries.delete(key);
-    entry?.worker.then((w) => w.close?.(), () => {});
+    entry?.worker.then((w) => (now ? w.close?.() : (w.retire ?? w.close)?.call(w)), () => {});
   }
 
   #set(entry: Entry): void {
@@ -105,7 +109,12 @@ export class Runtime {
     const max = this.#options.maxWorkers ?? Infinity;
     while (this.#entries.size > max) {
       let oldest: [string, Entry] | null = null;
-      for (const e of this.#entries) if (e[1] !== entry && (!oldest || e[1].lastUsed < oldest[1].lastUsed)) oldest = e;
+      // 処理中のリクエストがないものを優先して追い出す
+      const rank = (e: Entry) => (e.handle?.busy ? 1 : 0);
+      for (const e of this.#entries) {
+        if (e[1] === entry) continue;
+        if (!oldest || rank(e[1]) < rank(oldest[1]) || (rank(e[1]) === rank(oldest[1]) && e[1].lastUsed < oldest[1].lastUsed)) oldest = e;
+      }
       if (!oldest) break;
       this.#drop(oldest[0]);
     }
@@ -118,11 +127,16 @@ export class Runtime {
   }
 
   sweep(now = Date.now()): void {
-    for (const [key, entry] of [...this.#entries]) if (now - entry.lastUsed > this.#options.idleMs) this.#drop(key);
+    for (const [key, entry] of [...this.#entries]) {
+      // 長いストリーム（SSE やダウンロード）の途中のものは使用中として扱う
+      if (entry.handle?.busy) entry.lastUsed = now;
+      else if (now - entry.lastUsed > this.#options.idleMs) this.#drop(key);
+    }
   }
 
+  /** 本体の終了。子はすぐに止める */
   close(): void {
     clearInterval(this.#timer);
-    this.evict();
+    for (const key of [...this.#entries.keys()]) this.#drop(key, true);
   }
 }

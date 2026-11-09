@@ -9,10 +9,9 @@ import { pipeline } from "node:stream/promises";
 import { safeEqual, type AdminState, type RepoScope } from "../admin/state.ts";
 import type { Config } from "../config.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
-import { checkExpectedName, deployFromDirectory, GitHubError } from "../deploy/github.ts";
-import { CONFIG_FILES, ConfigError, parseWranglerConfig } from "../deploy/wrangler.ts";
+import { deployFromDirectory, GitHubError } from "../deploy/github.ts";
+import { CONFIG_FILES, ConfigError } from "../deploy/wrangler.ts";
 import { readBody, rootOrigin, sendText } from "../http.ts";
-import { SerialQueue } from "../serial.ts";
 import type { Sites } from "../sites.ts";
 import type { Repos } from "./repos.ts";
 
@@ -73,8 +72,6 @@ function gitConfigEnv(entries: [string, string][]): Record<string, string> {
 export function createGitHandler({ config, state, repos, sites, deployer }: Deps, hooksDir: string) {
   // フックから Kanzume に戻ってくるときの合言葉。起動のたびに変わる
   const hookSecret = randomBytes(24).toString("base64url");
-  // push の順番どおりにデプロイするため、リポジトリごとに直列にする
-  const queue = new SerialQueue();
 
   async function handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void> {
     const m = /^\/_git\/([a-z0-9-]+)\.git(\/.*)$/.exec(pathname);
@@ -239,7 +236,8 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       }
       // すぐに 1 行返してヘッダーを送る（前のデプロイを待つ間に、フック側の待ち時間の上限に当たらないように）
       say("デプロイの順番を待っています…");
-      await queue.run(name, async () => {
+      // push の順番どおりにデプロイするため、サイトごとに直列にする（ファイルのアップロードとも）
+      await deployer.exclusive(name, async () => {
         const log = new DeployLog(`git push（${name}@${branch} ${update.new.slice(0, 7)}）からデプロイします`, say);
         const source = { repository: name, ref: branch, sha: update.new };
         try {
@@ -251,18 +249,16 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
           }
           Object.assign(source, { commitMessage: head.subject, actor: head.author });
 
-          // 取り出す前に、設定の name と大きさだけを確かめる（名前が違う push で全体を書き出さない）
-          let configText: string | null = null;
+          // 取り出す前に、設定があるかと大きさだけを確かめる（デプロイできない push で全体を書き出さない）。
+          // リポジトリはサイトのものなので、wrangler の name にかかわらずこのサイトにデプロイする
           let configFile: string | undefined;
           for (const c of CONFIG_FILES) {
-            configText = await repos.readFile(name, head.sha, c);
-            if (configText !== null) {
+            if ((await repos.readFile(name, head.sha, c)) !== null) {
               configFile = c;
               break;
             }
           }
-          if (!configFile || configText === null) throw new GitHubError(`リポジトリのトップに ${CONFIG_FILES.join(" / ")} がありません`);
-          checkExpectedName(parseWranglerConfig(configFile, configText), name);
+          if (!configFile) throw new GitHubError(`リポジトリのトップに ${CONFIG_FILES.join(" / ")} がありません`);
           const size = await repos.treeSize(name, head.sha);
           const limit = config.maxUploadBytes * 4;
           if (size > limit) throw new GitHubError(`ファイルの合計（${Math.round(size / 1024 / 1024)} MB）が上限（${Math.round(limit / 1024 / 1024)} MB）を超えています`);
@@ -275,7 +271,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
               source,
               log,
               buildLog: [],
-              expectedName: name,
+              siteName: name,
               autoRoot: body.scope === "global",
             });
             if (result.ok) {

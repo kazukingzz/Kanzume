@@ -4,6 +4,8 @@ import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
 import { loadConfig } from "../src/config.ts";
+import { DeployLog } from "../src/deploy/deployer.ts";
+import { deployFromFiles } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
 import { tarGz, tmpDir, toCjs } from "./helpers.ts";
@@ -111,7 +113,7 @@ test("_root がなくても、ほかのサイトがデプロイ済みなら自�
   fs.rmSync(path.join(sites.dir, "_root"));
   await sites.init();
   assert.equal(sites.root, null);
-  assert.equal(sites.rootDecided, false);
+  assert.equal(sites.rootDecided, true, "デプロイ済みのサイトがあれば、起動時に決めたものとして扱う");
   await deploy(counter(t, "shop"));
   assert.equal(sites.root, null);
   await deploy(counter(t, "blog"));
@@ -208,4 +210,30 @@ test("KANZUME_ORIGIN があるときは管理画面からドメインを変え�
   const cookie = `kanzume_session=${await state.createSession()}`;
   const res = await fetch(`${base}/_admin/kanzume/api/domain`, { method: "POST", headers: { cookie, origin: base, "content-type": "application/json" }, body: JSON.stringify({ domain: "x.example" }) });
   assert.equal(res.status, 409);
+});
+
+test("メンバーが最初にデプロイしたサイトは、あとで管理者が再デプロイしてもルートにならない", async (t) => {
+  const { sites, deployer } = await start(t);
+  const files = (n: string) => [
+    { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: n, assets: { directory: "p" } })) },
+    { path: "p/index.html", data: Buffer.from(n) },
+  ];
+  const ctx = (autoRoot: boolean) => ({ source: {}, log: new DeployLog("test"), buildLog: [], autoRoot });
+  assert.equal((await deployFromFiles(files("shop"), deployer, ctx(false))).ok, true);
+  assert.equal(sites.root, null);
+  assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");
+  assert.equal((await deployFromFiles(files("shop"), deployer, ctx(true))).ok, true);
+  assert.equal(sites.root, null, "管理者の再デプロイでもルートにならない");
+});
+
+test("settings.json を直接書き換えても、ほかのサイトのサブドメインや不正なサブドメインは使わない", async (t) => {
+  const { sites, deploy } = await start(t);
+  assert.equal((await deploy(counter(t, "blog"))).status, 200);
+  assert.equal((await deploy(counter(t, "shop"))).status, 200);
+  fs.writeFileSync(path.join(sites.get("blog")!.siteDir, "settings.json"), JSON.stringify({ subdomain: "shop", vars: {}, secrets: {} }));
+  fs.writeFileSync(path.join(sites.get("shop")!.siteDir, "settings.json"), JSON.stringify({ subdomain: "../x", vars: {}, secrets: {} }));
+  await sites.init();
+  assert.equal(sites.resolve("shop"), "shop");
+  assert.equal(sites.subdomain("blog"), "blog");
+  assert.equal(sites.subdomain("shop"), "shop");
 });

@@ -217,18 +217,22 @@ export class Repos {
   /**
    * ファイル一式を、デフォルトブランチの次のコミットとして作る（ブランチはまだ動かさない。動かすのは updateBranch）。
    * 管理画面のファイルのアップロードで、手元にファイルがなくなっても clone で取り出せるようにするため。
-   * 中身はアップロードしたものだけにする（前のコミットのファイルは引き継がない）
+   * 中身はアップロードしたものだけにする（前のコミットのファイルは引き継がない）。
+   * オブジェクトは一時ディレクトリに作る（push の受け取りと同じく、取り込むと決まるまでリポジトリを大きくしない）。
+   * 使わなかったら discardCommit で消す
    */
-  async commitFiles(name: string, files: UploadedFile[], options: { message: string; author: string; email: string }) {
+  async commitFiles(name: string, files: UploadedFile[], options: { message: string; author: string; email: string }): Promise<PendingCommit> {
     const created = !(await this.exists(name));
     if (created) await this.create(name);
-    const branch = await this.defaultBranch(name);
-    const parent = await this.git(name, ["rev-parse", "--verify", "--quiet", `refs/heads/${safeRef(branch)}^{commit}`])
-      .then((r) => String(r.stdout).trim() || null)
-      .catch(() => null);
+    const objects = await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-objects-"));
+    const pending: PendingCommit = { name, sha: "", branch: "", parent: null, created, objects };
     const work = await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-commit-"));
     const index = `${work}.index`;
     try {
+      pending.branch = await this.defaultBranch(name);
+      pending.parent = await this.git(name, ["rev-parse", "--verify", "--quiet", `refs/heads/${safeRef(pending.branch)}^{commit}`])
+        .then((r) => String(r.stdout).trim() || null)
+        .catch(() => null);
       for (const f of files) {
         const dest = path.join(work, safePath(f.path));
         if (!dest.startsWith(work + path.sep)) continue;
@@ -237,6 +241,9 @@ export class Repos {
       }
       const env = {
         GIT_INDEX_FILE: index,
+        // 書き込みは一時ディレクトリへ。今あるオブジェクトはリポジトリから読む
+        GIT_OBJECT_DIRECTORY: objects,
+        GIT_ALTERNATE_OBJECT_DIRECTORIES: path.resolve(this.path(name), "objects"),
         GIT_AUTHOR_NAME: options.author,
         GIT_AUTHOR_EMAIL: options.email,
         GIT_COMMITTER_NAME: "Kanzume",
@@ -245,24 +252,75 @@ export class Repos {
       // -f: アップロードに .gitignore があっても、デプロイしたファイルはすべて入れる
       await this.git(name, ["-C", work, "-c", "core.autocrlf=false", "--work-tree", work, "add", "--all", "--force", "."], { env });
       const tree = String((await this.git(name, ["write-tree"], { env })).stdout).trim();
-      const sha = String((await this.git(name, ["commit-tree", tree, ...(parent ? ["-p", parent] : []), "-m", options.message], { env })).stdout).trim();
-      return { sha, branch, parent, created };
+      pending.sha = String((await this.git(name, ["commit-tree", tree, ...(pending.parent ? ["-p", pending.parent] : []), "-m", options.message], { env })).stdout).trim();
+      return pending;
+    } catch (err) {
+      await this.discardCommit(pending);
+      throw err;
     } finally {
       await fs.rm(work, { recursive: true, force: true });
       await fs.rm(index, { force: true });
     }
   }
 
+  /** 使わなかったコミットを消す。そのために作ったリポジトリも消す */
+  async discardCommit(pending: PendingCommit): Promise<void> {
+    await fs.rm(pending.objects, { recursive: true, force: true });
+    if (pending.created) await this.remove(pending.name);
+  }
+
   /**
-   * ブランチを sha に進める。old は作ったときの親で、その間に push があれば動かさずに false を返す。
-   * 容量の上限（push と同じ）を超えるときも動かさない
+   * コミットを取り込んで、ブランチを進める。作ったときの親から、その間の push でブランチが動いていたら取り込まない。
+   * 容量の上限（push と同じ）を超えるときも取り込まない。どちらの場合も一時オブジェクトは消す
    */
-  async updateBranch(name: string, branch: string, sha: string, old: string | null): Promise<"ok" | "moved" | "quota"> {
-    if (this.quotaBytes > 0 && (await dirSize(path.join(this.path(name), "objects"))) > this.quotaBytes) return "quota";
-    const ok = await this.git(name, ["update-ref", "-m", "kanzume: upload", `refs/heads/${safeRef(branch)}`, sha, old ?? "0".repeat(40)])
-      .then(() => true)
-      .catch(() => false);
-    if (ok) this.onChange?.();
-    return ok ? "ok" : "moved";
+  async updateBranch(pending: PendingCommit): Promise<"ok" | "moved" | "quota"> {
+    const { name, branch, sha, parent, objects } = pending;
+    try {
+      const repoObjects = path.join(this.path(name), "objects");
+      if (this.quotaBytes > 0 && (await dirSize(repoObjects)) + (await dirSize(objects)) > this.quotaBytes) return "quota";
+      const head = await this.git(name, ["rev-parse", "--verify", "--quiet", `refs/heads/${safeRef(branch)}^{commit}`])
+        .then((r) => String(r.stdout).trim() || null)
+        .catch(() => null);
+      if (head !== parent) return "moved";
+      // 一時オブジェクトをリポジトリに移してから、ブランチを進める（進めた時点で、指す先がすべてそろっているように）
+      await moveObjects(objects, repoObjects);
+      const ok = await this.git(name, ["update-ref", "-m", "kanzume: upload", `refs/heads/${safeRef(branch)}`, sha, parent ?? "0".repeat(40)])
+        .then(() => true)
+        .catch(() => false);
+      if (ok) this.onChange?.();
+      return ok ? "ok" : "moved";
+    } finally {
+      await fs.rm(objects, { recursive: true, force: true });
+    }
+  }
+}
+
+/** アップロードから作ったまだ取り込んでいないコミット */
+export interface PendingCommit {
+  name: string;
+  sha: string;
+  branch: string;
+  parent: string | null;
+  /** このアップロードのためにリポジトリを作ったか */
+  created: boolean;
+  /** オブジェクトを作った一時ディレクトリ */
+  objects: string;
+}
+
+/** ルーズオブジェクト（xx/yyyy…）を移す。リポジトリにすでにあるものはそのまま */
+async function moveObjects(from: string, to: string): Promise<void> {
+  for (const dir of await fs.readdir(from)) {
+    if (!/^[0-9a-f]{2}$/.test(dir)) continue;
+    await fs.mkdir(path.join(to, dir), { recursive: true });
+    for (const file of await fs.readdir(path.join(from, dir))) {
+      const dest = path.join(to, dir, file);
+      if (await fs.stat(dest).then(() => true, () => false)) continue;
+      await fs.rename(path.join(from, dir, file), dest).catch(async (err: NodeJS.ErrnoException) => {
+        // 一時ディレクトリが別のファイルシステムにあるとき
+        if (err.code !== "EXDEV") throw err;
+        await fs.copyFile(path.join(from, dir, file), `${dest}.tmp`);
+        await fs.rename(`${dest}.tmp`, dest);
+      });
+    }
   }
 }

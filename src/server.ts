@@ -17,7 +17,7 @@ import { createGitHandler, installHooks } from "./git/server.ts";
 import { closeAllSiteDbs } from "./bindings/db.ts";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { isRoot } from "./runtime/process.ts";
+import { isRoot, prepareSiteDir, siteUid } from "./runtime/process.ts";
 import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
 
@@ -25,9 +25,17 @@ import { BackupUrlError } from "./backup/url.ts";
  * Worker の子プロセス（サイトごとの別ユーザー）から、本体のデータが見えないようにする。
  * 本体が作るファイルは本人とグループだけが読み書きできるようにし（umask 007）、/data の直下は一覧を見せない
  */
-async function protectDataDir(dataDir: string): Promise<void> {
+/** 本体が作るファイルを、ほかのユーザー（Worker の子プロセス）から見えないようにする。復元より前に呼ぶ */
+function applyUmask(config: Config): void {
+  if (config.isolation === "process" && isRoot()) process.umask(0o007);
+}
+
+async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
   if (!isRoot()) {
-    console.warn("[kanzume] root で動いていないので、Worker の子プロセスを別のユーザーに分けられません（Node の権限モデルだけで制限します）");
+    console.warn(
+      "[kanzume] root で動いていないので、Worker の子プロセスを別のユーザーに分けられません。Node の権限モデルだけで制限しますが、" +
+        "Worker が node:vm から抜け出すと、同じユーザーで動く本体やほかのサイトのデータに届きます（本番は Docker イメージのように root で動かしてください）",
+    );
     return;
   }
   process.umask(0o007);
@@ -38,14 +46,17 @@ async function protectDataDir(dataDir: string): Promise<void> {
     await fs.chmod(path.join(dataDir, name), 0o600).catch(() => {});
   }
   for (const name of ["repos", "git-hooks"]) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
+  // 全サイトの所有者とモードを、起動のたびにそろえる（以前のバージョンのデータや、バックアップから戻したデータも直す）
+  for (const { name, store } of sites.list()) prepareSiteDir(store.siteDir, siteUid(dataDir, name));
 }
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions>; backup?: Backup | null } = {}) {
+  applyUmask(config);
   const sites = new Sites(config.dataDir);
   await sites.init();
   const state = new AdminState(config.dataDir);
   await state.init();
-  if (config.isolation === "process") await protectDataDir(config.dataDir);
+  if (config.isolation === "process") await protectDataDir(config.dataDir, sites);
   const runtime = new Runtime({ idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs, maxWorkers: config.maxWorkers, isolation: config.isolation, dataDir: config.dataDir });
 
   const metaDb = openMetaDb(config.dataDir);
@@ -118,6 +129,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
  * HTTP サーバーはこれが終わってから始める（途中でリクエストを受けると、初期セットアップの画面が出たり空の状態をバックアップしたりするため）
  */
 export async function prepareBackup(config: Config): Promise<Backup | null> {
+  applyUmask(config);
   if (!config.backup) {
     console.log("[backup] KANZUME_BACKUP_URL が未設定なので、バックアップしません");
     return null;

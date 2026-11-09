@@ -38,6 +38,8 @@ export interface UploadedFile {
 const MANIFEST_FILE = "_manifest.json";
 const KEEP_RELEASES = 3;
 
+const exists = (p: string) => fs.lstat(p).then(() => true, () => false);
+
 export const PROJECT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 export class Store {
@@ -52,6 +54,15 @@ export class Store {
 
   async init(): Promise<void> {
     await fs.mkdir(this.#releasesDir, { recursive: true });
+    // 以前の置き場所（サイトのディレクトリの直下）の KV / R2 を data/ に移す
+    const data = path.join(this.siteDir, "data");
+    for (const name of ["data.sqlite", "data.sqlite-wal", "data.sqlite-shm", "r2"]) {
+      const from = path.join(this.siteDir, name);
+      const to = path.join(data, name);
+      if (!(await exists(from)) || (await exists(to))) continue;
+      await fs.mkdir(data, { recursive: true });
+      await fs.rename(from, to);
+    }
     const id = await fs.readFile(path.join(this.siteDir, "current"), "utf8").catch(() => null);
     if (id) this.#current = await this.#readRelease(id.trim()).catch(() => undefined);
   }
@@ -63,15 +74,16 @@ export class Store {
   async createRelease(manifest: Manifest, files: UploadedFile[]): Promise<Release> {
     const id = `${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
     const tmp = path.join(this.#releasesDir, `${id}.tmp`);
-    await fs.mkdir(tmp, { recursive: true });
+    // リリースと current は、Worker の子プロセス（サイトのグループ）からは読むだけにする（書き換えさせない）
+    await fs.mkdir(tmp, { recursive: true, mode: 0o750 });
     try {
       for (const file of files) {
         const dest = path.join(tmp, file.path);
-        await fs.mkdir(path.dirname(dest), { recursive: true });
-        await fs.writeFile(dest, file.data);
+        await fs.mkdir(path.dirname(dest), { recursive: true, mode: 0o750 });
+        await fs.writeFile(dest, file.data, { mode: 0o640 });
       }
       const deployedAt = new Date().toISOString();
-      await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify({ deployedAt, manifest }));
+      await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify({ deployedAt, manifest }), { mode: 0o640 });
       const dir = path.join(this.#releasesDir, id);
       await fs.rename(tmp, dir);
       return { id, dir, siteDir: this.siteDir, deployedAt, manifest };
@@ -81,11 +93,13 @@ export class Store {
     }
   }
 
-  async activate(release: Release): Promise<void> {
+  /** onSwitch は配信するリリースを切り替えたのと同じタイミングで（間に await を挟まずに）呼ぶ */
+  async activate(release: Release, onSwitch?: () => void): Promise<void> {
     const tmp = path.join(this.siteDir, `current.${release.id}.tmp`);
-    await fs.writeFile(tmp, release.id);
+    await fs.writeFile(tmp, release.id, { mode: 0o640 });
     await fs.rename(tmp, path.join(this.siteDir, "current"));
     this.#current = release;
+    onSwitch?.();
     await this.#prune();
   }
 

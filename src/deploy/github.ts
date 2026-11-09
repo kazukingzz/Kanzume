@@ -242,8 +242,6 @@ export interface BuildContext {
   buildLog: string[];
   /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
   where?: string;
-  /** 指定すると、wrangler の name がこれと違うときはデプロイしない。失敗もこの名前の履歴に残す（git push 用） */
-  expectedName?: string;
   /** Deployer の autoRoot（全体の Token によるデプロイのときだけ true） */
   autoRoot?: boolean;
   /** Deployer の siteName（管理画面で決めたサイト名。wrangler の name より優先する） */
@@ -256,13 +254,6 @@ function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildC
   const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error)?.message ?? err}`;
   deployer.recordFailure(name, message, { source: ctx.source, buildLog: ctx.buildLog.join("\n"), log: ctx.log });
   return { ok: false, error: message };
-}
-
-/** wrangler の name を確かめる（git push では、ファイルを取り出す前に設定だけを読んで照合する） */
-export function checkExpectedName(config: Record<string, unknown>, expected: string): void {
-  if (config.name !== expected) {
-    throw new GitHubError(`wrangler の name（${String(config.name ?? "未設定")}）がリポジトリ名（${expected}）と違うのでデプロイしません。name をリポジトリ名にそろえてください`);
-  }
 }
 
 /**
@@ -280,7 +271,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
     }
     return await deployFromDirectory(work, deployer, ctx);
   } catch (err) {
-    return fail(deployer, ctx.siteName ?? ctx.expectedName ?? null, err, ctx, "デプロイ");
+    return fail(deployer, ctx.siteName ?? null, err, ctx, "デプロイ");
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }
@@ -290,7 +281,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
 export async function deployFromDirectory(work: string, deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
   const { log, buildLog } = ctx;
   // 名前が分かる前に失敗しても、git push ならリポジトリ名の履歴に残す
-  let name: string | null = ctx.siteName ?? ctx.expectedName ?? null;
+  let name: string | null = ctx.siteName ?? null;
 
   try {
     let configFile: (typeof CONFIG_FILES)[number] | undefined;
@@ -303,8 +294,7 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
     if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
-    if (ctx.expectedName !== undefined) checkExpectedName(config, ctx.expectedName);
-    else if (!ctx.siteName && typeof config.name === "string") name = config.name;
+    if (!ctx.siteName && typeof config.name === "string") name = config.name;
     const build = config.build as { command?: string } | undefined;
     if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);
 
