@@ -8,7 +8,7 @@ import { DeployLog } from "../src/deploy/deployer.ts";
 import { deployFromFiles } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
-import { tarGz, tmpDir, toCjs } from "./helpers.ts";
+import { tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
 
 const ids = (has: (n: string) => boolean) => (n: string) => (has(n) ? n : undefined);
 
@@ -41,8 +41,12 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
     await app.state.flush();
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const deploy = (body: Buffer) =>
-    fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${app.state.deployToken}` }, body: new Uint8Array(body) });
+  // デプロイ先のサイトは先に作っておく（Actions からのデプロイではサイトを作らない）
+  const deploy = async (body: Buffer) => {
+    const name = nameInTarGz(body);
+    await app.sites.ensure(name);
+    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": name }, body: new Uint8Array(body) });
+  };
   // テストでは *.localhost を名前解決できないので、Host の代わりに X-Forwarded-Host でサブドメインを指定する
   const site = (host: string, path = "/", init: RequestInit = {}) =>
     fetch(`${base}${path}`, { redirect: "manual", ...init, headers: { "x-forwarded-host": host, ...(init.headers ?? {}) } });
@@ -218,7 +222,8 @@ test("メンバーが最初にデプロイしたサイトは、あとで管理�
     { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: n, assets: { directory: "p" } })) },
     { path: "p/index.html", data: Buffer.from(n) },
   ];
-  const ctx = (autoRoot: boolean) => ({ source: {}, log: new DeployLog("test"), buildLog: [], autoRoot });
+  await sites.ensure("shop");
+  const ctx = (autoRoot: boolean) => ({ source: {}, log: new DeployLog("test"), buildLog: [], autoRoot, siteName: "shop" });
   assert.equal((await deployFromFiles(files("shop"), deployer, ctx(false))).ok, true);
   assert.equal(sites.root, null);
   assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");

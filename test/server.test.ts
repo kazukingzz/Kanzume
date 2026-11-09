@@ -5,7 +5,7 @@ import { test, type TestContext } from "node:test";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
-import { rawTarEntry, rawTarGz, tarGz, tmpDir, toCjs } from "./helpers.ts";
+import { rawTarEntry, rawTarGz, tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
 
 async function start(t: TestContext, env: Record<string, string> = {}) {
   const dataDir = tmpDir(t);
@@ -17,8 +17,11 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
     
   });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const deploy = (body: Buffer, token = state.deployToken) =>
-    fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${token}` }, body: new Uint8Array(body) });
+  const deploy = async (body: Buffer, token = state.deployToken) => {
+    const name = nameInTarGz(body);
+    await sites.ensure(name);
+    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-kanzume-site": name }, body: new Uint8Array(body) });
+  };
   return { base, deploy, state, sites, store: { get: () => sites.get(sites.root ?? "")?.get() } };
 }
 
@@ -177,4 +180,19 @@ test("予約パスはサイトに渡さない", async (t) => {
   assert.equal((await fetch(`${base}/_api/deploy`)).status, 405);
   assert.equal((await fetch(`${base}/_admin/kanzume`)).status, 200);
   assert.equal(await (await fetch(`${base}/_other`)).text(), "worker");
+});
+
+test("Actions からのデプロイは、管理画面で追加したサイトを指定したときだけ受け付ける（wrangler の name は使わない）", async (t) => {
+  const { base, state, sites } = await start(t);
+  const body = new Uint8Array(tarGz(t, { "wrangler.json": JSON.stringify({ name: "other", assets: { directory: "public" } }), "public/index.html": "x" }));
+  const post = (headers: Record<string, string>) => fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${state.deployToken}`, ...headers }, body });
+  assert.equal((await post({})).status, 400, "サイトの指定がない");
+  assert.equal((await post({ "x-kanzume-site": "blog" })).status, 404, "まだ追加していないサイト");
+  assert.equal(sites.has("blog") || sites.has("other"), false, "デプロイでサイトを作らない");
+  await sites.ensure("blog");
+  const ok = await post({ "x-kanzume-site": "blog" });
+  assert.equal(ok.status, 200, await ok.clone().text());
+  assert.equal(((await ok.json()) as { name: string }).name, "blog");
+  assert.equal(sites.get("blog")!.get()!.manifest.name, "blog");
+  assert.equal(sites.has("other"), false);
 });

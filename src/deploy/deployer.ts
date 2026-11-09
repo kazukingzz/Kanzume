@@ -47,10 +47,11 @@ export interface DeployInput {
    * ルートは管理画面と同じオリジンなので、全体の Token（管理者）によるデプロイのときだけ true にする
    */
   autoRoot?: boolean;
-  /** 指定すると wrangler の name の代わりにこのサイト名でデプロイする（管理画面で名前を決めたとき） */
-  siteName?: string;
-  /** 指定すると、このサイト名（wrangler の name）以外へのデプロイを断る（メンバーの個人トークン） */
-  onlyNames?: string[];
+  /**
+   * デプロイ先のサイト（管理画面で追加済みのもの）。wrangler の name は使わない。
+   * サイトはデプロイでは作らない（先に管理画面でサイトを追加する）
+   */
+  siteName: string;
 }
 
 export type DeployResult = { ok: true; release: Release } | { ok: false; error: string };
@@ -105,10 +106,11 @@ export class Deployer {
     return this.#queue.run("deploy", fn);
   }
 
-  recordFailure(name: string | null, error: string, input: Omit<DeployInput, "files" | "sources">, size = 0, files = 0): void {
+  recordFailure(name: string | null, error: string, input: Pick<DeployInput, "source" | "buildLog" | "log">, size = 0, files = 0): void {
     input.log.add(`失敗: ${error}`);
     this.#history.add({
-      name: name ?? "",
+      // 履歴は管理画面で追加したサイトにだけ残す
+      name: name && this.#sites.has(name) ? name : "",
       release: null,
       status: "failed",
       durationMs: input.log.elapsed,
@@ -126,26 +128,22 @@ export class Deployer {
     const size = files.reduce((n, f) => n + f.data.length, 0);
     log.add(`受け取り: ${kib(size)}、${files.length} ファイル`);
 
-    let name: string | null = null;
+    // 失敗の履歴は、あるサイトにだけ残す
+    let name: string | null = this.#sites.has(input.siteName) ? input.siteName : null;
     const fail = (error: string): DeployResult => {
       this.recordFailure(name, error, input, size, files.length);
       return { ok: false, error };
     };
 
+    if (!name) return fail(`サイト ${input.siteName} がありません。先に管理画面でサイトを追加してください`);
     const configFile = files.find((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
     if (!configFile) return fail(`${CONFIG_FILES.join(" / ")} が含まれていません`);
 
     let manifest: Manifest;
     try {
       const raw = parseWranglerConfig(configFile.path, configFile.data.toString("utf8"));
-      if (input.siteName) raw.name = input.siteName;
-      if (typeof raw.name === "string" && PROJECT_NAME.test(raw.name)) name = raw.name;
-      if (input.onlyNames !== undefined && !input.onlyNames.includes(String(raw.name))) {
-        // 失敗の履歴もほかのサイトに残さない
-        name = null;
-        const allowed = input.onlyNames.length ? input.onlyNames.join(", ") : "なし";
-        throw new ConfigError(`このトークンでは、参加しているサイト（${allowed}）にしかデプロイできません（wrangler の name: ${String(raw.name ?? "未設定")}）`);
-      }
+      // wrangler の name は見ない（デプロイ先は指定されたサイト）
+      raw.name = name;
       manifest = toManifest(raw, files.some((f) => f.path.startsWith("worker/")));
       if (manifest.main && !files.some((f) => f.path === `worker/${manifest.main}`)) {
         throw new ConfigError(`バンドルに worker/${manifest.main} がありません（Kanzume の Action でデプロイしてください）`);
@@ -163,7 +161,9 @@ export class Deployer {
     const result = await this.#serialize(async (): Promise<DeployResult> => {
       let store;
       try {
-        store = await this.#sites.ensure(manifest.name);
+        const found = this.#sites.get(manifest.name);
+        if (!found) return { ok: false, error: `サイト ${manifest.name} がありません。先に管理画面でサイトを追加してください` } as const;
+        store = found;
       } catch (err) {
         // ほかのサイトがその名前をサブドメインにしているときなど
         if (err instanceof SettingsError) return { ok: false, error: err.message } as const;

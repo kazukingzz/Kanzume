@@ -1363,7 +1363,8 @@ function renderEventDetail(el, e) {
 
 // ---------- 設定 ----------
 
-const WORKFLOW = `name: Deploy to Kanzume
+/** GitHub Actions のワークフロー。デプロイ先は site（管理画面で追加したサイト）で決まる（wrangler の name は使わない） */
+const workflow = (url, site) => `name: Deploy to Kanzume
 on:
   push:
     branches: [main]
@@ -1376,7 +1377,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: kazukingzz/Kanzume/action@main
         with:
-          url: \${{ vars.KANZUME_URL }}
+          url: ${url}
+          site: ${site}
           token: \${{ secrets.KANZUME_TOKEN }}
 `;
 
@@ -2589,7 +2591,7 @@ async function viewRepo(main, name) {
       h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
       h("pre", { class: "log", text: commands }),
       h("p", { class: "muted hint" }, "すでに origin がある（GitHub から clone した）リポジトリでは、1 行目の代わりに ", h("code", { text: `git remote set-url origin ${repo.cloneUrl}` }), " で付け替えるか、", h("code", { text: "origin" }), " を別の名前（例: ", h("code", { text: "kanzume" }), "）にしてください。"),
-      h("p", { class: "muted hint" }, "ユーザー名は何でもよく、パスワードには「", h("a", { href: "#/settings", text: "設定 > トークン" }), `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。wrangler の name がリポジトリ名（${name}）と違うコミットもデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`),
+      h("p", { class: "muted hint" }, "ユーザー名は何でもよく、パスワードには「", h("a", { href: "#/settings", text: "設定 > トークン" }), `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`),
     ),
   );
 
@@ -3243,14 +3245,11 @@ const METHOD_VIEWS = {
         h(
           "ol",
           { class: "steps muted" },
-          h("li", { text: `wrangler の設定の name を ${detail.name} にします。` }),
           h("li", {}, "「", h("a", { href: "#/settings", text: "設定 > トークン" }), "」で個人トークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN として登録します。"),
-          h("li", { text: "Variables に KANZUME_URL として下の URL を登録します。" }),
-          h("li", { text: "次のワークフローを置いて push します。" }),
+          h("li", { text: `次のワークフローを置いて push します。デプロイ先は site のサイト（${detail.name}）で、wrangler の name は使いません。` }),
         ),
-        h("div", { class: "field" }, h("label", { text: "KANZUME_URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: state.overview.url }), copyButton(() => state.overview.url))),
-        h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => WORKFLOW)),
-        h("pre", { class: "log", text: WORKFLOW }),
+        h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => workflow(state.overview.url, detail.name))),
+        h("pre", { class: "log", text: workflow(state.overview.url, detail.name) }),
       ),
     ];
   },

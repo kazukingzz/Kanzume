@@ -224,13 +224,13 @@ export function inspectFiles(fetched: Fetched): Inspection {
 }
 
 /** autoRoot: ルートのサイトがまだないとき、このサイトをルートにしてよいか（管理者のときだけ。ルートは管理画面と同じオリジンになるため） */
-export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName?: string; autoRoot?: boolean }): Promise<DeployResult> {
+export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName: string; autoRoot?: boolean }): Promise<DeployResult> {
   const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
   let fetched: Fetched;
   try {
     fetched = await fetchFromGitHub(input, options, log);
   } catch (err) {
-    return fail(deployer, options.siteName ?? null, err, { source: {}, buildLog: [], log }, "GitHub からのデプロイ");
+    return fail(deployer, options.siteName, err, { source: {}, buildLog: [], log, siteName: options.siteName }, "GitHub からのデプロイ");
   }
   const { source, dir, files } = fetched;
   return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: options.autoRoot ?? false, siteName: options.siteName });
@@ -244,8 +244,8 @@ export interface BuildContext {
   where?: string;
   /** Deployer の autoRoot（全体の Token によるデプロイのときだけ true） */
   autoRoot?: boolean;
-  /** Deployer の siteName（管理画面で決めたサイト名。wrangler の name より優先する） */
-  siteName?: string;
+  /** デプロイ先のサイト（管理画面で追加済みのもの。wrangler の name は使わない） */
+  siteName: string;
 }
 
 function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
@@ -271,7 +271,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
     }
     return await deployFromDirectory(work, deployer, ctx);
   } catch (err) {
-    return fail(deployer, ctx.siteName ?? null, err, ctx, "デプロイ");
+    return fail(deployer, ctx.siteName, err, ctx, "デプロイ");
   } finally {
     await fs.rm(work, { recursive: true, force: true });
   }
@@ -281,7 +281,7 @@ export async function deployFromFiles(files: UploadedFile[], deployer: Deployer,
 export async function deployFromDirectory(work: string, deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
   const { log, buildLog } = ctx;
   // 名前が分かる前に失敗しても、git push ならリポジトリ名の履歴に残す
-  let name: string | null = ctx.siteName ?? null;
+  const name = ctx.siteName;
 
   try {
     let configFile: (typeof CONFIG_FILES)[number] | undefined;
@@ -294,7 +294,6 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
     if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
     const text = await fs.readFile(path.join(work, configFile), "utf8");
     const config = parseWranglerConfig(configFile, text);
-    if (!ctx.siteName && typeof config.name === "string") name = config.name;
     const build = config.build as { command?: string } | undefined;
     if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);
 

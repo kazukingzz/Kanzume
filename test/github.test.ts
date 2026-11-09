@@ -72,7 +72,9 @@ test("GitHub の URL からリポジトリ・ブランチ・ディレクトリ�
 test("このリポジトリの examples/worker を GitHub の URL からデプロイでき、KV・R2・アセット・node:buffer が動く", async (t) => {
   const app = await start(t);
   const { fetcher } = fakeGitHub(repoTarball(t, exampleFiles()));
+  await app.sites.ensure("example");
   const result = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/examples/worker", app.deployer, {
+    siteName: "example",
     autoRoot: true,
     fetch: fetcher,
     apiBase: "https://api.test",
@@ -82,7 +84,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 
   const release = app.sites.get(app.sites.root ?? "")?.get()!;
-  assert.equal(release.manifest.name, "docs");
+  assert.equal(release.manifest.name, "example", "wrangler の name ではなく、指定したサイトにデプロイする");
   const worker = await app.runtime.get(release);
   const hello = await worker.fetch(new Request("http://x/api/hello"));
   assert.deepEqual(await hello.response!.json(), { message: "Hello from Kanzume" });
@@ -113,7 +115,8 @@ test("スラッシュを含むブランチ名とリポジトリのトップを�
   const app = await start(t);
   const files = { "wrangler.json": JSON.stringify({ name: "top", assets: { directory: "site" } }), "site/index.html": "top" };
   const { fetcher, requests } = fakeGitHub(repoTarball(t, files), ["feature/x", "main"]);
-  const opts = { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
+  await app.sites.ensure("top");
+  const opts = { siteName: "top", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
 
   const nested = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/feature/x", app.deployer, opts);
   assert.equal(nested.ok, true);
@@ -127,9 +130,10 @@ test("スラッシュを含むブランチ名とリポジトリのトップを�
 
 test("デプロイできないリポジトリは理由付きの失敗として履歴に残る", async (t) => {
   const app = await start(t);
+  await app.sites.ensure("app");
   const opts = (tarball: Buffer) => {
     const { fetcher } = fakeGitHub(tarball);
-    return { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
+    return { siteName: "app", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
   };
   const url = "https://github.com/kazukingzz/kanzume/tree/main/app";
 
@@ -161,7 +165,7 @@ test("デプロイできないリポジトリは理由付きの失敗として�
   const history = app.history.list();
   assert.equal(history.length, 5);
   assert.ok(history.every((d) => d.status === "failed"));
-  assert.equal(history[4].name, "npm");
+  assert.equal(history[4].name, "app");
 });
 
 test("リポジトリの外のファイルを import・alias するリポジトリはバンドルせずに失敗する", async (t) => {
@@ -170,9 +174,10 @@ test("リポジトリの外のファイルを import・alias するリポジト�
   const secret = path.join(secretDir, "admin.json");
   fs.writeFileSync(secret, JSON.stringify({ deployToken: "kz_secret_value" }));
   const url = "https://github.com/kazukingzz/kanzume/tree/main/app";
+  await app.sites.ensure("evil");
   const run = async (files: Record<string, string>) => {
     const { fetcher } = fakeGitHub(repoTarball(t, files));
-    return deployFromGitHub(url, app.deployer, { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 });
+    return deployFromGitHub(url, app.deployer, { siteName: "evil", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 });
   };
   const config = (extra: Record<string, unknown> = {}) => JSON.stringify({ name: "evil", main: "src/index.ts", ...extra });
 
@@ -225,6 +230,10 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
   const info = (await inspect.json()) as Record<string, unknown>;
   assert.deepEqual(info, { name: "hello", vars: { GREETING: "wrangler", LEVEL: "1" } }, "name がなければディレクトリ名。文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない");
 
+  // サイトがなければデプロイできない（先に管理画面でサイトを追加する）
+  assert.equal((await api("/deploy-github", "POST", { url, name: "blog", vars: {}, secrets: {} })).status, 404);
+  assert.equal((await api("/sites", "POST", { name: "blog" })).status, 200);
+  assert.equal((await api("/sites", "POST", { name: "shop" })).status, 200);
   const deploy = await api("/deploy-github", "POST", { url, name: "blog", vars: { GREETING: "settings" }, secrets: { API_KEY: "s3cret" } });
   assert.equal(deploy.status, 200, await deploy.clone().text());
   assert.deepEqual(await (await site("blog.localhost")).json(), { GREETING: "settings", API_KEY: "s3cret", LEVEL: "1" });
@@ -257,8 +266,7 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
   assert.equal(app.sites.resolve("blog"), undefined, "前のサブドメインはサイトとして扱わない");
   assert.ok(app.sites.has("blog"));
   // 使われているサブドメインと同じ名前の新しいサイトは作らない
-  const taken = await api("/deploy-github", "POST", { url, name: "news", vars: {}, secrets: {} });
-  assert.equal(taken.status, 400);
+  assert.equal((await api("/sites", "POST", { name: "news" })).status, 400);
   // 戻せる
   assert.equal((await api("/sites/blog/settings", "PUT", { subdomain: "" })).status, 200);
   assert.equal(((await (await site("blog.localhost")).json()) as { GREETING: string }).GREETING, "changed");

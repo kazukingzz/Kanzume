@@ -28,13 +28,14 @@ async function start(t: TestContext) {
       body: body === undefined ? undefined : JSON.stringify(body),
     });
   const deploy = async (name: string) => {
+    await app.sites.ensure(name);
     const result = await deployFromFiles(
       [
         { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name, main: "index.js", compatibility_date: "2026-10-01" })) },
         { path: "index.js", data: Buffer.from(`export default { fetch() { return new Response(${JSON.stringify(name)}); } };`) },
       ],
       app.deployer,
-      { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true },
+      { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true, siteName: name },
     );
     assert.equal(result.ok, true, result.ok ? "" : result.error);
   };
@@ -153,7 +154,7 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
   // 新しいサイトは作れず、ほかのサイトも再デプロイできない（GitHub からの取得より前に断る）
   assert.equal((await api("/deploy-github", "POST", { url: "https://github.com/a/b", name: "new-site" })).status, 403);
   assert.equal((await api("/deploy-github", "POST", { url: "https://github.com/a/b", name: "shop" })).status, 403);
-  assert.equal((await api("/deploy-github", "POST", { url: "https://github.com/a/b" })).status, 403);
+  assert.equal((await api("/deploy-github", "POST", { url: "https://github.com/a/b" })).status, 400, "サイトを指定しないとデプロイできない");
 
   // 自分のパスキーだけが見える
   const passkeys = (await (await api("/passkeys")).json()) as { passkeys: { id: string }[] };
@@ -197,7 +198,7 @@ test("メンバーの個人トークンは、参加しているサイトへの /
   const upload = (name: string) =>
     fetch(`${app.base}/_api/deploy`, {
       method: "POST",
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${token}`, "x-kanzume-site": name },
       body: gzipSync(
         rawTar([
           rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name, compatibility_date: "2026-10-01", assets: { directory: "public" } }))),
@@ -207,10 +208,11 @@ test("メンバーの個人トークンは、参加しているサイトへの /
     });
   const ok = await upload("blog");
   assert.equal(ok.status, 200, await ok.clone().text());
+  await app.sites.ensure("shop");
   const other = await upload("shop");
-  assert.equal(other.status, 400);
+  assert.equal(other.status, 403);
   assert.match(((await other.json()) as { error: string }).error, /参加しているサイト（blog）にしかデプロイできません/);
-  assert.equal(app.sites.has("shop"), false);
+  assert.equal(app.sites.get("shop")!.get(), undefined, "ほかのサイトにはデプロイされない");
   assert.ok(app.history.list().every((d) => d.name !== "shop"), "ほかのサイトの履歴にも残さない");
   // 消されたユーザーのトークンは使えない
   await app.state.removeUser(app.state.users.find((u) => u.role === "member")!.id);
@@ -278,13 +280,14 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   assert.deepEqual(await (await app.admin("/sites/empty/r2")).json(), { buckets: [] });
   assert.equal(fs.existsSync(path.join(app.sites.get("empty")!.siteDir, "data.sqlite")), false, "見るだけでは DB を作らない");
 
+  await app.sites.ensure("blog");
   const result = await deployFromFiles(
     [
       { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: "blog", main: "index.js", compatibility_date: "2026-10-01", kv_namespaces: [{ binding: "KV", id: "x" }], r2_buckets: [{ binding: "FILES", bucket_name: "files" }] })) },
       { path: "index.js", data: Buffer.from(`export default { async fetch(r, env) { await env.KV.put("hello", "world", { metadata: { a: 1 } }); await env.FILES.put("img/a.txt", "abc", { httpMetadata: { contentType: "text/plain" } }); await env.FILES.put("b.bin", new Uint8Array([0, 1, 2])); return new Response("ok"); } };`) },
     ],
     app.deployer,
-    { source: {}, log: new DeployLog("t"), buildLog: [], autoRoot: true },
+    { source: {}, log: new DeployLog("t"), buildLog: [], autoRoot: true, siteName: "blog" },
   );
   assert.equal(result.ok, true);
   const worker = await app.runtime.get(app.sites.get("blog")!.get()!);
@@ -375,7 +378,7 @@ test("メンバーは R2 のバケット名でサイトの外に出られず、�
   assert.equal((await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "news" })).status, 200);
 });
 
-test("URL にできないドメインは保存しない。サブドメインが重なる Actions のデプロイは 400 で履歴に残る", async (t) => {
+test("URL にできないドメインは保存しない。管理画面で追加していないサイトへの Actions のデプロイは 404", async (t) => {
   const app = await start(t);
   for (const bad of ["example.com:80800", "999.1.1.1", "example.123"]) assert.equal((await app.admin("/domain", "POST", { domain: bad })).status, 400, bad);
   assert.equal((await app.admin("/domain", "POST", { domain: "example.com:8080" })).status, 200);
@@ -384,13 +387,12 @@ test("URL にできないドメインは保存しない。サブドメインが�
   await app.sites.updateSettings("blog", { subdomain: "news" });
   const res = await fetch(`${app.base}/_api/deploy`, {
     method: "POST",
-    headers: { authorization: `Bearer ${app.state.deployToken}` },
+    headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": "news" },
     body: gzipSync(rawTar([rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "news", compatibility_date: "2026-10-01", assets: { directory: "public" } }))), rawTarEntry("assets/index.html", Buffer.from("x"))])),
   });
-  assert.equal(res.status, 400);
-  assert.match(((await res.json()) as { error: string }).error, /news/);
-  assert.equal(app.history.list()[0].status, "failed");
-  assert.equal(app.history.list()[0].name, "news");
+  assert.equal(res.status, 404, "管理画面で追加していないサイトにはデプロイできない");
+  assert.match(((await res.json()) as { error: string }).error, /サイト news がありません/);
+  assert.equal(app.sites.has("news"), false);
 });
 
 test("KV / R2 のプレビューは、途中で切れた日本語もテキストとして出す", async (t) => {

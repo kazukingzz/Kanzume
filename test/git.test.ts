@@ -17,6 +17,12 @@ async function start(t: TestContext) {
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const remote = (repo: string, token = app.state.deployToken) => `${base.replace("://", `://x:${token}@`)}/_git/${repo}.git`;
+  // 管理画面と同じく、リポジトリはサイトを追加してから作る（デプロイはサイトがないとできない）
+  const create = app.repos.create.bind(app.repos);
+  app.repos.create = async (name: string) => {
+    await app.sites.ensure(name);
+    return create(name);
+  };
   return { ...app, base, remote };
 }
 

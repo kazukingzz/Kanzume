@@ -55,10 +55,9 @@
 <p>入力欄の下の「サンプルリポジトリはこちら」から、サンプル（このページの <a href="https://github.com/kazukingzz/Kanzume/tree/main/examples/worker">examples/worker</a>）の GitHub を開けます。その URL を入れれば、このページと同じものをデプロイできます。</p>
 <h2 id="actions">GitHub Actions から</h2>
 <ol>
-<li>wrangler の設定の <code>name</code> をサイトの ID にします。</li>
+<li>先に管理画面でサイトを追加します（Actions からのデプロイではサイトを作りません）。</li>
 <li><a href="/docs/members#token">「設定 &gt; トークン」</a> で個人トークンを発行し、GitHub のリポジトリの Secrets に <code>KANZUME_TOKEN</code> として登録します。</li>
-<li>Variables に <code>KANZUME_URL</code>（管理画面の URL。例: <code>https://admin.example.com</code>）を登録します。</li>
-<li>次のワークフローを <code>.github/workflows/deploy.yml</code> に置いて push します。</li>
+<li>次のワークフローを <code>.github/workflows/deploy.yml</code> に置いて push します。<code>url</code> は Kanzume の URL（管理画面やサイトの URL）、<code>site</code> はデプロイ先のサイトの名前です。サイトの「デプロイ」タブの「GitHub Actions から」に、そのまま使えるものが出ます。</li>
 </ol>
 <pre><code>name: Deploy to Kanzume
 on:
@@ -71,8 +70,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: kazukingzz/Kanzume/action@main
         with:
-          url: ${{ vars.KANZUME_URL }}
+          url: https://admin.example.com
+          site: blog
           token: ${{ secrets.KANZUME_TOKEN }}</code></pre>
+<p>デプロイ先は <code>site</code> で決まり、wrangler の設定の <code>name</code> は使いません。まだないサイトや、トークンの持ち主が扱えないサイトにはデプロイできません。</p>
 <p>Action が wrangler でバンドルし、ビルドに失敗したときもその理由が管理画面のデプロイ履歴に残ります。</p>
 <h2 id="repo">サイトのリポジトリから（git push）</h2>
 <p>サイトの「リポジトリ」タブで「リポジトリを作成」を押すと、Kanzume 上にサイトと同じ名前の Git リポジトリができます。GitHub は要りません。</p>
@@ -89,7 +90,7 @@ git push -u origin main</code></pre>
 <h2 id="wrangler">wrangler の設定</h2>
 <p><code>wrangler.jsonc</code>・<code>wrangler.json</code>・<code>wrangler.toml</code> のどれかを読みます。使う項目は次のとおりです。</p>
 <table>
-<tr><th><code>name</code></th><td>サイトの ID（Actions では必須。git push・ファイル・GitHub の URL からのデプロイでは、選んだサイトが優先）</td></tr>
+<tr><th><code>name</code></th><td>使いません（デプロイ先は管理画面で選んだサイト、Actions では <code>site</code>）。<code>wrangler deploy</code> で Cloudflare に出すときの名前です</td></tr>
 <tr><th><code>main</code></th><td>Worker のエントリ。なければ静的サイト</td></tr>
 <tr><th><code>compatibility_date</code> / <code>compatibility_flags</code></th><td><code>nodejs_compat</code> で node: のモジュールの一部が使える</td></tr>
 <tr><th><code>assets</code></th><td><code>directory</code>・<code>binding</code>・<code>html_handling</code>・<code>not_found_handling</code>・<code>run_worker_first</code></td></tr>

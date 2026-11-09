@@ -5,10 +5,13 @@ branding:
   color: orange
 inputs:
   url:
-    description: Kanzume の URL（管理画面に表示される KANZUME_URL）
+    description: Kanzume の URL（管理画面やサイトの URL）
     required: true
   token:
-    description: デプロイ用 Token（管理画面に表示される KANZUME_TOKEN）
+    description: 個人トークン（管理画面の「設定 > トークン」で発行したもの）
+    required: true
+  site:
+    description: デプロイ先のサイトの名前（先に管理画面でサイトを追加しておく。wrangler の name は使わない）
     required: true
   working-directory:
     description: wrangler.jsonc / wrangler.toml があるディレクトリ
@@ -28,3 +31,4 @@ runs:
       env:
         KANZUME_URL: ${{ inputs.url }}
         KANZUME_TOKEN: ${{ inputs.token }}
+        KANZUME_SITE: ${{ inputs.site }}

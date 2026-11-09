@@ -58,13 +58,14 @@ function configs(t: TestContext, query = "") {
 
 async function setup(app: Awaited<ReturnType<typeof boot>>) {
   await app.state.addCredential(fakeCredential);
+  await app.sites.ensure("app");
   const result = await deployFromFiles(
     [
       { path: "wrangler.jsonc", data: Buffer.from(WRANGLER) },
       { path: "index.js", data: Buffer.from(WORKER) },
     ],
     app.deployer,
-    { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true },
+    { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true, siteName: "app" },
   );
   assert.equal(result.ok, true, result.ok ? "" : result.error);
   await app.sites.updateSettings("app", { secrets: { TOKEN: "s" } });

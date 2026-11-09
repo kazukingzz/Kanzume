@@ -2,7 +2,9 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { gzipSync } from "node:zlib";
+import { gunzipSync, gzipSync } from "node:zlib";
+import { readTar } from "../src/deploy/tar.ts";
+import { parseWranglerConfig } from "../src/deploy/wrangler.ts";
 // @ts-expect-error 型定義のない .mjs
 import { esbuildArgs } from "../action/cjs.mjs";
 import { Store, type Manifest, type Release } from "../src/store.ts";
@@ -103,4 +105,19 @@ export function toCjs(t: { after(fn: () => void): void }, files: Record<string, 
   const result: Record<string, string> = { "worker/index.cjs": fs.readFileSync(out, "utf8") };
   for (const [p, d] of Object.entries(files)) if (!p.endsWith(".js")) result[p] = d;
   return result;
+}
+
+/** テスト用: tar.gz の中の wrangler の設定から name を読む（デプロイ先のサイトを先に作るため） */
+export function nameInTarGz(body: Buffer, fallback = "app"): string {
+  let files;
+  try {
+    files = readTar(gunzipSync(body));
+  } catch {
+    return fallback;
+  }
+  for (const name of ["wrangler.jsonc", "wrangler.json", "wrangler.toml"]) {
+    const f = files.find((x) => x.path === name);
+    if (f) return String(parseWranglerConfig(name, f.data.toString("utf8")).name ?? fallback);
+  }
+  return fallback;
 }

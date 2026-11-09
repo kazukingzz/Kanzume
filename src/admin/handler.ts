@@ -616,35 +616,26 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const url = typeof body?.url === "string" ? body.url : "";
       if (!url) return sendJson(res, 400, { error: "GitHub の URL を入力してください" });
-      // name を省くと、今までどおり wrangler の name でデプロイする
-      const siteName = typeof body?.name === "string" && body.name ? body.name.trim().toLowerCase() : undefined;
-      const patch = siteName ? envPatch(body) : null;
-      // メンバーは自分のサイトの再デプロイだけ（新しいサイトは作れない）
-      if (!isAdmin && (!siteName || !canSite(siteName) || !sites.has(siteName))) return forbidden();
-      if (siteName) {
-        if (!PROJECT_NAME.test(siteName)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
-        const info = siteInfo(siteName);
-        if (info.takenBy) return sendJson(res, 400, { error: `サブドメイン ${siteName} はサイト ${info.takenBy} が使っています。別の名前にしてください` });
-        if (info.exists && body?.confirm !== true) return sendJson(res, 409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
-      }
+      // デプロイ先は管理画面で追加済みのサイトだけ（wrangler の name は使わない）
+      const siteName = typeof body?.name === "string" ? body.name.trim().toLowerCase() : "";
+      if (!siteName) return sendJson(res, 400, { error: "デプロイ先のサイトを指定してください" });
+      if (!canSite(siteName)) return forbidden();
+      if (!sites.has(siteName)) return sendJson(res, 404, { error: `サイト ${siteName} がありません。先にサイトを追加してください` });
+      const patch = envPatch(body);
+      if (sites.deployed(siteName) && body?.confirm !== true) return sendJson(res, 409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
       if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
       githubDeploying = true;
-      let created = false;
       // 失敗したときに戻す、デプロイ前の設定（今動いているリリースは、この設定のまま動かし続ける）
       let before: SiteSettings | null = null;
       const rollback = async () => {
-        if (!siteName) return;
-        if (created && !sites.deployed(siteName)) await sites.remove(siteName);
-        else if (before) {
+        if (before) {
           await sites.restoreSettings(siteName, before);
           runtime.evict(sites.get(siteName)!.siteDir);
         }
       };
       try {
-        if (siteName && patch) {
+        if (patch.vars || patch.secrets) {
           // 最初に読み込む Worker から新しい環境変数を使うように、デプロイの前に設定を書く
-          created = !sites.has(siteName);
-          await sites.ensure(siteName);
           before = sites.settings(siteName);
           await sites.updateSettings(siteName, patch);
           runtime.evict(sites.get(siteName)!.siteDir);
@@ -652,7 +643,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
         const result = await deployFromGitHub(url, deployer, { maxBytes: config.maxUploadBytes, ...github, siteName, autoRoot: isAdmin });
         if (!result.ok) {
-          // 新しく作ったサイトは消し、既存のサイトは設定を元に戻す
+          // 設定を元に戻す
           await rollback();
           return sendJson(res, 400, { error: result.error });
         }

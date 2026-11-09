@@ -34,6 +34,7 @@ jobs:
           # docs.tekitou.app のサイト（ID: docs）。/_api/deploy はどのホストでも Kanzume が受ける
           url: https://docs.tekitou.app
           token: ${{ secrets.KANZUME_TOKEN }}
+          site: docs
           working-directory: examples/${{ matrix.example }}
 
       - run: echo "デプロイしました：${{ steps.kanzume.outputs.url }}"

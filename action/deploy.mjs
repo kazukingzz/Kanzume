@@ -117,7 +117,7 @@ function collectSources(mapFile, bundledDir) {
 async function post(endpoint, token, body, contentType) {
   const res = await fetch(endpoint, {
     method: "POST",
-    headers: { authorization: `Bearer ${token}`, "content-type": contentType },
+    headers: { authorization: `Bearer ${token}`, "content-type": contentType, "x-kanzume-site": site },
     body,
   });
   const result = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
@@ -126,8 +126,10 @@ async function post(endpoint, token, body, contentType) {
 
 const url = (process.env.KANZUME_URL || "").replace(/\/+$/, "");
 const token = process.env.KANZUME_TOKEN || "";
-if (!url) fail("url を指定してください（管理画面の KANZUME_URL）");
-if (!token) fail("token を指定してください（管理画面の KANZUME_TOKEN）");
+const site = (process.env.KANZUME_SITE || "").trim().toLowerCase();
+if (!url) fail("url を指定してください（Kanzume の URL）");
+if (!token) fail("token を指定してください（管理画面の「設定 > トークン」で発行した個人トークン）");
+if (!site) fail("site を指定してください（管理画面で追加したサイトの名前）");
 
 const configFile = CONFIG_FILES.find((f) => fs.existsSync(f));
 if (!configFile) fail(`${CONFIG_FILES.join(" / ")} が見つかりません`);
@@ -183,14 +185,12 @@ try {
 } catch (err) {
   if (!(err instanceof BuildError)) throw err;
   note(`ビルドに失敗しました: ${err.message}`);
-  if (typeof config.name === "string") {
-    await post(
-      `${url}/_api/deploy/report`,
-      token,
-      JSON.stringify({ name: config.name, error: err.message, source, buildLog: buildLog.join("\n"), durationMs: Date.now() - started }),
-      "application/json",
-    ).catch(() => {});
-  }
+  await post(
+    `${url}/_api/deploy/report`,
+    token,
+    JSON.stringify({ site, error: err.message, source, buildLog: buildLog.join("\n"), durationMs: Date.now() - started }),
+    "application/json",
+  ).catch(() => {});
   fs.rmSync(stage, { recursive: true, force: true });
   fail(err.message);
 }

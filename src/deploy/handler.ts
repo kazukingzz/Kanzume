@@ -40,6 +40,13 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
     const access = authorized(req, state);
     if (!access) return sendJson(res, 401, { error: "Token が違います" });
+    // デプロイ先は Action の site で指定する（wrangler の name は使わない）。サイトは先に管理画面で追加しておく
+    const site = String(req.headers["x-kanzume-site"] ?? "").trim().toLowerCase();
+    if (!site) return sendJson(res, 400, { error: "デプロイ先のサイトを指定してください（Action の site）" });
+    if (access.sites !== null && !access.sites.includes(site)) {
+      return sendJson(res, 403, { error: `このトークンでは、参加しているサイト（${access.sites.join(", ") || "なし"}）にしかデプロイできません` });
+    }
+    if (!sites.has(site)) return sendJson(res, 404, { error: `サイト ${site} がありません。先に管理画面でサイトを追加してください` });
 
     const log = new DeployLog("GitHub Actions からのデプロイを受け付けました");
     const body = await readBody(req, config.maxUploadBytes);
@@ -58,7 +65,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     const result = await deployer.deploy({
       // 全体の Token（管理者）のときだけ、最初のサイトをルートにする
       autoRoot: access.autoRoot,
-      onlyNames: access.sites ?? undefined,
+      siteName: site,
       files: files.filter((f) => !f.path.startsWith(META_DIR)),
       sources: Array.isArray(sources) ? sources : null,
       source: sanitizeSource(meta?.source),
@@ -75,7 +82,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     if (!access) return sendJson(res, 401, { error: "Token が違います" });
     const body = await readJson(req, 512 * 1024);
     // サイト用のトークンでは、ほかのサイトの履歴に書かせない
-    const requested = typeof body?.name === "string" ? body.name.slice(0, 63) : null;
+    const requested = typeof body?.site === "string" ? body.site.slice(0, 63) : typeof body?.name === "string" ? body.name.slice(0, 63) : null;
     const name = access.sites === null || (requested && access.sites.includes(requested)) ? requested : null;
     const error = typeof body?.error === "string" ? body.error.slice(0, 2000) : "ビルドに失敗しました";
     const log = new DeployLog("GitHub Actions でのビルドに失敗したため、アップロードされませんでした");

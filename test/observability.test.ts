@@ -5,7 +5,7 @@ import { test, type TestContext } from "node:test";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
-import { tarGz, tmpDir, toCjs } from "./helpers.ts";
+import { tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
 
 async function start(t: TestContext) {
   const config = loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" });
@@ -17,7 +17,11 @@ async function start(t: TestContext) {
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const auth = { authorization: `Bearer ${app.state.deployToken}` };
-  const deploy = (body: Buffer) => fetch(`${base}/_api/deploy`, { method: "POST", headers: auth, body: new Uint8Array(body) });
+  const deploy = async (body: Buffer) => {
+    const name = nameInTarGz(body);
+    await app.sites.ensure(name);
+    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { ...auth, "x-kanzume-site": name }, body: new Uint8Array(body) });
+  };
   return { ...app, base, auth, deploy };
 }
 
@@ -141,9 +145,10 @@ test("同期処理の時間超過は exceededCpu として記録される", asyn
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => app.server.close(resolve)));
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  await app.sites.ensure("app");
   await fetch(`${base}/_api/deploy`, {
     method: "POST",
-    headers: { authorization: `Bearer ${app.state.deployToken}` },
+    headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": "app" },
     body: new Uint8Array(bundle(t, `export default { fetch() { while (true) {} } }`)),
   });
   assert.equal((await fetch(`${base}/x`)).status, 500);
