@@ -5,7 +5,7 @@ import { test, type TestContext } from "node:test";
 import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
-import { tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
+import { nameInTarGz, tarGz, tmpDir, toCjs, until } from "./helpers.ts";
 
 async function start(t: TestContext) {
   const config = loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" });
@@ -43,10 +43,6 @@ const META = {
   ]),
 };
 
-/** 子プロセスの Worker は、done が届いてから記録される。記録されるまで少し待つ */
-async function until(cond: () => boolean, ms = 3000): Promise<void> {
-  for (let waited = 0; !cond() && waited < ms; waited += 20) await new Promise((r) => setTimeout(r, 20));
-}
 
 test("成功したデプロイがビルドログ・コミット情報・Kanzume のログ付きで履歴に残る", async (t) => {
   const { deploy, history } = await start(t);
@@ -106,7 +102,7 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
   await fetch(`${base}/boom`);
   await fetch(`${base}/sub`);
   await fetch(`${base}/`);
-  await new Promise((r) => setTimeout(r, 100));
+  await until(() => observability.events("app").length === 4);
 
   const events = observability.events("app");
   assert.equal(events.length, 4);
@@ -183,10 +179,12 @@ test("古いイベントは保持期間を過ぎると削除され、サイト�
   const { base, deploy, observability } = await start(t);
   await deploy(bundle(t, `export default { fetch() { return new Response("ok"); } }`));
   await fetch(`${base}/a`);
+  await until(() => observability.events("app").length === 1);
   observability.flush();
   observability.prune(Date.now() + 73 * 3600e3);
   assert.equal(observability.events("app").length, 0);
   await fetch(`${base}/b`);
+  await until(() => observability.events("app").length === 1);
   observability.clear("app");
   assert.equal(observability.events("app").length, 0);
 });

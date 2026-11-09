@@ -121,3 +121,11 @@ export function nameInTarGz(body: Buffer, fallback = "app"): string {
   }
   return fallback;
 }
+
+/**
+ * 条件がそろうまで少し待つ。子プロセスの Worker へのリクエストは、応答を返し終えて子から done が届いてから
+ * 可観測性に記録されるので、fetch の直後に読むと間に合わないことがある（遅い CI で起きる）
+ */
+export async function until(cond: () => boolean, ms = 5000): Promise<void> {
+  for (let waited = 0; !cond() && waited < ms; waited += 20) await new Promise((r) => setTimeout(r, 20));
+}

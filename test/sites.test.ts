@@ -8,7 +8,7 @@ import { DeployLog } from "../src/deploy/deployer.ts";
 import { deployFromFiles } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
-import { tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
+import { nameInTarGz, tarGz, tmpDir, toCjs, until } from "./helpers.ts";
 
 const ids = (has: (n: string) => boolean) => (n: string) => (has(n) ? n : undefined);
 
@@ -142,6 +142,7 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   await site("blog.localhost");
   await site("shop.localhost");
   await site("shop.localhost");
+  await until(() => observability.events("blog").length === 1 && observability.events("shop").length === 2);
   assert.equal(observability.events("blog").length, 1);
   assert.equal(observability.events("shop").length, 2);
   assert.equal(history.list("shop").length, 1);
