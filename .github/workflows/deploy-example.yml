@@ -15,8 +15,6 @@ concurrency:
 
 jobs:
   deploy:
-    # fork や未設定のリポジトリで毎回失敗しないよう、KANZUME_URL を登録したときだけ動かす
-    if: vars.KANZUME_URL != ''
     runs-on: ubuntu-latest
     strategy:
       matrix:
