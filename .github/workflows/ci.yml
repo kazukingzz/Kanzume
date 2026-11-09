@@ -1,0 +1,78 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: test (${{ matrix.user }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # normal: 一般ユーザー（Node の権限モデルだけで Worker を分ける）
+        # root:   本番の Docker イメージと同じく root（Worker の子プロセスをサイトごとの別ユーザーで動かす）
+        user: [normal, root]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - run: npm ci
+
+      - name: 型チェック
+        run: npm run typecheck
+
+      - name: ブラウザ用・Action 用のスクリプトの構文チェック
+        run: |
+          node --check web/admin/admin.js
+          node --check action/deploy.mjs
+          node --check action/cjs.mjs
+
+      - name: テスト（一般ユーザー）
+        if: matrix.user == 'normal'
+        run: npm test
+
+      - name: テスト（root）
+        if: matrix.user == 'root'
+        # 子プロセス（uid 20000〜）が Node とテスト用の一時ディレクトリを読めるようにしてから、root で動かす
+        run: |
+          sudo chmod o+rx "$(dirname "$(dirname "$(command -v node)")")"
+          sudo -E env "PATH=$PATH" npm test
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: イメージをビルド
+        run: docker build -t kanzume:ci .
+
+      - name: 起動して /_health と管理画面が返ることを確かめる
+        run: |
+          docker run -d --name kanzume -p 8080:8080 kanzume:ci
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8080/_health; then break; fi
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:8080/_health
+          curl -fsS -o /dev/null http://127.0.0.1:8080/_admin/kanzume
+          # Worker の子プロセスを別ユーザーで起動できる前提（root で動いていること）を確かめる
+          test "$(docker exec kanzume id -u)" = "0"
+
+      - name: 失敗したときはログを出す
+        if: failure()
+        run: docker logs kanzume || true
