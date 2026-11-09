@@ -278,7 +278,7 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   await app.admin("/sites", "POST", { name: "empty" });
   assert.deepEqual(await (await app.admin("/sites/empty/kv")).json(), { namespaces: [] });
   assert.deepEqual(await (await app.admin("/sites/empty/r2")).json(), { buckets: [] });
-  assert.equal(fs.existsSync(path.join(app.sites.get("empty")!.siteDir, "data.sqlite")), false, "見るだけでは DB を作らない");
+  assert.equal(fs.existsSync(path.join(app.sites.get("empty")!.siteDir, "data", "data.sqlite")), false, "見るだけでは DB を作らない");
 
   await app.sites.ensure("blog");
   const result = await deployFromFiles(

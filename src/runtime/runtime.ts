@@ -41,6 +41,7 @@ export interface RuntimeOptions {
 /** 読み込んだ Worker をサイト（siteDir）ごとに 1 つずつ持つ */
 export class Runtime {
   #entries = new Map<string, Entry>();
+  #retiring = new Set<WorkerHandle>();
   #options: RuntimeOptions;
   #timer: NodeJS.Timeout;
 
@@ -61,7 +62,8 @@ export class Runtime {
   get(release: Release): Promise<WorkerHandle> {
     const existing = this.#entries.get(release.siteDir);
     // 子プロセスが落ちていたら起動し直す
-    if (existing?.release.id === release.id && !existing.handle?.closed) {
+    if (existing && !existing.handle?.closed && (existing.release.id === release.id || existing.release.deployedAt > release.deployedAt)) {
+      // デプロイの前に古いリリースを読んだリクエストは、入れたばかりの新しい Worker で受ける（新しいものを追い出さない）
       existing.lastUsed = Date.now();
       return existing.worker;
     }
@@ -74,14 +76,21 @@ export class Runtime {
     return entry.worker;
   }
 
-  /** 動いている Worker の子プロセス（リソースタブ用） */
+  /** 動いている Worker の子プロセス（リソースタブ用）。処理中のリクエストを終えるのを待って止める途中のものも含む */
   processes(): { siteDir: string; pid: number }[] {
     const out: { siteDir: string; pid: number }[] = [];
     for (const [siteDir, entry] of this.#entries) {
       const pid = entry.handle?.pid;
       if (pid !== undefined && !entry.handle?.closed) out.push({ siteDir, pid });
     }
+    for (const w of this.#liveRetiring()) if (w.pid !== undefined) out.push({ siteDir: w.release.siteDir, pid: w.pid });
     return out;
+  }
+
+  /** 止める途中（処理中のリクエストを終えるのを待っている）で、まだ動いている子 */
+  #liveRetiring(): WorkerHandle[] {
+    for (const w of this.#retiring) if (w.closed) this.#retiring.delete(w);
+    return [...this.#retiring];
   }
 
   preload(release: Release): Promise<WorkerHandle> {
@@ -95,11 +104,33 @@ export class Runtime {
     this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now() });
   }
 
-  /** 捨てた Worker が子プロセスなら、処理中のリクエストと waitUntil を終えてから止める */
+  /**
+   * 捨てた Worker が子プロセスなら止める。now でなければ、処理中のリクエストと waitUntil を終えてから止める
+   * （止める途中のものも数に含め、上限を超えたら古いものからすぐに止める）
+   */
   #drop(key: string, now = false): void {
     const entry = this.#entries.get(key);
     this.#entries.delete(key);
-    entry?.worker.then((w) => (now ? w.close?.() : (w.retire ?? w.close)?.call(w)), () => {});
+    entry?.worker.then(
+      (w) => {
+        if (now || !w.retire) return w.close?.();
+        w.retire();
+        if (w.closed) return;
+        this.#retiring.add(w);
+        this.#limitRetiring();
+      },
+      () => {},
+    );
+  }
+
+  #limitRetiring(): void {
+    const max = this.#options.maxWorkers ?? Infinity;
+    const retiring = this.#liveRetiring();
+    // 動いている子の合計（使っているもの + 止める途中のもの）を上限に収める
+    for (let i = 0; i < retiring.length && this.#entries.size + retiring.length - i > max; i++) {
+      retiring[i].close?.();
+      this.#retiring.delete(retiring[i]);
+    }
   }
 
   #set(entry: Entry): void {
@@ -120,23 +151,35 @@ export class Runtime {
     }
   }
 
-  /** siteDir を省略するとすべて捨てる */
-  evict(siteDir?: string): void {
-    if (siteDir === undefined) for (const key of [...this.#entries.keys()]) this.#drop(key);
-    else this.#drop(siteDir);
+  /**
+   * siteDir を省略するとすべて捨てる。now なら処理中のリクエストも待たずに止める（サイトの削除のとき。
+   * 消したあとに Worker が KV / R2 を書いてサイトのディレクトリを作り直さないように）
+   */
+  evict(siteDir?: string, options: { now?: boolean } = {}): void {
+    const keys = siteDir === undefined ? [...this.#entries.keys()] : [siteDir];
+    for (const key of keys) this.#drop(key, options.now);
+    if (options.now) {
+      for (const w of this.#liveRetiring()) {
+        if (siteDir === undefined || w.release.siteDir === siteDir) {
+          w.close?.();
+          this.#retiring.delete(w);
+        }
+      }
+    }
   }
 
   sweep(now = Date.now()): void {
     for (const [key, entry] of [...this.#entries]) {
-      // 長いストリーム（SSE やダウンロード）の途中のものは使用中として扱う
-      if (entry.handle?.busy) entry.lastUsed = now;
-      else if (now - entry.lastUsed > this.#options.idleMs) this.#drop(key);
+      const idle = now - entry.lastUsed;
+      // 長いストリーム（SSE やダウンロード）の途中のものは使用中として扱う。ただし応答しないまま止まった Worker を
+      // いつまでも残さないよう、使用中でも idleMs の 6 倍（既定 1 時間）新しいリクエストがなければ止める
+      if (idle > this.#options.idleMs && (!entry.handle?.busy || idle > this.#options.idleMs * 6)) this.#drop(key, Boolean(entry.handle?.busy));
     }
   }
 
-  /** 本体の終了。子はすぐに止める */
+  /** 本体の終了。子は（止める途中のものも）すぐに止める */
   close(): void {
     clearInterval(this.#timer);
-    for (const key of [...this.#entries.keys()]) this.#drop(key, true);
+    this.evict(undefined, { now: true });
   }
 }

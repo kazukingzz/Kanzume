@@ -1,4 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { siteDataDir } from "./db.ts";
@@ -207,7 +208,11 @@ export class R2ObjectBody extends R2Object {
 /** バケット名（wrangler の bucket_name と同じ規則）。ファイルのディレクトリ名に使うので、ほかの文字は通さない */
 export const R2_BUCKET_NAME = /^[a-z0-9][a-z0-9-]{1,62}$/;
 
+/** オブジェクトのファイル名（put で作る 16 バイトの 16 進数）。DB の値をパスに使う前に確かめる */
+const VERSION = /^[0-9a-f]{32}$/;
+
 export class R2Bucket {
+  #dataDir: string;
   #dir: string;
   #bucket: string;
   #get: StatementSync;
@@ -218,7 +223,8 @@ export class R2Bucket {
   constructor(db: DatabaseSync, siteDir: string, bucket: string) {
     if (!R2_BUCKET_NAME.test(bucket)) throw new TypeError(`R2 のバケット名が不正です: ${bucket}`);
     this.#bucket = bucket;
-    this.#dir = path.join(siteDataDir(siteDir), "r2", bucket);
+    this.#dataDir = siteDataDir(siteDir);
+    this.#dir = path.join(this.#dataDir, "r2", bucket);
     this.#get = db.prepare("SELECT * FROM r2 WHERE bucket = ? AND key = ?");
     this.#upsert = db.prepare(
       "INSERT OR REPLACE INTO r2 (bucket, key, version, size, etag, uploaded, http_metadata, custom_metadata) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -231,8 +237,33 @@ export class R2Bucket {
     return this.#get.get(this.#bucket, validateKey(key)) as Row | undefined;
   }
 
-  #file(version: string): string {
+  /**
+   * オブジェクトのファイルのパス。DB は Worker の子プロセスが書き換えられるので、version の形を確かめ
+   * （../ などでバケットの外を指させない）、バケットのディレクトリがシンボリックリンクでよそを指していないかも確かめる
+   * （本体は root で動き、管理画面のストレージタブから同じファイルを読み書きするため）
+   */
+  async #file(version: string): Promise<string> {
+    if (typeof version !== "string" || !VERSION.test(version)) throw new Error("R2 のデータが壊れています（不正なファイル名）");
+    await this.#checkDir();
     return path.join(this.#dir, version);
+  }
+
+  /** data/r2 とバケットのディレクトリが、シンボリックリンクでよそを指していないか（まだないものは問わない） */
+  async #checkDir(): Promise<void> {
+    const root = await fs.realpath(this.#dataDir);
+    for (const [p, expected] of [
+      [path.dirname(this.#dir), path.join(root, "r2")],
+      [this.#dir, path.join(root, "r2", this.#bucket)],
+    ]) {
+      const actual = await fs.realpath(p).catch(() => expected);
+      if (actual !== expected) throw new Error("R2 のディレクトリが不正です");
+    }
+  }
+
+  /** 古い版のファイルを消す。不正な version なら DB の行だけを消し、ファイルには触らない */
+  async #remove(version: string): Promise<void> {
+    const file = await this.#file(version).catch(() => null);
+    if (file) await fs.rm(file, { force: true });
   }
 
   async head(key: string): Promise<R2Object | null> {
@@ -248,7 +279,8 @@ export class R2Bucket {
       const range = resolveRange(options.range, row.size);
       let handle: fs.FileHandle;
       try {
-        handle = await fs.open(this.#file(row.version), "r");
+        // 最後の要素がシンボリックリンクなら開かない
+        handle = await fs.open(await this.#file(row.version), fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
       } catch (err) {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") continue;
         throw err;
@@ -283,10 +315,13 @@ export class R2Bucket {
     }
 
     const version = randomBytes(16).toString("hex");
+    await this.#checkDir();
     await fs.mkdir(this.#dir, { recursive: true });
-    const tmp = `${this.#file(version)}.tmp`;
-    await fs.writeFile(tmp, data);
-    await fs.rename(tmp, this.#file(version));
+    const file = await this.#file(version);
+    const tmp = `${file}.tmp`;
+    // wx: 既にあるもの（シンボリックリンクを含む）には書かない
+    await fs.writeFile(tmp, data, { flag: "wx" });
+    await fs.rename(tmp, file);
 
     const customMetadata: Record<string, string> = {};
     for (const [k, v] of Object.entries(options.customMetadata ?? {})) customMetadata[k] = String(v);
@@ -300,7 +335,7 @@ export class R2Bucket {
       custom_metadata: JSON.stringify(customMetadata),
     };
     this.#upsert.run(this.#bucket, key, version, row.size, etag, row.uploaded, row.http_metadata, row.custom_metadata);
-    if (current) await fs.rm(this.#file(current.version), { force: true });
+    if (current) await this.#remove(current.version);
     return new R2Object(row);
   }
 
@@ -309,7 +344,7 @@ export class R2Bucket {
       const row = this.#row(key);
       if (!row) continue;
       this.#delete.run(this.#bucket, key);
-      await fs.rm(this.#file(row.version), { force: true });
+      await this.#remove(row.version);
     }
   }
 

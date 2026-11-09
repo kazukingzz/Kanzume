@@ -94,7 +94,8 @@ export class Invocation {
   merge(raw: unknown): void {
     if (!raw || typeof raw !== "object") return;
     const d = raw as Record<string, unknown>;
-    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : String(v ?? "").slice(0, max));
+    // 文字列以外は使わない（String() で変換すると、細工した値で例外になることがある）
+    const str = (v: unknown, max: number) => (typeof v === "string" ? v.slice(0, max) : "");
     const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : 0);
     if (Array.isArray(d.logs)) {
       for (const log of d.logs.slice(0, MAX_LOGS * 2)) {

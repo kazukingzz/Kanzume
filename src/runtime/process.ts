@@ -4,7 +4,7 @@
  *   ほかのサイトの子からは見えないようにする
  * - どの場合も Node の権限モデル（--permission）で、読み書きできる場所をサイトのディレクトリと Kanzume のソースだけにする
  */
-import { fork, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
@@ -48,8 +48,10 @@ const REQUEST_SKIP = new Set(["connection", "keep-alive", "transfer-encoding", "
 const RESPONSE_SKIP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"]);
 /** 再デプロイや追い出しで外した子が、処理中のリクエストと waitUntil を終えるのを待つ上限 */
 const RETIRE_DEADLINE_MS = 35_000;
-/** 子が返す Worker の例外（JSON）の上限 */
-const MAX_ERROR_BYTES = 256 * 1024;
+/** 子からの知らせ 1 行の上限（ログ 100 件 × 4 KiB と例外を収められる大きさ） */
+const MAX_LINE_BYTES = 2 * 1024 * 1024;
+/** 応答を送り終えてから done（waitUntil の終わり）を待つ上限。子は waitUntil を最大 30 秒待つ */
+const DONE_TIMEOUT_MS = 35_000;
 
 export const isRoot = () => typeof process.getuid === "function" && process.getuid() === 0;
 
@@ -94,6 +96,8 @@ function fixEntry(p: string, isDir: boolean, owner: number | null, gid: number, 
   try {
     const st = fs.fstatSync(fd);
     if (st.isDirectory() !== isDir || (!isDir && !st.isFile())) return;
+    // ハードリンクには触らない（子が data/ に置いたハードリンクの先、たとえば admin.json を、サイトのグループで読み書きできるようにしないため）
+    if (!isDir && st.nlink > 1) return;
     const uid = owner ?? st.uid;
     if (st.uid !== uid || st.gid !== gid) fs.fchownSync(fd, uid, gid);
     const next = mode(st.mode & 0o7777);
@@ -178,45 +182,74 @@ export class ChildWorker {
   #child: ChildProcess;
   #socket: string;
   #socketDir: string;
-  #pending = new Map<string, (done: unknown) => void>();
+  /** done（ログ）を待っているリクエスト */
+  #pending = new Map<string, (done: Record<string, unknown> | null) => void>();
+  /** 応答を送り終えていないリクエストの数（長いストリームも含む） */
+  #inflight = 0;
   #closed = false;
   #retiring = false;
+  #retireTimer: NodeJS.Timeout | null = null;
+  #onMessage: ((m: Record<string, unknown>) => void) | null = null;
 
   private constructor(release: Release, child: ChildProcess, socket: string, socketDir: string) {
     this.release = release;
     this.#child = child;
     this.#socket = socket;
     this.#socketDir = socketDir;
-    // 子は信頼できない（Worker が vm から抜け出せる）。メッセージの形を確かめ、知らない id は捨てる
-    child.on("message", (m: unknown) => {
-      if (!m || typeof m !== "object") return;
-      const { type, id } = m as { type?: unknown; id?: unknown };
-      if (type !== "done" || typeof id !== "string") return;
-      const resolve = this.#pending.get(id);
-      if (!resolve) return;
-      this.#pending.delete(id);
-      resolve(m);
-      this.#maybeFinishRetire();
+    // 子は信頼できない（Worker が vm から抜け出せる）。Node の IPC は使わず、fd 3 のパイプを 1 行ずつ自分で読む。
+    // 行の長さに上限を設け、JSON として読めないものや形の違うものは捨てる（本体を落とさない）
+    readLines(child.stdio[3] as NodeJS.ReadableStream, MAX_LINE_BYTES, (line) => {
+      let m: unknown;
+      try {
+        m = JSON.parse(line);
+      } catch {
+        return;
+      }
+      if (!m || typeof m !== "object" || Array.isArray(m)) return;
+      const msg = m as Record<string, unknown>;
+      if (msg.type === "done") {
+        if (typeof msg.id !== "string") return;
+        const resolve = this.#pending.get(msg.id);
+        if (!resolve) return;
+        this.#pending.delete(msg.id);
+        resolve(msg);
+        this.#maybeFinishRetire();
+      } else this.#onMessage?.(msg);
+    }, () => {
+      console.error(`[runtime] Worker のプロセスが大きすぎる知らせを送ったので止めます（${release.manifest.name}）`);
+      this.#kill();
     });
-    // fork の失敗（EACCES / EAGAIN など）や IPC の書き込みエラー。リスナーがないと本体ごと落ちる
+    // 起動の失敗（EACCES / EAGAIN など）。リスナーがないと本体ごと落ちる
     child.on("error", (err) => {
       console.error(`[runtime] Worker のプロセスでエラー（${release.manifest.name}）:`, err.message);
       this.#kill();
+      this.#cleanup();
     });
+    for (const stream of [child.stdin, child.stdio[3]]) (stream as NodeJS.EventEmitter | null)?.on("error", () => {});
     child.on("exit", () => {
       this.#closed = true;
-      for (const resolve of this.#pending.values()) resolve(null);
-      this.#pending.clear();
-      fs.rmSync(this.#socketDir, { recursive: true, force: true });
+      this.#cleanup();
     });
+  }
+
+  #cleanup(): void {
+    for (const resolve of this.#pending.values()) resolve(null);
+    this.#pending.clear();
+    if (this.#retireTimer) clearTimeout(this.#retireTimer);
+    fs.rmSync(this.#socketDir, { recursive: true, force: true });
   }
 
   get closed(): boolean {
     return this.#closed;
   }
 
+  /** 処理中のリクエスト（応答の送信中と、waitUntil を待っているもの）があるか */
   get busy(): boolean {
-    return this.#pending.size > 0;
+    return this.#inflight > 0 || this.#pending.size > 0;
+  }
+
+  get retiring(): boolean {
+    return this.#retiring;
   }
 
   get pid(): number | undefined {
@@ -236,11 +269,9 @@ export class ChildWorker {
     const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanzume-"));
     if (ids !== null) fs.chownSync(socketDir, ids, ids);
     const socket = path.join(socketDir, "worker.sock");
-    const child = fork(entry, [], {
-      ...(ids !== null ? { uid: ids, gid: ids } : {}),
-      // 本体の環境変数（KANZUME_BACKUP_URL など）は渡さない
-      env: { PATH: process.env.PATH ?? "", TZ: process.env.TZ ?? "", NODE_ENV: process.env.NODE_ENV ?? "" },
-      execArgv: [
+    const child = spawn(
+      process.execPath,
+      [
         "--disable-warning=ExperimentalWarning",
         "--permission",
         `--allow-fs-read=${path.dirname(entry)}`,
@@ -250,23 +281,28 @@ export class ChildWorker {
         `--allow-fs-write=${siteDataDir(siteDir)}`,
         `--allow-fs-write=${socketDir}`,
         `--max-old-space-size=${options.heapMb ?? 64}`,
+        entry,
       ],
-      stdio: ["ignore", "inherit", "inherit", "ipc"],
-      serialization: "advanced",
-    });
+      {
+        ...(ids !== null ? { uid: ids, gid: ids } : {}),
+        // 本体の環境変数（KANZUME_BACKUP_URL など）は渡さない
+        env: { PATH: process.env.PATH ?? "", TZ: process.env.TZ ?? "", NODE_ENV: process.env.NODE_ENV ?? "" },
+        stdio: ["pipe", "inherit", "inherit", "pipe"],
+      },
+    );
     const worker = new ChildWorker(release, child, socket, socketDir);
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new WorkerError("Worker のプロセスが起動しませんでした（時間切れ）")), START_TIMEOUT_MS);
-        child.on("message", (m: { type?: unknown; message?: unknown }) => {
-          if (m?.type === "ready") {
+        worker.#onMessage = (m) => {
+          if (m.type === "ready") {
             clearTimeout(timer);
             resolve();
-          } else if (m?.type === "error") {
+          } else if (m.type === "error") {
             clearTimeout(timer);
             reject(new WorkerError(typeof m.message === "string" ? m.message.slice(0, 4096) : "Worker を読み込めませんでした"));
           }
-        });
+        };
         child.once("error", (err) => {
           clearTimeout(timer);
           reject(new WorkerError(`Worker のプロセスを起動できませんでした: ${err.message}`));
@@ -275,16 +311,14 @@ export class ChildWorker {
           clearTimeout(timer);
           reject(new WorkerError(`Worker のプロセスが終了しました（${signal ?? code}）`));
         });
-        child.send({ type: "init", release, siteDir, timeout: options.timeout, vars: siteVars(release, siteDir), socket }, (err) => {
-          if (err) {
-            clearTimeout(timer);
-            reject(new WorkerError(`Worker のプロセスに設定を渡せませんでした: ${err.message}`));
-          }
-        });
+        // 設定は stdin の 1 行目で渡す。stdin は開けたままにし、本体がいなくなったら子も終わる
+        child.stdin?.write(`${JSON.stringify({ release, siteDir, timeout: options.timeout, vars: siteVars(release, siteDir), socket })}\n`);
       });
     } catch (err) {
       worker.close();
       throw err;
+    } finally {
+      worker.#onMessage = null;
     }
     return worker;
   }
@@ -295,19 +329,43 @@ export class ChildWorker {
     const id = randomUUID();
     const invocation = currentInvocation();
     // 子のログ・応答の送信・waitUntil が終わるのを待つ（本体は終わってから可観測性に記録する）
+    let settle!: (d: Record<string, unknown> | null) => void;
     const done = new Promise<void>((resolve) => {
-      this.#pending.set(id, (d) => {
-        if (d && invocation) invocation.merge(d);
+      settle = (d) => {
+        try {
+          if (d && invocation) invocation.merge(d);
+        } catch (err) {
+          console.error("[runtime] Worker のログを取り込めませんでした:", (err as Error)?.message ?? err);
+        }
         resolve();
-      });
+      };
     });
+    this.#pending.set(id, settle);
+    const giveUp = () => {
+      if (!this.#pending.has(id)) return;
+      this.#pending.delete(id);
+      settle(null);
+      this.#maybeFinishRetire();
+    };
     // クライアントのヘッダーを先に入れ、内部用の x-kanzume-* は落としてから本体の値で上書きする（訪問者に偽らせない）
     const headers: Record<string, string> = {};
     for (const [k, v] of request.headers) if (!REQUEST_SKIP.has(k) && !k.startsWith("x-kanzume-")) headers[k] = v;
     headers["x-kanzume-id"] = id;
     headers["x-kanzume-url"] = request.url;
+    const length = request.headers.get("content-length");
+    if (length !== null && request.body) headers["x-kanzume-content-length"] = length;
     // DELETE などでも本文を正しく区切って送る
     if (request.body) headers["transfer-encoding"] = "chunked";
+    this.#inflight++;
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      this.#inflight--;
+      // 応答を送り終えたあと、done（waitUntil の終わり）が来なければあきらめる
+      setTimeout(giveUp, DONE_TIMEOUT_MS).unref();
+      this.#maybeFinishRetire();
+    };
     try {
       const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
         const req = http.request({ socketPath: this.#socket, method: request.method, path: "/", headers, maxHeaderSize: 256 * 1024 }, resolve);
@@ -315,15 +373,22 @@ export class ChildWorker {
         if (request.body) Readable.fromWeb(request.body as never).on("error", (err) => req.destroy(err)).pipe(req);
         else req.end();
       });
-      if (res.headers["x-kanzume-error"]) {
-        const info = await readError(res);
+      res.once("close", finish);
+      res.once("error", finish);
+      // 子の Worker まで届かずに Node が断った応答（ヘッダーが大きすぎる 431 など）は、done が来ないのですぐにあきらめる
+      if (!res.headers["x-kanzume-handled"]) giveUp();
+      const failure = res.headers["x-kanzume-error"];
+      if (failure) {
+        res.resume();
+        const info = parseError(String(failure));
         // 子のスタックトレース（Worker のコードの行）をそのまま使う
         const error = Object.assign(new Error(info.message), { name: info.name }, info.stack ? { stack: info.stack } : {});
         return { response: null, error, passThrough: info.passThrough, waitUntil: [done] };
       }
       const out = new Headers();
       for (let i = 0; i < res.rawHeaders.length; i += 2) {
-        if (!RESPONSE_SKIP.has(res.rawHeaders[i].toLowerCase())) out.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
+        const name = res.rawHeaders[i].toLowerCase();
+        if (!RESPONSE_SKIP.has(name) && !name.startsWith("x-kanzume-")) out.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
       }
       const status = res.statusCode ?? 500;
       const nullBody = status === 204 || status === 205 || status === 304 || request.method === "HEAD";
@@ -331,9 +396,8 @@ export class ChildWorker {
       if (nullBody) res.resume();
       return { response: new Response(body, { status, statusText: res.statusMessage, headers: out }), error: null, passThrough: false, waitUntil: [done] };
     } catch (err) {
-      this.#pending.get(id)?.(null);
-      this.#pending.delete(id);
-      this.#maybeFinishRetire();
+      finish();
+      giveUp();
       return { response: null, error: new Error(`Worker のプロセスに届きませんでした: ${(err as Error)?.message ?? err}`), passThrough: false, waitUntil: [] };
     }
   }
@@ -345,15 +409,16 @@ export class ChildWorker {
   retire(): void {
     if (this.#closed || this.#retiring) return;
     this.#retiring = true;
-    setTimeout(() => this.#kill(), RETIRE_DEADLINE_MS).unref();
+    this.#retireTimer = setTimeout(() => this.#kill(), RETIRE_DEADLINE_MS);
+    this.#retireTimer.unref();
     this.#maybeFinishRetire();
   }
 
   #maybeFinishRetire(): void {
-    if (this.#retiring && this.#pending.size === 0) this.#kill();
+    if (this.#retiring && !this.busy) this.#kill();
   }
 
-  /** すぐに止める（本体の終了や起動の失敗のとき） */
+  /** すぐに止める（本体の終了・サイトの削除・起動の失敗のとき） */
   close(): void {
     this.#kill();
   }
@@ -361,28 +426,41 @@ export class ChildWorker {
   #kill(): void {
     if (this.#closed) return;
     this.#closed = true;
+    if (this.#retireTimer) clearTimeout(this.#retireTimer);
     this.#child.kill("SIGKILL");
   }
 }
 
-/** 子が返した Worker の例外（本文の JSON）を読む。大きすぎるものや壊れたものは丸める */
-async function readError(res: http.IncomingMessage): Promise<{ message: string; name: string; stack?: string; passThrough: boolean }> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of res) {
-    size += (chunk as Buffer).length;
-    if (size > MAX_ERROR_BYTES) {
-      res.destroy();
-      break;
+/** 1 行ずつ読む。max バイトを超える行が来たら onTooLong を呼んで読むのをやめる */
+function readLines(stream: NodeJS.ReadableStream | null, max: number, onLine: (line: string) => void, onTooLong: () => void): void {
+  if (!stream) return;
+  let buf = "";
+  stream.setEncoding("utf8");
+  stream.on("data", (chunk: string) => {
+    buf += chunk;
+    let nl: number;
+    while ((nl = buf.indexOf("\n")) !== -1) {
+      const line = buf.slice(0, nl);
+      buf = buf.slice(nl + 1);
+      onLine(line);
     }
-    chunks.push(chunk as Buffer);
-  }
+    if (buf.length > max) {
+      buf = "";
+      stream.removeAllListeners("data");
+      stream.resume();
+      onTooLong();
+    }
+  });
+}
+
+/** 子が返した Worker の例外（x-kanzume-error ヘッダーの base64url の JSON）を読む。壊れたものは丸める */
+function parseError(value: string): { message: string; name: string; stack?: string; passThrough: boolean } {
   try {
-    const info = JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<string, unknown>;
+    const info = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
     return {
-      message: typeof info.message === "string" ? info.message : "Worker threw exception",
-      name: typeof info.name === "string" ? info.name : "Error",
-      stack: typeof info.stack === "string" ? info.stack : undefined,
+      message: typeof info.message === "string" ? info.message.slice(0, 8 * 1024) : "Worker threw exception",
+      name: typeof info.name === "string" ? info.name.slice(0, 200) : "Error",
+      stack: typeof info.stack === "string" ? info.stack.slice(0, 16 * 1024) : undefined,
       passThrough: info.passThrough === true,
     };
   } catch {

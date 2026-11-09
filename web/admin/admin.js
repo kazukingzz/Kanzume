@@ -1377,8 +1377,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: kazukingzz/Kanzume/action@main
         with:
-          url: ${url}
-          site: ${site}
+          url: "${url}"
+          site: "${site}"
           token: \${{ secrets.KANZUME_TOKEN }}
 `;
 

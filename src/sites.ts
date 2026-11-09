@@ -68,6 +68,8 @@ export class Sites {
   #root: string | null = null;
   /** ルートを一度でも決めた（外した）か。_root ファイルがあれば決めたことにする（空ならルートなし） */
   #rootDecided = false;
+  /** 新しいサイトのディレクトリを作ったあとに呼ぶ（Worker を子プロセスで動かすとき、権限をそろえる） */
+  onCreate: ((name: string, siteDir: string) => void) | null = null;
   /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
 
@@ -92,18 +94,24 @@ export class Sites {
         this.#settings.set(id, { ...settings, subdomain: undefined });
       }
     }
-    const taken = new Set<string>();
-    for (const [id, settings] of this.#settings) if (settings.subdomain === undefined || settings.subdomain === id) taken.add(id);
-    for (const [id, settings] of this.#settings) {
-      const label = settings.subdomain;
-      if (label === undefined || label === id) continue;
-      if (taken.has(label)) {
-        console.warn(`[kanzume] サイト ${id} のサブドメイン（${label}）は使えないので、${id} で配信します`);
-        this.#settings.set(id, { ...settings, subdomain: undefined });
-        taken.add(id);
-        continue;
+    // 重なりがなくなるまで繰り返す（別名を外したサイトが自分の ID に戻ると、その ID を別名にしていたほかのサイトと重なりうるため）。
+    // 並び順に左右されないよう、ID の順に見る
+    for (let changed = true; changed; ) {
+      changed = false;
+      const taken = new Set<string>();
+      for (const [id, settings] of this.#settings) if (settings.subdomain === undefined || settings.subdomain === id) taken.add(id);
+      for (const id of [...this.#settings.keys()].sort()) {
+        const settings = this.#settings.get(id)!;
+        const label = settings.subdomain;
+        if (label === undefined || label === id) continue;
+        if (taken.has(label)) {
+          console.warn(`[kanzume] サイト ${id} のサブドメイン（${label}）はほかのサイトと重なるので、${id} で配信します`);
+          this.#settings.set(id, { ...settings, subdomain: undefined });
+          changed = true;
+          continue;
+        }
+        taken.add(label);
       }
-      taken.add(label);
     }
     const raw = await fs.readFile(path.join(this.dir, ROOT_FILE), "utf8").catch(() => null);
     this.#rootDecided = raw !== null;
@@ -145,6 +153,8 @@ export class Sites {
       if (owner && owner !== name) throw new SettingsError(`サブドメイン ${name} はサイト ${owner} が使っています。別の名前にしてください`);
       store = new Store(path.join(this.dir, name));
       await store.init();
+      // 作った時点で所有者とモードを決める（このあと本体が作る KV / R2・リリースも、Worker の子プロセスから使えるように）
+      this.onCreate?.(name, store.siteDir);
       this.#stores.set(name, store);
       this.#settings.set(name, readSiteSettings(store.siteDir));
     }

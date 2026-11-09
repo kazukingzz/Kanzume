@@ -27,6 +27,12 @@ CREATE TABLE IF NOT EXISTS r2 (
 `;
 
 const open = new Map<string, DatabaseSync>();
+let busyTimeoutMs = 200;
+
+/** ロックを待つ時間（Worker の子プロセスでは長くする） */
+export function setBusyTimeout(ms: number): void {
+  busyTimeoutMs = ms;
+}
 
 /**
  * サイトの KV / R2 の置き場所（<siteDir>/data）。Worker の子プロセスが書き込めるのはここだけ
@@ -39,8 +45,9 @@ export function siteDb(siteDir: string): DatabaseSync {
   if (!db) {
     fs.mkdirSync(siteDataDir(siteDir), { recursive: true });
     db = new DatabaseSync(path.join(siteDataDir(siteDir), "data.sqlite"));
-    // Worker の子プロセスと本体（管理画面のデータタブ）が同時に書くことがあるので、ロックを少し待つ
-    db.exec("PRAGMA busy_timeout = 5000");
+    // Worker の子プロセスと本体（管理画面のデータタブ）が同時に書くことがあるので、ロックを少し待つ。
+    // DatabaseSync は待つ間イベントループを止めるので、全サイトを配信する本体では短くし、子だけ長く待つ（setBusyTimeout）
+    db.exec(`PRAGMA busy_timeout = ${busyTimeoutMs}`);
     db.exec(SCHEMA);
     open.set(siteDir, db);
   }

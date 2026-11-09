@@ -178,10 +178,26 @@ module.exports = {
     if (url.pathname === "/bad-header") return new Response("x", { headers: { location: url.searchParams.get("next") } });
     if (url.pathname === "/long-error") throw new Error("あ".repeat(6000));
     if (url.pathname === "/bad-ipc") {
-      host.send({ type: "done", id: "x", logs: 1 });
-      host.send({ type: "done", id: request.headers.get("x-probe-id"), logs: Array.from({ length: 100000 }, () => ({ message: "x".repeat(10) })) });
-      host.send("not an object");
+      // 本体への知らせのパイプ（fd 3）に、壊れた行・形の違う行・Node の内部メッセージに似た行を書く
+      const fs = host.getBuiltinModule("fs");
+      const w = (v) => fs.writeSync(3, v);
+      w('{"type":"done","id":"x","logs":1}\\n');
+      w('{"type":"done","id":"x","logs":[{"message":{"toString":1}}],"exceptions":[{"name":[1,2],"message":{}}]}\\n');
+      w('{"cmd":"NODE_HANDLE_ACK"}\\n');
+      w('not json\\n');
+      w(new Uint8Array([0, 0, 0, 4, 0xde, 0xad, 0xbe, 0xef, 10]));
+      w('"just a string"\\n');
+      w("[1,2,3]\\n");
       return new Response("sent");
+    }
+    if (url.pathname === "/pass") {
+      ctx.passThroughOnException();
+      throw new Error("pass me");
+    }
+    if (url.pathname === "/length") return Response.json({ length: request.headers.get("content-length"), body: (await request.text()).length });
+    if (url.pathname === "/stream") {
+      let i = 0;
+      return new Response(new ReadableStream({ async pull(c) { await new Promise((r) => setTimeout(r, 50)); if (i++ < 5) c.enqueue(new TextEncoder().encode("x")); else c.close(); } }));
     }
     if (url.pathname === "/slow") {
       ctx.waitUntil(new Promise((r) => setTimeout(r, 300)).then(() => env.KV.put("slow", "done")));
@@ -223,7 +239,7 @@ test("Worker の不正な応答や長い例外は、そのリクエストだけ�
   assert.equal((await (await w.fetch(new Request("http://x/"))).response!.json() as { pid: number }).pid, pid);
 });
 
-test("子が不正な IPC を送っても本体は落ちず、ログは上限で切られる", async (t) => {
+test("子が本体への知らせのパイプに不正な行を書いても本体は落ちない", async (t) => {
   const { dataDir, runtime } = setup(t);
   const r = await site(dataDir, "a", EDGE);
   const w = (await runtime.get(r)) as ChildWorker;
@@ -248,4 +264,58 @@ test("再デプロイで外した子も、処理中の waitUntil は最後まで
   const { siteDb } = await import("../src/bindings/db.ts");
   const { KVNamespace } = await import("../src/bindings/kv.ts");
   assert.equal(await new KVNamespace(siteDb(v1.siteDir), "KV").get("slow"), "done");
+});
+
+test("大きなヘッダーでも、HEAD の passThroughOnException・Content-Length・長いストリームが正しく扱われ、待ち状態が残らない", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+
+  // 本体が受けられる大きさのヘッダー（子に転送すると URL などが増える）でも、子が断らずに処理する
+  const big = await w.fetch(new Request("http://x/?" + "q".repeat(8000), { headers: { "x-forwarded-for": "a".repeat(8000) } }));
+  assert.equal(big.response?.status, 200);
+  await Promise.all(big.waitUntil);
+  assert.equal(w.busy, false, "待ち状態が残らない");
+
+  // HEAD で例外を出しても、passThroughOnException と例外の中身が届く
+  const head = await w.fetch(new Request("http://x/pass", { method: "HEAD" }));
+  assert.equal(head.response, null);
+  assert.equal(head.passThrough, true);
+  assert.equal((head.error as Error).message, "pass me");
+  await Promise.all(head.waitUntil);
+
+  // Content-Length が Worker に届く
+  const len = await w.fetch(new Request("http://x/length", { method: "POST", body: "hello", headers: { "content-length": "5" } }));
+  assert.deepEqual(await len.response!.json(), { length: "5", body: 5 });
+  await Promise.all(len.waitUntil);
+
+  // ストリームを送っている間は使用中として扱う（追い出しや停止で切らない）
+  const stream = await w.fetch(new Request("http://x/stream"));
+  assert.equal(w.busy, true);
+  assert.equal(await stream.response!.text(), "xxxxx");
+  await Promise.all(stream.waitUntil);
+  assert.equal(w.busy, false);
+});
+
+test("止める途中の子もリソースに出て、サイトの削除（now）や本体の終了ではすぐに止まる", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const v1 = await site(dataDir, "a", EDGE);
+  const w1 = (await runtime.get(v1)) as ChildWorker;
+  const slow = await w1.fetch(new Request("http://x/slow"));
+  await slow.response!.text();
+  const store = new Store(v1.siteDir);
+  const v2 = await store.createRelease(manifest({ name: "a", ...BINDINGS }), [{ path: "worker/index.cjs", data: Buffer.from(EDGE) }]);
+  const w2 = (await runtime.preload(v2)) as ChildWorker;
+  runtime.install(w2);
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(w1.closed, false);
+  assert.deepEqual(runtime.processes().map((p) => p.pid).sort(), [w1.pid, w2.pid].sort(), "止める途中の子もリソースに出る");
+
+  // デプロイの前に古いリリースを読んだリクエストは、新しい子で受ける（新しい子を追い出さない）
+  assert.equal(await runtime.get(v1), w2);
+
+  runtime.evict(v1.siteDir, { now: true });
+  await waitClosed(w1);
+  await waitClosed(w2);
+  assert.deepEqual(runtime.processes(), []);
 });

@@ -307,20 +307,28 @@ export interface PendingCommit {
   objects: string;
 }
 
-/** ルーズオブジェクト（xx/yyyy…）を移す。リポジトリにすでにあるものはそのまま */
+/**
+ * 一時ディレクトリに作ったオブジェクトを移す。ルーズオブジェクト（xx/yyyy…）と、大きなファイルで git が作る pack
+ * （pack/*.pack と *.idx。pack を先に移し、読む側が idx だけを見ないように）。リポジトリにすでにあるものはそのまま
+ */
 async function moveObjects(from: string, to: string): Promise<void> {
+  const move = async (src: string, dest: string) => {
+    if (await fs.stat(dest).then(() => true, () => false)) return;
+    await fs.mkdir(path.dirname(dest), { recursive: true });
+    await fs.rename(src, dest).catch(async (err: NodeJS.ErrnoException) => {
+      // 一時ディレクトリが別のファイルシステムにあるとき
+      if (err.code !== "EXDEV") throw err;
+      await fs.copyFile(src, `${dest}.tmp`);
+      await fs.rename(`${dest}.tmp`, dest);
+    });
+  };
   for (const dir of await fs.readdir(from)) {
-    if (!/^[0-9a-f]{2}$/.test(dir)) continue;
-    await fs.mkdir(path.join(to, dir), { recursive: true });
-    for (const file of await fs.readdir(path.join(from, dir))) {
-      const dest = path.join(to, dir, file);
-      if (await fs.stat(dest).then(() => true, () => false)) continue;
-      await fs.rename(path.join(from, dir, file), dest).catch(async (err: NodeJS.ErrnoException) => {
-        // 一時ディレクトリが別のファイルシステムにあるとき
-        if (err.code !== "EXDEV") throw err;
-        await fs.copyFile(path.join(from, dir, file), `${dest}.tmp`);
-        await fs.rename(`${dest}.tmp`, dest);
-      });
+    if (/^[0-9a-f]{2}$/.test(dir)) {
+      for (const file of await fs.readdir(path.join(from, dir))) await move(path.join(from, dir, file), path.join(to, dir, file));
+    } else if (dir === "pack") {
+      const files = (await fs.readdir(path.join(from, "pack"))).filter((f) => /^pack-[0-9a-f]+\.(pack|idx|rev)$/.test(f));
+      const order = (f: string) => (f.endsWith(".pack") ? 0 : f.endsWith(".rev") ? 1 : 2);
+      for (const file of files.sort((x, y) => order(x) - order(y))) await move(path.join(from, "pack", file), path.join(to, "pack", file));
     }
   }
 }

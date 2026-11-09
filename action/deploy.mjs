@@ -155,7 +155,8 @@ try {
     };
     const bundled = path.join(stage, "bundled");
     const [wrangler, wranglerArgs] = bin("wrangler", "wrangler@4");
-    run(wrangler, [...wranglerArgs, "deploy", "--dry-run", "--outdir", bundled], {
+    // name は使わない（デプロイ先は site）。wrangler は name がないとビルドしないので、site を渡しておく
+    run(wrangler, [...wranglerArgs, "deploy", "--dry-run", "--outdir", bundled, "--name", site], {
       env: { ...process.env, WRANGLER_SEND_METRICS: "false", FORCE_COLOR: "0" },
     });
 

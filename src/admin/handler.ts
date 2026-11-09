@@ -86,6 +86,7 @@ function envPatch(body: Record<string, unknown> | null): SettingsPatch {
 export function createAdminHandler({ config, state, sites, repos, runtime, history, observability, resources, deployer, backup, github }: Deps) {
   const challenges = new Challenges();
   let githubDeploying = false;
+  let uploading = false;
 
   const sessionCookie = (origin: string, value: string, maxAge: number) =>
     `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
@@ -671,6 +672,17 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     // ファイルのドラッグ＆ドロップでデプロイする（本文は管理画面で作った tar.gz）。
     // wrangler の設定があればそれに従い、なければ全体を静的サイトとして配信する
     if (siteRouteKey === "POST /deploy-upload") {
+      // アップロードは一度に 1 つだけ（展開したファイルとビルドでメモリを多く使うので、待たせずに断る）。本文を読む前に確かめる
+      if (uploading) return sendJson(res, 409, { error: "別のアップロードを処理中です。終わってからもう一度試してください" });
+      uploading = true;
+      try {
+        return await handleUpload();
+      } finally {
+        uploading = false;
+      }
+    }
+
+    async function handleUpload(): Promise<void> {
       const body = await readBody(req, config.maxUploadBytes);
       if (!body) return sendJson(res, 413, { error: `アップロードは ${Math.round(config.maxUploadBytes / 1024 / 1024)} MB 以内にしてください` });
       let files;
@@ -702,12 +714,12 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         let commit: PendingCommit | null = null;
         let repoWarning: string | null = null;
         try {
-          commit = await repos.commitFiles(name, uploaded, { message, author: user.name, email: `${user.id}@users.kanzume` });
+          commit = await repos.commitFiles(name, uploaded, { message, author: user!.name, email: `${user!.id}@users.kanzume` });
         } catch (err) {
           console.error("[upload] リポジトリへのコミットに失敗:", err);
           repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
         }
-        const source = commit ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user.name } : { actor: user.name, commitMessage: message };
+        const source = commit ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user!.name } : { actor: user!.name, commitMessage: message };
         const result = await deployFromFiles(uploaded, deployer, {
           source,
           log: new DeployLog(name),
@@ -726,8 +738,13 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           return { status: 400, body: { error: result.error } };
         }
         if (commit) {
-          const moved = await repos.updateBranch(commit);
-          if (moved === "quota") repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
+          // 公開はもう済んでいるので、リポジトリへの取り込みに失敗しても警告にとどめる
+          const moved = await repos.updateBranch(commit).catch((err) => {
+            console.error("[upload] リポジトリへの取り込みに失敗:", err);
+            return "error" as const;
+          });
+          if (moved === "error") repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
+          else if (moved === "quota") repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
           else if (moved === "moved") repoWarning = "デプロイはしましたが、その間にリポジトリに push があったので保存しませんでした";
         }
         return {
@@ -827,7 +844,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     }
 
     if (siteRouteKey === "DELETE ") {
-      runtime.evict(store.siteDir);
+      // 処理中のリクエストも待たずに止める（消したあとに Worker が KV / R2 を書いて、ディレクトリを作り直さないように）
+      runtime.evict(store.siteDir, { now: true });
       await state.removeSiteAccess(name);
       await sites.remove(name);
       // リポジトリはサイトに属するので一緒に消す（残すと次の起動で空のサイトとして戻ってくる）

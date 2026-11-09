@@ -243,3 +243,18 @@ test("settings.json を直接書き換えても、ほかのサイトのサブド
   assert.equal(sites.subdomain("blog"), "blog");
   assert.equal(sites.subdomain("shop"), "shop");
 });
+
+test("別名が連鎖して重なっても、起動時にどのサイトも自分の ID かほかと重ならない名前で配信する", async (t) => {
+  const { sites } = await start(t);
+  for (const n of ["a", "b", "x"]) await sites.ensure(n);
+  const write = (id: string, subdomain: string) =>
+    fs.writeFileSync(path.join(sites.get(id)!.siteDir, "settings.json"), JSON.stringify({ subdomain, vars: {}, secrets: {} }));
+  // x → "a"、a → "b"、b は既定。a が外されて "a" に戻ると、x の "a" と重なる
+  write("x", "a");
+  write("a", "b");
+  await sites.init();
+  const labels = ["a", "b", "x"].map((id) => sites.subdomain(id));
+  assert.equal(new Set(labels).size, 3, `重ならない: ${labels.join(", ")}`);
+  assert.equal(sites.resolve("a"), "a");
+  assert.equal(sites.resolve("b"), "b");
+});

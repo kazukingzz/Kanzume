@@ -108,3 +108,37 @@ test("list は prefix・delimiter・cursor に対応する", async (t) => {
   assert.deepEqual(p2.objects.map((o) => o.key), ["img/b.png", "img/sub/c.png", "top.txt"]);
   assert.equal(p2.truncated, false);
 });
+
+test("DB の version やシンボリックリンクで、バケットの外のファイルを読ませたり消させたりしない", async (t) => {
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  const dir = tmpDir(t);
+  t.after(() => closeSiteDb(dir));
+  const db = siteDb(dir);
+  const b = new R2Bucket(db, dir, "files");
+  const secret = path.join(dir, "secret.txt");
+  fs.writeFileSync(secret, "secret");
+
+  // Worker の子プロセスは DB を書き換えられる。version に ../ を入れられても外を読まない・消さない
+  await b.put("k", "v");
+  db.prepare("UPDATE r2 SET version = ? WHERE key = ?").run("../../secret.txt", "k");
+  await assert.rejects(b.get("k"), /不正なファイル名/);
+  await b.delete("k");
+  assert.equal(fs.readFileSync(secret, "utf8"), "secret", "外のファイルは消さない");
+
+  // オブジェクトのファイルがシンボリックリンクなら開かない
+  const put = await b.put("link", "v");
+  const row = db.prepare("SELECT version FROM r2 WHERE key = ?").get("link") as { version: string };
+  const file = path.join(dir, "data", "r2", "files", row.version);
+  fs.rmSync(file);
+  fs.symlinkSync(secret, file);
+  assert.ok(put);
+  await assert.rejects(b.get("link"));
+
+  // バケットのディレクトリがよそを指すシンボリックリンクなら使わない
+  const elsewhere = tmpDir(t);
+  fs.rmSync(path.join(dir, "data", "r2", "files"), { recursive: true });
+  fs.symlinkSync(elsewhere, path.join(dir, "data", "r2", "files"));
+  await assert.rejects(b.put("x", "y"), /ディレクトリが不正/);
+  assert.deepEqual(fs.readdirSync(elsewhere), []);
+});

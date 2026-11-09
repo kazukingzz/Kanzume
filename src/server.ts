@@ -47,7 +47,17 @@ async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
   }
   for (const name of ["repos", "git-hooks"]) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
   // 全サイトの所有者とモードを、起動のたびにそろえる（以前のバージョンのデータや、バックアップから戻したデータも直す）
-  for (const { name, store } of sites.list()) prepareSiteDir(store.siteDir, siteUid(dataDir, name));
+  // 1 つのサイトで失敗しても（置き換えられた data など）、ほかのサイトと本体は起動する
+  const prepare = (name: string, siteDir: string) => {
+    try {
+      prepareSiteDir(siteDir, siteUid(dataDir, name));
+    } catch (err) {
+      console.error(`[kanzume] サイト ${name} の権限をそろえられませんでした:`, (err as Error)?.message ?? err);
+    }
+  };
+  for (const { name, store } of sites.list()) prepare(name, store.siteDir);
+  // あとから作るサイトは、作った時点でそろえる
+  sites.onCreate = prepare;
 }
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions>; backup?: Backup | null } = {}) {

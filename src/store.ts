@@ -54,14 +54,18 @@ export class Store {
 
   async init(): Promise<void> {
     await fs.mkdir(this.#releasesDir, { recursive: true });
-    // 以前の置き場所（サイトのディレクトリの直下）の KV / R2 を data/ に移す
+    // 以前の置き場所（サイトのディレクトリの直下）の KV / R2 を data/ に移す。失敗してもほかは読み込む（起動を止めない）
     const data = path.join(this.siteDir, "data");
     for (const name of ["data.sqlite", "data.sqlite-wal", "data.sqlite-shm", "r2"]) {
       const from = path.join(this.siteDir, name);
       const to = path.join(data, name);
-      if (!(await exists(from)) || (await exists(to))) continue;
-      await fs.mkdir(data, { recursive: true });
-      await fs.rename(from, to);
+      try {
+        if (!(await exists(from)) || (await exists(to))) continue;
+        await fs.mkdir(data, { recursive: true });
+        await fs.rename(from, to);
+      } catch (err) {
+        console.error(`[store] ${from} を data/ に移せませんでした:`, (err as Error)?.message ?? err);
+      }
     }
     const id = await fs.readFile(path.join(this.siteDir, "current"), "utf8").catch(() => null);
     if (id) this.#current = await this.#readRelease(id.trim()).catch(() => undefined);
@@ -100,7 +104,8 @@ export class Store {
     await fs.rename(tmp, path.join(this.siteDir, "current"));
     this.#current = release;
     onSwitch?.();
-    await this.#prune();
+    // ここまでで切り替えは済んでいる。古いリリースの掃除に失敗しても、デプロイは成功のままにする（次の掃除でまた消す）
+    await this.#prune().catch((err) => console.error(`[store] 古いリリースを消せませんでした（${path.basename(this.siteDir)}）:`, (err as Error)?.message ?? err));
   }
 
   async discard(release: Release): Promise<void> {
