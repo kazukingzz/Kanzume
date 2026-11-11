@@ -45,7 +45,7 @@ jobs:
 
       - name: ブラウザ用・Action 用のスクリプトの構文チェック
         run: |
-          node --check web/admin/admin.js
+          for f in $(find web/admin/js -name '*.js'); do node --check "$f"; done
           node --check action/deploy.mjs
           node --check action/cjs.mjs
 

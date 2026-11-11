@@ -308,3 +308,16 @@ test("パスキーの一覧を取得し、名前を変更できる", async (t) =
   assert.equal((await rename({ id: "nope", name: "x" })).status, 404);
   assert.equal((await fetch(`${base}/_admin/kanzume/api/passkeys`)).status, 401);
 });
+
+test("管理画面のファイルは web/admin の下だけを返す（モジュールのスクリプトも）", async (t) => {
+  const { base } = await start(t);
+  const get = (p: string) => fetch(`${base}/_admin/kanzume${p}`);
+  const main = await get("/js/main.js");
+  assert.equal(main.status, 200);
+  assert.match(main.headers.get("content-type") ?? "", /javascript/);
+  assert.match(main.headers.get("content-security-policy") ?? "", /default-src 'self'/);
+  assert.equal((await get("/")).status, 200);
+  for (const bad of ["/../../package.json", "/js/%2e%2e/%2e%2e/package.json", "/.gitignore", "/js/missing.js", "/index.html.bak"]) {
+    assert.equal((await get(bad)).status, 404, bad);
+  }
+});

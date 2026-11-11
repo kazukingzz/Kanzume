@@ -25,7 +25,7 @@ async function deployGitHub(ctx: Ctx) {
   if (!ctx.canSite(siteName)) return forbidden();
   if (!sites.has(siteName)) throw siteNotFound(siteName);
   if (sites.deployed(siteName) && body.confirm !== true)
-    return reply(409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
+    return reply(409, { error: `サイト ${siteName} には公開中のリリースがあります。置き換えるには確認してください`, exists: true });
   const patch = envPatch(body);
   const evict = () => {
     const store = sites.get(siteName);
