@@ -40,3 +40,20 @@ test("壊れた tar は拒否する", () => {
   assert.throws(() => readTar(rawTar([entry])), TarError);
   assert.throws(() => readTar(rawTarEntry("a.txt", Buffer.from("hello")).subarray(0, 515)), TarError);
 });
+
+test("PAX の長さが壊れていても止まらない（負の長さ・範囲外）", () => {
+  for (const pax of ["-1 ", "5 a=b\n-3 x", "0 ", "999 path=x\n", "abc path=x\n"]) {
+    const files = readTar(rawTar([rawTarEntry("pax", Buffer.from(pax), "x"), rawTarEntry("a.txt", Buffer.from("hello"))]));
+    assert.deepEqual(
+      files.map((f) => f.path),
+      ["a.txt"],
+      pax,
+    );
+  }
+  const ok = "14 path=b.txt\n";
+  const files = readTar(rawTar([rawTarEntry("pax", Buffer.from(ok), "x"), rawTarEntry("a.txt", Buffer.from("hello"))]));
+  assert.deepEqual(
+    files.map((f) => f.path),
+    ["b.txt"],
+  );
+});

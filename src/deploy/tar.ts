@@ -22,11 +22,12 @@ function parsePax(data: Buffer): Record<string, string> {
   while (i < data.length) {
     const space = data.indexOf(0x20, i);
     if (space === -1) break;
-    const len = parseInt(data.toString("utf8", i, space), 10);
-    if (!len) break;
+    const len = Number(data.toString("utf8", i, space));
+    // 長さは「長さ 空白 キー=値 改行」全体。0 以下や範囲外は壊れているので読むのをやめる（負の値で戻ると終わらない）
+    if (!Number.isSafeInteger(len) || len <= space - i + 1 || i + len > data.length) break;
     const record = data.toString("utf8", space + 1, i + len - 1);
     const eq = record.indexOf("=");
-    out[record.slice(0, eq)] = record.slice(eq + 1);
+    if (eq > 0) out[record.slice(0, eq)] = record.slice(eq + 1);
     i += len;
   }
   return out;
