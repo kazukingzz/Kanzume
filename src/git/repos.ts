@@ -186,7 +186,7 @@ export class Repos {
     // 1 回の ls-tree で種類・大きさ・オブジェクトを決めてから中身を読む（途中で push されても同じオブジェクトを読む）
     const out = await this.git(name, ["ls-tree", "-l", "-z", "--full-tree", safeRef(ref), "--", clean]).catch(() => null);
     const entry = out ? String(out.stdout).split("\0").filter(Boolean).map(parseTreeEntry)[0] : undefined;
-    if (!entry || entry.type !== "blob" || entry.path !== clean) return null;
+    if (entry?.type !== "blob" || entry.path !== clean) return null;
     if (entry.size > MAX_BLOB) return { path: file, size: entry.size, text: null, binary: true };
     const { stdout } = await this.git(name, ["cat-file", "blob", entry.sha], { encoding: "buffer" });
     const data = stdout as unknown as Buffer;

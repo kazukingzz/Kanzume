@@ -7,7 +7,7 @@ import { promisify } from "node:util";
 import { gunzip as gunzipCb, gzip as gzipCb } from "node:zlib";
 import { openedSiteDb } from "../bindings/db.ts";
 import { SerialQueue } from "../serial.ts";
-import { Dek, decrypt, encrypt, KeyMismatchError, loadDek } from "./crypto.ts";
+import { type Dek, decrypt, encrypt, KeyMismatchError, loadDek } from "./crypto.ts";
 import { BackupStoreError, LocalStore, S3Store, type BackupStore } from "./store.ts";
 import type { BackupConfig } from "./url.ts";
 

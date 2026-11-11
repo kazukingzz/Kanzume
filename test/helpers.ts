@@ -7,7 +7,7 @@ import { readTar } from "../src/deploy/tar.ts";
 import { parseWranglerConfig } from "../src/deploy/wrangler.ts";
 // @ts-expect-error 型定義のない .mjs
 import { esbuildArgs } from "../action/cjs.mjs";
-import { Store, type Manifest, type Release } from "../src/store.ts";
+import { Store, type Manifest, type Release, type UploadedFile } from "../src/store.ts";
 
 export function tmpDir(t: { after(fn: () => void): void }): string {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kanzume-test-"));
@@ -33,7 +33,7 @@ export function tarGz(t: { after(fn: () => void): void }, files: Record<string, 
 }
 
 function octal(value: number, length: number): string {
-  return value.toString(8).padStart(length - 1, "0") + "\0";
+  return `${value.toString(8).padStart(length - 1, "0")}\0`;
 }
 
 export function rawTarEntry(name: string, data: Buffer, type = "0", linkname = ""): Buffer {
@@ -51,7 +51,7 @@ export function rawTarEntry(name: string, data: Buffer, type = "0", linkname = "
   header.write("00", 263);
   let sum = 0;
   for (const b of header) sum += b;
-  header.write(octal(sum, 7) + " ", 148);
+  header.write(`${octal(sum, 7)} `, 148);
   const padding = Buffer.alloc((512 - (data.length % 512)) % 512);
   return Buffer.concat([header, data, padding]);
 }
@@ -109,7 +109,7 @@ export function toCjs(t: { after(fn: () => void): void }, files: Record<string, 
 
 /** テスト用: tar.gz の中の wrangler の設定から name を読む（デプロイ先のサイトを先に作るため） */
 export function nameInTarGz(body: Buffer, fallback = "app"): string {
-  let files;
+  let files: UploadedFile[];
   try {
     files = readTar(gunzipSync(body));
   } catch {

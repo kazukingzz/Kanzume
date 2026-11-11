@@ -5,7 +5,6 @@ import fs from "node:fs";
 import path from "node:path";
 import { Challenges } from "../src/admin/session.ts";
 import { AdminState, normalizeTeamId } from "../src/admin/state.ts";
-import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
@@ -51,7 +50,7 @@ test("チーム ID は大文字小文字・ハイフン・空白・O と 0・I/L
 });
 
 test("最初のパスキー登録はセットアップトークンでだけ始められる", async (t) => {
-  const { post, state } = await start(t);
+  const { post } = await start(t);
   assert.equal((await post("/register/options", { setupToken: "wrong" })).status, 403);
   assert.equal((await post("/register/options", { inviteToken: "kzi_x" })).status, 403);
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 200);

@@ -191,7 +191,7 @@ export async function loadWorker(release: Release, siteDir: string, timeout: num
       const script = new vm.Script(`(function (exports, require, module, __filename, __dirname) {${source}\n})`, {
         filename: path.relative(release.dir, file),
       });
-      const fn = script.runInContext(context) as Function;
+      const fn = script.runInContext(context) as (...args: unknown[]) => unknown;
       const rel = `/${path.relative(workerDir, file)}`;
       fn.call(module.exports, module.exports, requireFrom(path.dirname(file)), module, rel, path.posix.dirname(rel));
       return module.exports;

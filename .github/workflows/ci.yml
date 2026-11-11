@@ -34,6 +34,10 @@ jobs:
 
       - run: npm ci
 
+      - name: フォーマットとリント
+        if: matrix.user == 'normal'
+        run: npx biome ci .
+
       - name: 型チェック
         run: npm run typecheck
 

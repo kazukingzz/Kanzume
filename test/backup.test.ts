@@ -361,7 +361,7 @@ test("アセットの .sqlite やユーザーのブランチ名はそのまま�
   fs.writeFileSync(path.join(assetDir, "bun.lock"), "lock");
   const repo = app.repos.path("app");
   fs.mkdirSync(path.join(repo, "refs", "heads"), { recursive: true });
-  fs.writeFileSync(path.join(repo, "refs", "heads", "fix-journal"), "0".repeat(40) + "\n");
+  fs.writeFileSync(path.join(repo, "refs", "heads", "fix-journal"), `${"0".repeat(40)}\n`);
   fs.writeFileSync(path.join(repo, "refs", "heads", "main.lock"), "x");
   fs.writeFileSync(path.join(config.dataDir, "admin.json.tmp"), "x");
 

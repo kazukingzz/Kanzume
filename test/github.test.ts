@@ -4,7 +4,6 @@ import fs from "node:fs";
 import path from "node:path";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { deployFromGitHub, GitHubError, parseGitHubUrl } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
@@ -83,7 +82,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   });
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 
-  const release = app.sites.get(app.sites.root ?? "")?.get()!;
+  const release = app.sites.get(app.sites.root ?? "")!.get()!;
   assert.equal(release.manifest.name, "example", "wrangler の name ではなく、指定したサイトにデプロイする");
   const worker = await app.runtime.get(release);
   const hello = await worker.fetch(new Request("http://x/api/hello"));

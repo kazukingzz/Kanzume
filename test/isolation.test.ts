@@ -272,7 +272,7 @@ test("大きなヘッダーでも、HEAD の passThroughOnException・Content-Le
   const w = (await runtime.get(r)) as ChildWorker;
 
   // 本体が受けられる大きさのヘッダー（子に転送すると URL などが増える）でも、子が断らずに処理する
-  const big = await w.fetch(new Request("http://x/?" + "q".repeat(8000), { headers: { "x-forwarded-for": "a".repeat(8000) } }));
+  const big = await w.fetch(new Request(`http://x/?${"q".repeat(8000)}`, { headers: { "x-forwarded-for": "a".repeat(8000) } }));
   assert.equal(big.response?.status, 200);
   await Promise.all(big.waitUntil);
   assert.equal(w.busy, false, "待ち状態が残らない");

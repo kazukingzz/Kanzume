@@ -23,7 +23,7 @@ import type { Observability } from "../observability/events.ts";
 import { processRss, type ResourceMonitor } from "../observability/resources.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SettingsError, type SettingsPatch, type SiteSettings, type Sites } from "../sites.ts";
-import { PROJECT_NAME } from "../store.ts";
+import { PROJECT_NAME, type UploadedFile } from "../store.ts";
 import { RepoError, type PendingCommit, type Repos } from "../git/repos.ts";
 import { GIT_PATH } from "../git/server.ts";
 import { asText, kvDelete, kvKeys, kvNamespaces, kvPut, kvValue, PREVIEW_BYTES, r2Bucket, r2Buckets, r2List } from "./data.ts";
@@ -179,11 +179,14 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const allowed = allowedToRegister(user, body);
       if (typeof allowed === "string") return sendJson(res, 403, { error: allowed });
       let challenge = "";
-      let result;
+      let result: Awaited<ReturnType<typeof verifyRegistrationResponse>>;
       try {
         result = await verifyRegistrationResponse({
           response: body?.response as never,
-          expectedChallenge: (c: string) => ((challenge = c), challenges.check(c, "register")),
+          expectedChallenge: (c: string) => {
+            challenge = c;
+            return challenges.check(c, "register");
+          },
           expectedOrigin: origin,
           expectedRPID: rpID,
           requireUserVerification: false,
@@ -236,11 +239,14 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const stored = state.credentials.find((c) => c.id === response?.id);
       if (!stored) return sendJson(res, 400, { error: "登録されていないパスキーです" });
       let challenge = "";
-      let result;
+      let result: Awaited<ReturnType<typeof verifyAuthenticationResponse>>;
       try {
         result = await verifyAuthenticationResponse({
           response: response as never,
-          expectedChallenge: (c: string) => ((challenge = c), challenges.check(c, "login")),
+          expectedChallenge: (c: string) => {
+            challenge = c;
+            return challenges.check(c, "login");
+          },
           expectedOrigin: origin,
           expectedRPID: rpID,
           credential: {
@@ -685,7 +691,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     async function handleUpload(): Promise<void> {
       const body = await readBody(req, config.maxUploadBytes);
       if (!body) return sendJson(res, 413, { error: `アップロードは ${Math.round(config.maxUploadBytes / 1024 / 1024)} MB 以内にしてください` });
-      let files;
+      let files: UploadedFile[];
       try {
         files = readTar(gunzipSync(body, { maxOutputLength: config.maxUploadBytes * EXTRACT_RATIO }), { skipLinks: true });
       } catch (err) {

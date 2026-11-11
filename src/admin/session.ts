@@ -13,7 +13,6 @@ export function readCookie(req: IncomingMessage, name: string): string | null {
     try {
       return decodeURIComponent(part.slice(eq + 1).trim());
     } catch {
-      continue;
     }
   }
   return null;

@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { closeSiteDb } from "../src/bindings/db.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { rawTarEntry, rawTarGz, tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";

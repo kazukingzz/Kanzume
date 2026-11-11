@@ -1,9 +1,8 @@
-import { SettingsError } from "../sites.ts";
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SerialQueue } from "../serial.ts";
 import type { Sites } from "../sites.ts";
-import { PROJECT_NAME, type Manifest, type Release, type UploadedFile } from "../store.ts";
+import type { Manifest, Release, UploadedFile } from "../store.ts";
 import type { DeployHistory, DeploySource } from "./history.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig, toManifest } from "./wrangler.ts";
 
@@ -129,7 +128,7 @@ export class Deployer {
     log.add(`受け取り: ${kib(size)}、${files.length} ファイル`);
 
     // 失敗の履歴は、あるサイトにだけ残す
-    let name: string | null = this.#sites.has(input.siteName) ? input.siteName : null;
+    const name: string | null = this.#sites.has(input.siteName) ? input.siteName : null;
     const fail = (error: string): DeployResult => {
       this.recordFailure(name, error, input, size, files.length);
       return { ok: false, error };
@@ -159,16 +158,9 @@ export class Deployer {
     if (sources) kept.push(sources);
 
     const result = await this.#serialize(async (): Promise<DeployResult> => {
-      let store;
-      try {
-        const found = this.#sites.get(manifest.name);
-        if (!found) return { ok: false, error: `サイト ${manifest.name} がありません。先に管理画面でサイトを追加してください` } as const;
-        store = found;
-      } catch (err) {
-        // ほかのサイトがその名前をサブドメインにしているときなど
-        if (err instanceof SettingsError) return { ok: false, error: err.message } as const;
-        throw err;
-      }
+      // 待っている間に消されたサイトにはデプロイしない
+      const store = this.#sites.get(manifest.name);
+      if (!store) return { ok: false, error: `サイト ${manifest.name} がありません。先に管理画面でサイトを追加してください` } as const;
       const release = await store.createRelease(manifest, kept);
       log.add(`リリース ${release.id} を保存しました`);
       let worker = null;

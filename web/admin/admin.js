@@ -50,7 +50,7 @@ function fill(el, ...children) {
 async function api(path, options = {}) {
   let res;
   try {
-    res = await fetch(BASE + "/api" + path, {
+    res = await fetch(`${BASE}/api${path}`, {
       ...options,
       headers: { "content-type": "application/json", ...(options.headers || {}) },
       credentials: "same-origin",
@@ -451,7 +451,7 @@ function route() {
   if ($("app").hidden) return;
   clearTimers();
   const names = state.sites.sites.map((x) => x.name);
-  let { site, tab, invite } = parseHash();
+  const { site, tab, invite } = parseHash();
   // サイトがないときの行き先。メンバーはサイトを作れないので個人の設定へ
   const home = isAdmin() ? "#/new" : "#/settings";
   const deployed = (n) => state.sites.sites.find((x) => x.name === n)?.deployed;
@@ -474,7 +474,7 @@ function route() {
   state.tab = tab;
   renderShell();
   const main = $("main");
-  main.className = "main" + (tab === "code" ? " fill" : "");
+  main.className = `main${tab === "code" ? " fill" : ""}`;
   main.scrollTop = 0;
   const views = {
     deployments: viewDeployments,
@@ -834,7 +834,12 @@ const KEYWORDS =
 
 const RULES = {
   js: new RegExp(
-    String.raw`(\/\/[^\n]*|\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|` + "`(?:\\\\.|[^`\\\\])*`" + String.raw`)|\b(0x[\da-fA-F]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b|\b(` + KEYWORDS + String.raw`)\b`,
+    [
+      String.raw`(\/\/[^\n]*|\/\*[\s\S]*?\*\/)`,
+      String.raw`("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|\x60(?:\\.|[^\x60\\])*\x60)`,
+      String.raw`\b(0x[\da-fA-F]+|\d[\d_]*(?:\.\d+)?(?:[eE][+-]?\d+)?)\b`,
+      String.raw`\b(${KEYWORDS})\b`,
+    ].join("|"),
     "g",
   ),
   json: /()("(?:\\.|[^"\\\n])*")|(-?\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b|\b(true|false|null)\b/g,
@@ -860,7 +865,7 @@ function highlight(text, path) {
     }
     const i = [1, 2, 3, 4].find((g) => m[g]);
     if (!i) continue;
-    out += esc(text.slice(last, m.index)) + `<span class="${classes[i - 1]}">${esc(m[0])}</span>`;
+    out += `${esc(text.slice(last, m.index))}<span class="${classes[i - 1]}">${esc(m[0])}</span>`;
     last = m.index + m[0].length;
   }
   return out + esc(text.slice(last));
@@ -883,8 +888,14 @@ async function viewObservability(main) {
   const seg = (items, value, onPick) =>
     h("div", { class: "segmented", role: "group" }, ...items.map(([v, label]) => h("button", { class: v === value ? "active" : "", "aria-pressed": String(v === value), text: label, onclick: () => onPick(v) })));
   page.append(
-    pageHead("可観測性", [seg([["overview", "概要"], ["events", "イベント"]], o.view, (v) => ((o.view = v), route()))]),
-    h("div", { class: "filters" }, seg(RANGES, o.range, (v) => ((o.range = v), route()))),
+    pageHead("可観測性", [seg([["overview", "概要"], ["events", "イベント"]], o.view, (v) => {
+      o.view = v;
+      route();
+    })]),
+    h("div", { class: "filters" }, seg(RANGES, o.range, (v) => {
+      o.range = v;
+      route();
+    })),
     body,
   );
   main.replaceChildren(page);
@@ -1036,7 +1047,7 @@ function drawResources(body, r, prev) {
       "section",
       { class: "card workers-card" },
       h("div", { class: "card-head" }, h("h2", { text: "Worker のプロセス" }), h("span", { class: "muted", text: workers.length ? `${workers.length} 個 · 合計 ${fmtMiB(workerRss)}` : "0 個" })),
-      h("p", { class: "muted hint", text: `動的サイト ${state.sites.sites.filter((x) => x.kind === "dynamic").length} 個・静的サイト ${state.sites.sites.filter((x) => x.kind === "static").length} 個。` + "Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。" }),
+      h("p", { class: "muted hint", text: `動的サイト ${state.sites.sites.filter((x) => x.kind === "dynamic").length} 個・静的サイト ${state.sites.sites.filter((x) => x.kind === "static").length} 個。Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。` }),
       workers.length
         ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "サイト" }), h("th", { class: "num", text: "PID" }), h("th", { class: "num", text: "メモリ" }))), h("tbody", {}, ...workers.map((w) => h("tr", {}, h("td", { text: w.site }), h("td", { class: "num", text: String(w.pid) }), h("td", { class: "num", text: fmtMiB(w.rss) }))))))
         : null,
@@ -1065,7 +1076,7 @@ function tableView(headers, rows) {
 
 function niceScale(v) {
   const target = Math.max(v, 1e-9) / 4;
-  const exp = Math.pow(10, Math.floor(Math.log10(target)));
+  const exp = 10 ** Math.floor(Math.log10(target));
   const step = [1, 2, 5, 10].map((m) => m * exp).find((m) => m >= target);
   const ticks = Math.max(1, Math.ceil(v / step));
   return { max: step * ticks, step, ticks };
@@ -1277,9 +1288,18 @@ async function renderEvents(body, filters) {
       reload();
     }, 300);
   });
-  result.addEventListener("change", () => ((o.result = result.value), reload()));
-  kind.addEventListener("change", () => ((o.kind = kind.value), reload()));
-  live.addEventListener("click", () => ((o.live = !o.live), route()));
+  result.addEventListener("change", () => {
+    o.result = result.value;
+    reload();
+  });
+  kind.addEventListener("change", () => {
+    o.kind = kind.value;
+    reload();
+  });
+  live.addEventListener("click", () => {
+    o.live = !o.live;
+    route();
+  });
 
   await reload();
   if (o.live) state.timers.push(setInterval(() => poll().catch(() => {}), 2000));
@@ -2404,7 +2424,7 @@ async function viewStorage(main) {
     "nav",
     { class: "crumbs", "aria-label": "フォルダ" },
     h("button", { class: "ghost", text: bucket.name, onclick: () => go2("") }),
-    ...parts.flatMap((p, i) => [h("span", { class: "muted", text: "/" }), h("button", { class: "ghost", text: p, onclick: () => go2(parts.slice(0, i + 1).join("/") + "/") })]),
+    ...parts.flatMap((p, i) => [h("span", { class: "muted", text: "/" }), h("button", { class: "ghost", text: p, onclick: () => go2(`${parts.slice(0, i + 1).join("/")}/`) })]),
   );
 
   const objectRow = (o) => {
@@ -2479,7 +2499,6 @@ async function viewStorage(main) {
     });
     if (mine !== seq) return;
     if (reset) fill(list);
-    {
       // フォルダは 2 ページ目以降にも出てくる（キーの順に、オブジェクトと混ざって返る）
       for (const p of r.prefixes) {
         list.append(
@@ -2490,7 +2509,6 @@ async function viewStorage(main) {
           ),
         );
       }
-    }
     for (const o of r.objects) list.append(objectRow(o));
     if (reset && !r.objects.length && !r.prefixes.length) list.append(h("div", { class: "empty", text: "このフォルダにはまだ何もありません" }));
     cursor = r.cursor;
@@ -2894,7 +2912,6 @@ const DEPLOY_METHODS = [
 
 /** サイトにデプロイする 4 つの方法。選んだ方法の中身を下に出す */
 function deployOptions(detail) {
-  const site = detail.name;
   const panel = h("div", { class: "deploy-panel" });
   const buttons = [];
   const choose = async (key) => {
@@ -3017,7 +3034,7 @@ async function tarGz(files) {
   const header = (name, size, type) => {
     const b = new Uint8Array(512);
     const put = (s, off, len) => b.set(enc.encode(s).subarray(0, len), off);
-    const octal = (v, len) => v.toString(8).padStart(len - 1, "0") + "\0";
+    const octal = (v, len) => `${v.toString(8).padStart(len - 1, "0")}\0`;
     put(name, 0, 100);
     put(octal(0o644, 8), 100, 8);
     put(octal(0, 8), 108, 8);
@@ -3030,7 +3047,7 @@ async function tarGz(files) {
     put("00", 263, 2);
     let sum = 0;
     for (const x of b) sum += x;
-    put(octal(sum, 7) + " ", 148, 8);
+    put(`${octal(sum, 7)} `, 148, 8);
     return b;
   };
   const pad = (n) => new Uint8Array((512 - (n % 512)) % 512);
@@ -3076,9 +3093,15 @@ const METHOD_VIEWS = {
         "span",
         { class: "muted" },
         "または ",
-        h("button", { type: "button", class: "link", text: "ファイルを選ぶ", onclick: (e) => (e.stopPropagation(), fileInput.click()) }),
+        h("button", { type: "button", class: "link", text: "ファイルを選ぶ", onclick: (e) => {
+          e.stopPropagation();
+          fileInput.click();
+        } }),
         "・",
-        h("button", { type: "button", class: "link", text: "フォルダを選ぶ", onclick: (e) => (e.stopPropagation(), dirInput.click()) }),
+        h("button", { type: "button", class: "link", text: "フォルダを選ぶ", onclick: (e) => {
+          e.stopPropagation();
+          dirInput.click();
+        } }),
       ),
     );
     zone.addEventListener("click", () => fileInput.click());
@@ -3141,7 +3164,10 @@ const METHOD_VIEWS = {
       const size = files.reduce((n, f) => n + f.file.size, 0);
       const kind = plan.worker ? "dynamic" : "static";
       const deploy = h("button", { class: "primary", text: "このサイトにデプロイ" });
-      const again = h("button", { text: "選び直す", onclick: () => (fill(summary), (error.textContent = "")) });
+      const again = h("button", { text: "選び直す", onclick: () => {
+          fill(summary);
+          error.textContent = "";
+        } });
       deploy.addEventListener("click", async () => {
         error.textContent = "";
         busy(deploy, "デプロイ中…");
