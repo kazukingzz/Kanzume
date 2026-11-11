@@ -1,13 +1,7 @@
 // git の post-receive フック。push された ref を Kanzume に伝え、デプロイのログを push した人の端末（remote: …）に流す
-import { text } from "node:stream/consumers";
+import { readRefUpdates } from "./hook-input.ts";
 
-const updates = (await text(process.stdin))
-  .split("\n")
-  .filter(Boolean)
-  .map((line) => {
-    const [old, next, ref] = line.split(" ");
-    return { old, new: next, ref };
-  });
+const updates = await readRefUpdates();
 
 try {
   const res = await fetch(process.env.KANZUME_HOOK_URL!, {

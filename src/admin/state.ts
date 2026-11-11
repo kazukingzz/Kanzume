@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { SESSION_COOKIE_MAX_AGE } from "./session.ts";
 import { UserFacingError } from "../errors.ts";
+import { ADMIN_FILE } from "../layout.ts";
 
 export interface StoredCredential {
   id: string;
@@ -139,7 +140,7 @@ export class AdminState {
   onChange: (() => void) | null = null;
 
   constructor(dataDir: string) {
-    this.#file = path.join(dataDir, "admin.json");
+    this.#file = path.join(dataDir, ADMIN_FILE);
   }
 
   async init(): Promise<void> {

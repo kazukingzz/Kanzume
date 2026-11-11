@@ -16,6 +16,7 @@ import { mib, UserFacingError } from "../errors.ts";
 import { readJson, requestToken, rootOrigin, sendText } from "../http.ts";
 import type { Sites } from "../sites.ts";
 import type { Repos } from "./repos.ts";
+import { HOOKS_DIR } from "../layout.ts";
 
 export const GIT_PATH = "/_git";
 export const HOOK_PATH = "/_api/git/hook";
@@ -37,7 +38,7 @@ const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 
 /** フックの置き場所。core.hooksPath で全リポジトリから使う */
 export async function installHooks(dataDir: string): Promise<string> {
-  const dir = path.join(dataDir, "git-hooks");
+  const dir = path.join(dataDir, HOOKS_DIR);
   await fs.mkdir(dir, { recursive: true });
   for (const [hook, file] of Object.entries(HOOKS)) {
     const script = `#!/bin/sh\nexec ${shQuote(process.execPath)} --disable-warning=ExperimentalWarning ${shQuote(path.join(import.meta.dirname, file))}\n`;

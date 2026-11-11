@@ -21,6 +21,7 @@ import path from "node:path";
 import { isRoot, prepareSiteDir, siteUid } from "./runtime/process.ts";
 import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
+import { PRIVATE_DIRS, PRIVATE_FILES, sitesDir } from "./layout.ts";
 
 /**
  * Worker の子プロセス（サイトごとの別ユーザー）から、本体のデータが見えないようにする。
@@ -40,23 +41,11 @@ async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
     return;
   }
   process.umask(0o007);
-  await fs.mkdir(path.join(dataDir, "sites"), { recursive: true });
+  await fs.mkdir(sitesDir(dataDir), { recursive: true });
   await fs.chmod(dataDir, 0o711);
-  await fs.chmod(path.join(dataDir, "sites"), 0o711);
-  for (const name of [
-    "admin.json",
-    "meta.sqlite",
-    "meta.sqlite-wal",
-    "meta.sqlite-shm",
-    "events.sqlite",
-    "events.sqlite-wal",
-    "events.sqlite-shm",
-    "sites/_root",
-    "sites/_uids.json",
-  ]) {
-    await fs.chmod(path.join(dataDir, name), 0o600).catch(() => {});
-  }
-  for (const name of ["repos", "git-hooks"]) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
+  await fs.chmod(sitesDir(dataDir), 0o711);
+  for (const name of PRIVATE_FILES) await fs.chmod(path.join(dataDir, name), 0o600).catch(() => {});
+  for (const name of PRIVATE_DIRS) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
   // 全サイトの所有者とモードを、起動のたびにそろえる（以前のバージョンのデータや、バックアップから戻したデータも直す）
   // 1 つのサイトで失敗しても（置き換えられた data など）、ほかのサイトと本体は起動する
   const prepare = (name: string, siteDir: string) => {

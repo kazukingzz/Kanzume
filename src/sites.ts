@@ -6,9 +6,8 @@ import { siteOrigin } from "./http.ts";
 import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 import { UserFacingError } from "./errors.ts";
+import { ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
 
-const ROOT_FILE = "_root";
-export const SETTINGS_FILE = "settings.json";
 const MAX_VALUE = 5 * 1024;
 const MAX_TOTAL = 64 * 1024;
 export const ENV_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -47,7 +46,7 @@ const emptySettings = (): SiteSettings => ({ vars: {}, secrets: {} });
 /** Worker を読み込むときに使うので同期で読む（小さいファイル） */
 export function readSiteSettings(siteDir: string): SiteSettings {
   try {
-    const raw = JSON.parse(readFileSync(path.join(siteDir, SETTINGS_FILE), "utf8"));
+    const raw = JSON.parse(readFileSync(siteSettingsFile(siteDir), "utf8"));
     return { subdomain: typeof raw.subdomain === "string" ? raw.subdomain : undefined, vars: { ...raw.vars }, secrets: { ...raw.secrets } };
   } catch {
     return emptySettings();
@@ -97,7 +96,7 @@ export class Sites {
   }
 
   constructor(dataDir: string) {
-    this.dir = path.join(dataDir, "sites");
+    this.dir = sitesDir(dataDir);
   }
 
   async init(): Promise<void> {
@@ -239,7 +238,7 @@ export class Sites {
   async #write(id: string, siteDir: string, next: SiteSettings): Promise<SiteSettings> {
     // 書いている間にサイトが消されたら、ディレクトリを作り直さない
     if (this.#stores.get(id)?.siteDir !== siteDir) throw new SettingsError("サイトが見つかりません");
-    const file = path.join(siteDir, SETTINGS_FILE);
+    const file = siteSettingsFile(siteDir);
     await fs.writeFile(`${file}.tmp`, JSON.stringify(next, null, 2), { mode: 0o600 });
     await fs.rename(`${file}.tmp`, file);
     this.#settings.set(id, next);

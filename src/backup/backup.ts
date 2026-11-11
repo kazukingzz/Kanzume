@@ -10,12 +10,13 @@ import { SerialQueue } from "../serial.ts";
 import { type Dek, decrypt, encrypt, KeyMismatchError, loadDek } from "./crypto.ts";
 import { BackupStoreError, LocalStore, S3Store, type BackupStore } from "./store.ts";
 import type { BackupConfig } from "./url.ts";
+import { ADMIN_FILE, META_DB, NOT_BACKED_UP, REPOS_DIR, SITES_DIR } from "../layout.ts";
 
 const gzip = promisify(gzipCb);
 const gunzip = promisify(gunzipCb);
 
-/** バックアップしないもの（トップレベル）。events.sqlite はリクエストのログ（数日で消え、リクエストのたびに変わる） */
-const SKIP_TOP = new Set(["git-hooks", ".restoring", ".backup-tmp", "events.sqlite", "events.sqlite-wal", "events.sqlite-shm"]);
+/** バックアップしないもの（トップレベル）。復元とバックアップの作業ディレクトリも */
+const SKIP_TOP = new Set([...NOT_BACKED_UP, ".restoring", ".backup-tmp"]);
 /** Kanzume が管理する SQLite（VACUUM INTO で取る）。ほかの .sqlite（サイトのアセットなど）は普通のファイルとして扱う */
 const MANAGED_DB = /^(meta\.sqlite|sites\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/data\/data\.sqlite)$/;
 /** 秘密を含むので、復元したときも本人だけが読めるようにするファイル */
@@ -118,7 +119,7 @@ async function retry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
 /** パスキーが登録されているか（初期セットアップが済んでいるか） */
 async function hasCredentials(dataDir: string): Promise<boolean> {
   try {
-    const admin = JSON.parse(await fs.readFile(path.join(dataDir, "admin.json"), "utf8"));
+    const admin = JSON.parse(await fs.readFile(path.join(dataDir, ADMIN_FILE), "utf8"));
     return Array.isArray(admin.credentials) && admin.credentials.length > 0;
   } catch {
     return false;
@@ -133,8 +134,8 @@ async function hasEntries(dir: string, filter: (name: string) => boolean): Promi
 /** /data が空か（セットアップ前で、サイトもリポジトリもない） */
 export async function isDataEmpty(dataDir: string): Promise<boolean> {
   if (await hasCredentials(dataDir)) return false;
-  if (await hasEntries(path.join(dataDir, "sites"), (n) => /^[a-z0-9]/.test(n))) return false;
-  if (await hasEntries(path.join(dataDir, "repos"), (n) => n.endsWith(".git"))) return false;
+  if (await hasEntries(path.join(dataDir, SITES_DIR), (n) => /^[a-z0-9]/.test(n))) return false;
+  if (await hasEntries(path.join(dataDir, REPOS_DIR), (n) => n.endsWith(".git"))) return false;
   return true;
 }
 
@@ -403,7 +404,7 @@ export class Backup {
           const quoted = tmp.replace(/'/g, "''");
           // 動いている接続があればそれで取る。なければそのファイルだけを読み取り専用で開いて閉じる
           // （接続を開きっぱなしにせず、消されたサイトの DB を作り直さない）
-          const live = rel === "meta.sqlite" ? this.#metaDb : openedSiteDb(path.dirname(path.dirname(abs)));
+          const live = rel === META_DB ? this.#metaDb : openedSiteDb(path.dirname(path.dirname(abs)));
           if (live) live.exec(`VACUUM INTO '${quoted}'`);
           else {
             const db = new DatabaseSync(abs, { readOnly: true });

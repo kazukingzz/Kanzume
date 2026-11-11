@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { CONFIG_FILES } from "../deploy/wrangler.ts";
 import type { Release } from "../store.ts";
+import { isInside } from "../paths.ts";
 
 export type FileGroup = "source" | "config" | "worker" | "assets";
 
@@ -73,6 +74,6 @@ export function readFile(release: Release, group: FileGroup, p: string): FileCon
   }
   const root = path.join(release.dir, group);
   const file = path.resolve(root, p);
-  if (!file.startsWith(root + path.sep) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
+  if (file === root || !isInside(root, file) || !fs.existsSync(file) || !fs.statSync(file).isFile()) return null;
   return toContent(p, fs.readFileSync(file));
 }

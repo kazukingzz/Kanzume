@@ -1,6 +1,7 @@
 import { createHash, createHmac, randomBytes } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { isInside } from "../paths.ts";
 
 /** バックアップの保存先。キーは `/` 区切りの相対パス（プレフィックスは各実装が付ける） */
 export interface BackupStore {
@@ -22,7 +23,7 @@ export class LocalStore implements BackupStore {
 
   #path(key: string): string {
     const p = path.join(this.dir, ...key.split("/"));
-    if (!p.startsWith(this.dir + path.sep)) throw new BackupStoreError("キーが不正です");
+    if (p === this.dir || !isInside(this.dir, p)) throw new BackupStoreError("キーが不正です");
     return p;
   }
 

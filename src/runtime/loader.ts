@@ -11,6 +11,7 @@ import { currentInvocation } from "../observability/events.ts";
 import type { Release } from "../store.ts";
 import { createGlobals, hasNodejsCompat } from "./globals.ts";
 import { UserFacingError } from "../errors.ts";
+import { isInside } from "../paths.ts";
 
 export class WorkerError extends UserFacingError {}
 
@@ -209,7 +210,7 @@ export async function loadWorker(release: Release, siteDir: string, timeout: num
     if (specifier === "cloudflare:workers") return workersModule;
     if (specifier.startsWith(".") || specifier.startsWith("/")) {
       const file = path.resolve(dir, specifier);
-      if (!file.startsWith(workerDir + path.sep)) throw new WorkerError(`Worker の外のモジュールは読み込めません: ${specifier}`);
+      if (file === workerDir || !isInside(workerDir, file)) throw new WorkerError(`Worker の外のモジュールは読み込めません: ${specifier}`);
       if (!fs.existsSync(file)) throw new WorkerError(`モジュールが見つかりません: ${specifier}`);
       return loadFile(file);
     }

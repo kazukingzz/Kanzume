@@ -8,6 +8,7 @@ import { loadConfig } from "../src/config.ts";
 import { deployFromGitHub, GitHubError, parseGitHubUrl } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
 import { tmpDir, writeTree } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 const EXAMPLE = path.join(import.meta.dirname, "..", "examples", "worker");
 const SHA = "0123456789abcdef0123456789abcdef01234567";
@@ -47,11 +48,7 @@ function fakeGitHub(tarball: Buffer, branches: string[] = ["main"]) {
 }
 
 async function start(t: TestContext) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }));
-  t.after(() => {
-    app.server.close();
-  });
-  return app;
+  return startApp(t);
 }
 
 test("GitHub の URL からリポジトリ・ブランチ・ディレクトリを読み取る", () => {

@@ -2,40 +2,25 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import type { AddressInfo } from "node:net";
 import { gzipSync } from "node:zlib";
 import { test, type TestContext } from "node:test";
-import { loadConfig } from "../src/config.ts";
-import { createServer } from "../src/server.ts";
 import { rawTar, rawTarEntry, tmpDir } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 const cred = (id: string, userId?: string) => ({ id, publicKey: "AAAA", counter: 0, createdAt: new Date().toISOString(), userId });
 
 async function start(t: TestContext, env: Record<string, string> = {}) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", ...env }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    app.runtime.close();
-    await new Promise((resolve) => app.server.close(resolve));
-    await app.state.flush();
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  await app.state.addCredential(cred("admin"));
-  const adminCookie = `kanzume_session=${await app.state.createSession()}`;
+  const app = await startApp(t, env);
+  const { base } = app;
+  const adminCookie = await app.adminCookie();
   const upload = (site: string, files: Record<string, string> | Buffer, cookie = adminCookie) =>
     fetch(`${base}/_admin/kanzume/api/sites/${site}/deploy-upload`, {
       method: "POST",
       headers: { cookie, origin: base, "content-type": "application/gzip" },
       body: new Uint8Array(Buffer.isBuffer(files) ? files : gzipSync(rawTar(Object.entries(files).map(([p, d]) => rawTarEntry(p, Buffer.from(d)))))),
     });
-  const site = (host: string, p = "/") => fetch(`${base}${p}`, { headers: { "x-forwarded-host": host } });
-  const sitesList = async () =>
-    (
-      (await (await fetch(`${base}/_admin/kanzume/api/sites`, { headers: { cookie: adminCookie, origin: base } })).json()) as {
-        sites: { name: string; kind: string | null }[];
-      }
-    ).sites;
-  return { ...app, base, upload, site, sitesList };
+  const sitesList = async () => ((await (await app.api(adminCookie)("/sites")).json()) as { sites: { name: string; kind: string | null }[] }).sites;
+  return { ...app, upload, sitesList };
 }
 
 test("設定ファイルのないファイルは、静的サイトとしてデプロイされる", async (t) => {
@@ -148,4 +133,15 @@ test("容量の上限を超えるアップロードはリポジトリに取り�
   assert.match(((await res.json()) as { repoWarning: string }).repoWarning, /容量の上限/);
   assert.equal((await repos.commit("blog", "refs/heads/main")).sha, head, "ブランチは進めない");
   assert.equal(await dirSize(objects), before, "リポジトリにオブジェクトを残さない（以後の push を止めない）");
+});
+
+test("同時のアップロードは断らずに 1 つずつ処理し、どちらもデプロイされる", async (t) => {
+  const { upload, sites, site } = await start(t);
+  await sites.ensure("a");
+  await sites.ensure("b");
+  const [ra, rb] = await Promise.all([upload("a", { "index.html": "A" }), upload("b", { "index.html": "B" })]);
+  assert.equal(ra.status, 200, await ra.clone().text());
+  assert.equal(rb.status, 200, await rb.clone().text());
+  assert.equal(await (await site("a.localhost")).text(), "A");
+  assert.equal(await (await site("b.localhost")).text(), "B");
 });

@@ -2,18 +2,12 @@
 // 出力は push した人の端末に remote: … として出て、終了コード 1 で push 全体を取り消す。
 import fs from "node:fs/promises";
 import path from "node:path";
-import { text } from "node:stream/consumers";
+import { readRefUpdates } from "./hook-input.ts";
 import { dirSize } from "./repos.ts";
 
 const ZERO = /^0+$/;
 const gitDir = path.resolve(process.env.GIT_DIR ?? ".");
-const updates = (await text(process.stdin))
-  .split("\n")
-  .filter(Boolean)
-  .map((line) => {
-    const [old, next, ref] = line.split(" ");
-    return { old, new: next, ref };
-  });
+const updates = await readRefUpdates();
 
 const head = await fs.readFile(path.join(gitDir, "HEAD"), "utf8").catch(() => "");
 const defaultRef = /^ref: (refs\/heads\/.+)$/m.exec(head)?.[1].trim() ?? "refs/heads/main";

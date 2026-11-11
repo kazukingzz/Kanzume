@@ -1,6 +1,7 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
+import { siteDataDir } from "../layout.ts";
 
 const SCHEMA = `
 PRAGMA journal_mode = WAL;
@@ -34,11 +35,7 @@ export function setBusyTimeout(ms: number): void {
   busyTimeoutMs = ms;
 }
 
-/**
- * サイトの KV / R2 の置き場所（<siteDir>/data）。Worker の子プロセスが書き込めるのはここだけ
- * （サイトのディレクトリのほかの場所、settings.json やリリースには書かせない）
- */
-export const siteDataDir = (siteDir: string) => path.join(siteDir, "data");
+export { siteDataDir };
 
 /** data/ を作る。サイトのディレクトリが消されていたら作り直さない（ENOENT になる） */
 export function ensureSiteDataDir(siteDir: string): void {

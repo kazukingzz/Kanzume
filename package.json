@@ -11,7 +11,7 @@
   "scripts": {
     "start": "node --disable-warning=ExperimentalWarning src/server.ts",
     "dev": "KANZUME_DATA_DIR=.data node --watch --disable-warning=ExperimentalWarning src/server.ts",
-    "test": "node --disable-warning=ExperimentalWarning --expose-gc --test 'test/**/*.test.ts'",
+    "test": "node --disable-warning=ExperimentalWarning --expose-gc --test --test-timeout=120000 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "format": "biome format --write .",
     "lint": "biome lint .",

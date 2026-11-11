@@ -14,10 +14,11 @@ import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { ensureSiteDataDir, siteDataDir } from "../bindings/db.ts";
 import { currentInvocation } from "../observability/events.ts";
-import { SETTINGS_FILE } from "../sites.ts";
 import type { Release } from "../store.ts";
 import { siteVars, WorkerError, type InvokeResult } from "./loader.ts";
 import { DONE_TIMEOUT_MS, decodeError, HEARTBEAT_MS, MAX_LINE_BYTES, NULL_BODY_STATUS } from "./protocol.ts";
+import { isInside } from "../paths.ts";
+import { siteSettingsFile, sitesDir, UIDS_FILE } from "../layout.ts";
 
 const CHILD_SOURCE = fileURLToPath(new URL("./child.ts", import.meta.url));
 
@@ -59,7 +60,7 @@ export const isRoot = () => typeof process.getuid === "function" && process.getu
 
 /** サイトごとの uid / gid（20000 から順に割り当て、<data>/sites/_uids.json に保存する） */
 export function siteUid(dataDir: string, site: string): number {
-  const file = path.join(dataDir, "sites", "_uids.json");
+  const file = path.join(sitesDir(dataDir), UIDS_FILE);
   let map: Record<string, number> = {};
   try {
     const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
@@ -136,8 +137,8 @@ export function prepareSiteDir(siteDir: string, gid: number): void {
     }
     if (st.isSymbolicLink()) return;
     const isDir = st.isDirectory();
-    if (p === path.join(siteDir, SETTINGS_FILE)) return fixEntry(p, false, 0, 0, () => 0o600);
-    const inData = p === data || p.startsWith(data + path.sep);
+    if (p === siteSettingsFile(siteDir)) return fixEntry(p, false, 0, 0, () => 0o600);
+    const inData = isInside(data, p);
     fixEntry(p, isDir, inData ? null : 0, gid, inData ? writable(isDir) : readOnly(isDir));
     if (isDir) for (const name of fs.readdirSync(p)) walk(path.join(p, name));
   };
@@ -152,7 +153,7 @@ function prepareForChild(siteDir: string, releaseDir: string, gid: number): void
   fs.mkdirSync(data, { recursive: true });
   fixEntry(data, true, 0, gid, writable(true));
   for (const name of ["data.sqlite", "data.sqlite-wal", "data.sqlite-shm"]) fixEntry(path.join(data, name), false, null, gid, writable(false));
-  fixEntry(path.join(siteDir, SETTINGS_FILE), false, 0, 0, () => 0o600);
+  fixEntry(siteSettingsFile(siteDir), false, 0, 0, () => 0o600);
   fixEntry(path.join(siteDir, "current"), false, 0, gid, readOnly(false));
   fixEntry(path.join(siteDir, "releases"), true, 0, gid, readOnly(true));
   // リリースは作ったあと変わらないので、1 つにつき 1 回

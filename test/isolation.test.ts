@@ -66,9 +66,12 @@ async function site(dataDir: string, name: string, source = PROBE): Promise<Rele
 }
 
 function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; stallMs?: number } = {}) {
+  // 後片付けは登録した順に動くので、子を止めるのをデータのディレクトリを消すより先に登録する
+  let runtime: Runtime | undefined;
+  t.after(() => runtime?.close());
   const dataDir = tmpDir(t);
   fs.writeFileSync(path.join(dataDir, "admin.json"), "{}", { mode: 0o600 });
-  const runtime = new Runtime({
+  runtime = new Runtime({
     idleMs: options.idleMs ?? 60_000,
     cpuTimeoutMs: 1000,
     maxWorkers: options.maxWorkers,
@@ -76,7 +79,6 @@ function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; 
     isolation: "process",
     dataDir,
   });
-  t.after(() => runtime.close());
   return { dataDir, runtime };
 }
 

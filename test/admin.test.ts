@@ -9,18 +9,17 @@ import { EnvError, loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
 import { tmpDir } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
-async function start(t: TestContext, dataDir = tmpDir(t)) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: dataDir, KANZUME_SETUP_TOKEN: "setup" }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => app.server.close(resolve));
-    await app.state.flush();
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+async function start(t: TestContext, dataDir?: string) {
+  const app = await startApp(t, dataDir ? { KANZUME_DATA_DIR: dataDir } : {});
   const post = (path: string, body: unknown) =>
-    fetch(`${base}/_admin/kanzume/api${path}`, { method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
-  return { ...app, base, post };
+    fetch(`${app.base}/_admin/kanzume/api${path}`, {
+      method: "POST",
+      headers: { origin: app.base, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  return { ...app, post };
 }
 
 const fakeCredential = { id: "cred-1", publicKey: "AAAA", counter: 0, createdAt: new Date().toISOString() };

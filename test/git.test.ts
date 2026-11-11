@@ -3,7 +3,7 @@ import { execFileSync, spawn, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { tmpDir, writeTree } from "./helpers.ts";
+import { tmpDir, until, writeTree } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
 
 async function start(t: TestContext) {
@@ -298,10 +298,10 @@ test("途中で切れた push の git プロセスは残らない", { skip: NO_G
   req.on("error", () => {});
   // 長さだけを送って中身を送らない（git は続きを待ち続ける）
   req.write("0090");
-  await new Promise((r) => setTimeout(r, 300));
+  await until(() => children().length === 1);
   assert.equal(children().length, 1, "送信中は http-backend が動いている");
   req.destroy();
-  await new Promise((r) => setTimeout(r, 500));
+  await until(() => children().length === 0);
   assert.deepEqual(children(), [], "切れたら止まる");
 });
 
@@ -369,17 +369,15 @@ test("全体の Token での最初の push はルートになる", { skip: NO_GI
 test("設定のない push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {
   const { remote, history, createRepo } = await start(t);
   await createRepo("sample");
-  const tmp = (await import("node:os")).tmpdir();
-  const { readdirSync } = await import("node:fs");
-  const before = readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length;
   const noConfig = await git(workTree(t, { "index.js": "x" }), ["push", remote("sample"), "main"]);
   assert.match(noConfig.output, /wrangler\.jsonc \/ wrangler\.json \/ wrangler\.toml がありません/);
-  assert.equal(readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length, before, "作業ディレクトリを作っていない");
+  const deployments = history.list("sample");
   assert.deepEqual(
-    history.list("sample").map((d) => d.status),
+    deployments.map((d) => d.status),
     ["failed"],
     "設定がない失敗もリポジトリの履歴に入る",
   );
+  assert.doesNotMatch(history.get(deployments[0].id)!.log, /取り出し/, "ファイルを取り出していない");
 });
 
 test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", {

@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
+import { EVENTS_DB, META_DB } from "../layout.ts";
 
 /** デプロイの履歴（バックアップする） */
 const META_SCHEMA = `
@@ -49,11 +50,9 @@ CREATE INDEX IF NOT EXISTS events_site_id ON events (site, id);
 CREATE INDEX IF NOT EXISTS events_site_ts ON events (site, ts);
 `;
 
-export const EVENTS_DB = "events.sqlite";
-
 export function openMetaDb(dataDir: string): DatabaseSync {
   fs.mkdirSync(dataDir, { recursive: true });
-  const db = new DatabaseSync(path.join(dataDir, "meta.sqlite"));
+  const db = new DatabaseSync(path.join(dataDir, META_DB));
   db.exec(META_SCHEMA);
   return db;
 }

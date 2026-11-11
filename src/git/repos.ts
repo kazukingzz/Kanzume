@@ -5,6 +5,8 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { PROJECT_NAME, type UploadedFile } from "../store.ts";
 import { UserFacingError } from "../errors.ts";
+import { isInside } from "../paths.ts";
+import { REPOS_DIR } from "../layout.ts";
 
 const run = promisify(execFile);
 const MAX_BLOB = 1024 * 1024;
@@ -63,7 +65,7 @@ export class Repos {
   hasSite: (name: string) => boolean = () => true;
 
   constructor(dataDir: string, maxInputBytes: number, quotaBytes = maxInputBytes * 4) {
-    this.dir = path.join(dataDir, "repos");
+    this.dir = path.join(dataDir, REPOS_DIR);
     this.maxInputBytes = maxInputBytes;
     this.quotaBytes = quotaBytes;
   }
@@ -241,7 +243,7 @@ export class Repos {
         .catch(() => null);
       for (const f of files) {
         const dest = path.join(work, safePath(f.path));
-        if (!dest.startsWith(work + path.sep)) continue;
+        if (dest === work || !isInside(work, dest)) continue;
         await fs.mkdir(path.dirname(dest), { recursive: true });
         await fs.writeFile(dest, f.data);
       }

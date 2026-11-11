@@ -18,6 +18,8 @@ jobs:
   test:
     name: test (${{ matrix.user }})
     runs-on: ubuntu-latest
+    # テストが止まったときに、何時間も動き続けないように
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix:
@@ -60,6 +62,7 @@ jobs:
 
   docker:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
 
