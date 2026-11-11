@@ -32,10 +32,16 @@ export function siteOrigin(rootOrigin: string, name: string): string {
   return `${url.protocol}//${name}.${url.host}`;
 }
 
+/**
+ * 訪問者の IP（Worker の cf-connecting-ip）。X-Forwarded-For の先頭は訪問者が自由に書けるので、
+ * 手前のプロキシ（Railway・Render など）が最後に足した値を使う。プロキシがなければ接続元のアドレス
+ */
 export function clientIp(req: IncomingMessage): string {
   const forwarded = String(req.headers["x-forwarded-for"] ?? "")
-    .split(",")[0]
-    .trim();
+    .split(",")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .at(-1);
   return forwarded || req.socket.remoteAddress || "";
 }
 

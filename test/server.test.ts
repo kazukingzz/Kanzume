@@ -73,9 +73,11 @@ test("Worker の fetch ハンドラにはそのままの URL が渡り、KV が�
 
   const first = await (await fetch(`${base}/hello?q=1`)).json();
   assert.deepEqual(first, { url: `${base}/hello?q=1`, ip: "127.0.0.1", n: 1, body: null });
+  const spoofed = (await (await fetch(`${base}/ip`, { headers: { "x-forwarded-for": "1.2.3.4, 203.0.113.9" } })).json()) as { ip: string };
+  assert.equal(spoofed.ip, "203.0.113.9", "X-Forwarded-For は手前のプロキシが最後に足した値を使う（先頭は訪問者が書ける）");
   const post = (await (await fetch(`${base}/p`, { method: "POST", body: "payload" })).json()) as { body: string; n: number };
   assert.equal(post.body, "payload");
-  assert.equal(post.n, 2);
+  assert.equal(post.n, 3);
   const redirect = await fetch(`${base}/go`, { redirect: "manual" });
   assert.equal(redirect.headers.get("location"), `${base}/done`);
 });

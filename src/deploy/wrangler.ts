@@ -8,8 +8,21 @@ export const CONFIG_FILES = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"]
 export class ConfigError extends Error {}
 
 export function stripJsonc(text: string): string {
+  // コメントを外し、閉じかっこの直前のカンマ（末尾のカンマ）を外す。文字列の中はそのまま
   let out = "";
   let i = 0;
+  /** j から、空白とコメントを飛ばした次の文字 */
+  const next = (j: number): string | undefined => {
+    while (j < text.length) {
+      if (/\s/.test(text[j])) j++;
+      else if (text[j] === "/" && text[j + 1] === "/") while (j < text.length && text[j] !== "\n") j++;
+      else if (text[j] === "/" && text[j + 1] === "*") {
+        const end = text.indexOf("*/", j + 2);
+        j = end === -1 ? text.length : end + 2;
+      } else return text[j];
+    }
+    return undefined;
+  };
   while (i < text.length) {
     const c = text[i];
     if (c === '"') {
@@ -22,11 +35,12 @@ export function stripJsonc(text: string): string {
       const end = text.indexOf("*/", i + 2);
       i = end === -1 ? text.length : end + 2;
     } else {
-      out += c;
+      const after = c === "," ? next(i + 1) : undefined;
+      if (after !== "}" && after !== "]") out += c;
       i++;
     }
   }
-  return out.replace(/,(\s*[}\]])/g, "$1");
+  return out;
 }
 
 export function parseWranglerConfig(filename: string, text: string): Record<string, unknown> {

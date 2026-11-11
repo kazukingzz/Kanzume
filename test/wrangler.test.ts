@@ -11,6 +11,12 @@ test("JSONC のコメントと末尾カンマを読める（文字列中の // �
   assert.deepEqual(JSON.parse(stripJsonc(text)), { url: "https://example.com/a//b", list: [1, 2] });
 });
 
+test("文字列の中の「,]」「, }」は消さない（末尾のカンマだけを外す）", () => {
+  const text = `{ "vars": { "A": "x,]", "B": "y, }", "C": "z" /* c */, }, "list": [1, 2, // x
+  ] }`;
+  assert.deepEqual(JSON.parse(stripJsonc(text)), { vars: { A: "x,]", B: "y, }", C: "z" }, list: [1, 2] });
+});
+
 test("wrangler.toml を読める", () => {
   const raw = parseWranglerConfig(
     "wrangler.toml",

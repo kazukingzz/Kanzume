@@ -3,6 +3,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { parseAssetsIgnore } from "./assetsignore.mjs";
 import { esbuildArgs } from "./cjs.mjs";
 
 const CONFIG_FILES = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"];
@@ -36,8 +37,21 @@ function run(cmd, args, options = {}) {
 }
 
 function stripJsonc(text) {
+  // コメントを外し、閉じかっこの直前のカンマ（末尾のカンマ）を外す。文字列の中はそのまま
   let out = "";
   let i = 0;
+  /** j から、空白とコメントを飛ばした次の文字 */
+  const next = (j) => {
+    while (j < text.length) {
+      if (/\s/.test(text[j])) j++;
+      else if (text[j] === "/" && text[j + 1] === "/") while (j < text.length && text[j] !== "\n") j++;
+      else if (text[j] === "/" && text[j + 1] === "*") {
+        const end = text.indexOf("*/", j + 2);
+        j = end === -1 ? text.length : end + 2;
+      } else return text[j];
+    }
+    return undefined;
+  };
   while (i < text.length) {
     const c = text[i];
     if (c === '"') {
@@ -50,27 +64,47 @@ function stripJsonc(text) {
       const end = text.indexOf("*/", i + 2);
       i = end === -1 ? text.length : end + 2;
     } else {
-      out += c;
+      const after = c === "," ? next(i + 1) : undefined;
+      if (after !== "}" && after !== "]") out += c;
       i++;
     }
   }
-  return out.replace(/,(\s*[}\]])/g, "$1");
+  return out;
 }
 
-// TOML パーサを同梱しないのは、Action を依存ゼロで動かすため。必要なのは name・main・assets.directory だけ
+// TOML パーサを同梱しないのは、Action を依存ゼロで動かすため。読むのは main と assets.directory だけ
+// （`[assets]` の表・`assets.directory = ...`・`assets = { directory = ... }` のどれでもよい。[env.*] は見ない）
 function readToml(text) {
   const out = { assets: {} };
-  let section = "";
-  for (const line of text.split(/\r?\n/)) {
-    const header = /^\s*\[([^\]]+)\]/.exec(line);
-    if (header) {
-      section = header[1].trim();
+  const str = (v) => {
+    const m = /^\s*(?:"((?:[^"\\]|\\.)*)"|'([^']*)')/.exec(v);
+    if (!m) return undefined;
+    return m[2] ?? JSON.parse(`"${m[1]}"`);
+  };
+  const keyPath = (k) => k.split(".").map((p) => p.trim().replace(/^["']|["']$/g, ""));
+  let section = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    if (line.startsWith("[[")) {
+      section = ["[[]]"];
       continue;
     }
-    const kv = /^\s*([A-Za-z_]+)\s*=\s*["']([^"']*)["']/.exec(line);
+    const header = /^\[([^\]]+)\]/.exec(line);
+    if (header) {
+      section = keyPath(header[1]);
+      continue;
+    }
+    const kv = /^([A-Za-z0-9_\-."' ]+?)\s*=\s*(.*)$/.exec(line);
     if (!kv) continue;
-    if (section === "" && (kv[1] === "main" || kv[1] === "name")) out[kv[1]] = kv[2];
-    if (section === "assets" && kv[1] === "directory") out.assets.directory = kv[2];
+    const key = [...section, ...keyPath(kv[1])].join(".");
+    const value = kv[2];
+    if (key === "main") out.main = str(value);
+    else if (key === "assets.directory") out.assets.directory = str(value);
+    else if (key === "assets" && value.startsWith("{")) {
+      const m = /[{,]\s*directory\s*=\s*(.*)$/.exec(value);
+      if (m) out.assets.directory = str(m[1]);
+    }
   }
   return out;
 }
@@ -181,9 +215,17 @@ try {
   const assetsDir = config.assets?.directory;
   if (assetsDir) {
     if (!fs.existsSync(assetsDir)) throw new BuildError(`assets.directory（${assetsDir}）がありません。先にビルドしてください`);
+    // .assetsignore に書いたもの（_worker.js など）は配信しない（wrangler と同じ）。.assetsignore 自体も。
+    // シンボリックリンクは指す先の中身をコピーする（Kanzume はリンクを受け付けない）
+    const ignoreFile = path.join(assetsDir, ".assetsignore");
+    const ignored = parseAssetsIgnore(fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, "utf8") : "");
     fs.cpSync(assetsDir, path.join(stage, "assets"), {
       recursive: true,
-      filter: (src) => path.basename(src) !== ".assetsignore",
+      dereference: true,
+      filter: (src) => {
+        const rel = path.relative(assetsDir, src).split(path.sep).join("/");
+        return rel === "" || (rel !== ".assetsignore" && !ignored(rel));
+      },
     });
   }
 } catch (err) {
@@ -208,9 +250,16 @@ execFileSync("tar", ["-czf", archive, "-C", stage, "."], { env: { ...process.env
 const body = fs.readFileSync(archive);
 console.log(`アップロード: ${(body.length / 1024).toFixed(1)} KiB → ${url}`);
 
-const { ok, status, result } = await post(`${url}/_api/deploy`, token, body, "application/gzip");
-fs.rmSync(stage, { recursive: true, force: true });
-fs.rmSync(archive, { force: true });
+let response;
+try {
+  response = await post(`${url}/_api/deploy`, token, body, "application/gzip");
+} catch (err) {
+  fail(`Kanzume に送れませんでした（${url}）: ${err.cause?.message ?? err.message}`);
+} finally {
+  fs.rmSync(stage, { recursive: true, force: true });
+  fs.rmSync(archive, { force: true });
+}
+const { ok, status, result } = response;
 if (!ok) fail(`デプロイに失敗しました: ${result.error ?? `HTTP ${status}`}`);
 
 console.log(`デプロイしました: ${result.url}`);

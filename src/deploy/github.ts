@@ -6,6 +6,7 @@ import type { Plugin } from "esbuild";
 import { PROJECT_NAME, type UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer, type DeployResult } from "./deployer.ts";
 import type { DeploySource } from "./history.ts";
+import { parseAssetsIgnore } from "./assetsignore.ts";
 import { readTar, TarError } from "./tar.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig } from "./wrangler.ts";
 
@@ -380,7 +381,10 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
         .catch(() => false);
       if (!exists)
         throw new GitHubError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
-      const list = (await collect(assetsRoot)).filter((p) => path.basename(p) !== ".assetsignore");
+      // .assetsignore に書いたもの（_worker.js など）は配信しない。.assetsignore 自体も
+      const ignoreFile = await fs.readFile(path.join(assetsRoot, ".assetsignore"), "utf8").catch(() => "");
+      const ignored = parseAssetsIgnore(ignoreFile);
+      const list = (await collect(assetsRoot)).filter((p) => p !== ".assetsignore" && !ignored(p));
       for (const p of list) out.push({ path: `assets/${p}`, data: await fs.readFile(path.join(assetsRoot, p)) });
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
     }

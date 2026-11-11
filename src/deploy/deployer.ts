@@ -141,7 +141,8 @@ export class Deployer {
     };
 
     if (!name) return fail(`サイト ${input.siteName} がありません。先に管理画面でサイトを追加してください`);
-    const configFile = files.find((f) => (CONFIG_FILES as readonly string[]).includes(f.path));
+    // 設定ファイルが複数あれば、ほかのデプロイ方法と同じく CONFIG_FILES の順に選ぶ
+    const configFile = CONFIG_FILES.map((name) => files.find((f) => f.path === name)).find((f) => f !== undefined);
     if (!configFile) return fail(`${CONFIG_FILES.join(" / ")} が含まれていません`);
 
     let manifest: Manifest;

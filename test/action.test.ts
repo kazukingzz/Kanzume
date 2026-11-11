@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { promisify } from "node:util";
@@ -43,6 +44,43 @@ test("Action で静的サイトを site のサイトにデプロイできる", a
   const page = await fetch(app.base, { headers: { "x-forwarded-host": "docs.localhost" } });
   assert.equal(await page.text(), "<h1>from action</h1>");
   assert.equal(app.sites.has("whatever"), false, "wrangler の name のサイトは作らない");
+});
+
+test("Action は .assetsignore に書いたファイルを送らず、シンボリックリンクは中身を送る", async (t) => {
+  const app = await start(t);
+  await app.sites.ensure("docs");
+  const dir = tmpDir(t);
+  writeTree(dir, {
+    "wrangler.jsonc": JSON.stringify({ assets: { directory: "./dist" } }),
+    "dist/index.html": "top",
+    "dist/_worker.js/index.js": "secret server code",
+    "dist/.assetsignore": "_worker.js\n",
+    "brand/logo.txt": "logo",
+  });
+  fs.symlinkSync(path.join(dir, "brand", "logo.txt"), path.join(dir, "dist", "logo.txt"));
+  const result = await action(dir, { KANZUME_URL: app.base, KANZUME_TOKEN: app.token, KANZUME_SITE: "docs" });
+  assert.equal(result.code, 0, result.output);
+  const get = (p: string) => fetch(`${app.base}${p}`, { headers: { "x-forwarded-host": "docs.localhost" } });
+  assert.equal(await (await get("/")).text(), "top");
+  assert.equal(await (await get("/logo.txt")).text(), "logo");
+  assert.equal((await get("/_worker.js/index.js")).status, 404);
+  assert.equal((await get("/.assetsignore")).status, 404);
+});
+
+test("Action は wrangler.toml のインラインテーブル（assets = { directory = ... }）も読む", async (t) => {
+  const app = await start(t);
+  await app.sites.ensure("docs");
+  const dir = tmpDir(t);
+  writeTree(dir, { "wrangler.toml": 'name = "x"\nassets = { binding = "ASSETS", directory = "./site" }\n', "site/index.html": "toml" });
+  const result = await action(dir, { KANZUME_URL: app.base, KANZUME_TOKEN: app.token, KANZUME_SITE: "docs" });
+  assert.equal(result.code, 0, result.output);
+  assert.equal(await (await fetch(app.base, { headers: { "x-forwarded-host": "docs.localhost" } })).text(), "toml");
+});
+
+test("Action は Kanzume に届かないとき、分かるエラーで止まる", async (t) => {
+  const result = await action(staticProject(t), { KANZUME_URL: "http://127.0.0.1:1", KANZUME_TOKEN: "x", KANZUME_SITE: "docs" });
+  assert.notEqual(result.code, 0);
+  assert.match(result.output, /Kanzume に送れませんでした/);
 });
 
 test("Action は site・トークン・サイトの有無を確かめて、分かるエラーで止まる", async (t) => {

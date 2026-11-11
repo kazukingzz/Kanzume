@@ -5,7 +5,6 @@ import path from "node:path";
 import { gunzipSync, gzipSync } from "node:zlib";
 import { readTar } from "../src/deploy/tar.ts";
 import { parseWranglerConfig } from "../src/deploy/wrangler.ts";
-// @ts-expect-error 型定義のない .mjs
 import { esbuildArgs } from "../action/cjs.mjs";
 import { Store, type Manifest, type Release, type UploadedFile } from "../src/store.ts";
 
