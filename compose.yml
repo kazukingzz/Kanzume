@@ -7,6 +7,10 @@ services:
       - "${KANZUME_PORT:-8080}:8080"
     volumes:
       - kanzume-data:/data
+    # .env の値はすべてコンテナに渡す（KANZUME_MAX_UPLOAD_MB などほかの設定も、.env に書けば効く）
+    env_file:
+      - path: .env
+        required: false
     environment:
       # ルートドメインの URL（例: https://example.com）。未設定なら管理画面で設定したドメイン（それもなければアクセスされたドメイン）を使う
       KANZUME_ORIGIN: ${KANZUME_ORIGIN:-}

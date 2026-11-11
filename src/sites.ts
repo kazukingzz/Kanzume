@@ -303,7 +303,7 @@ export function matchHost(host: string, resolve: (label: string) => string | und
   const label = siteLabel(h, rootHost);
   const id = label === undefined ? undefined : resolve(label);
   if (id) return { kind: "site", name: id };
-  // ルートドメインが決まっているときの fa.example.com や xxx.onrender.com など。管理画面はここでも開けるが、サイトは配信しない
+  // ルートドメインが決まっているときの fa.example.com や xxx.up.railway.app など。管理画面はここでも開けるが、サイトは配信しない
   if (rootHost && h !== hostname(rootHost)) return { kind: "other" };
   return { kind: "root" };
 }

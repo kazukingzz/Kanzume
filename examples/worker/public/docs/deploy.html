@@ -57,7 +57,7 @@
 <ol>
 <li>先に管理画面でサイトを追加します（Actions からのデプロイではサイトを作りません）。</li>
 <li><a href="/docs/members#token">「設定 &gt; トークン」</a> で個人トークンを発行し、GitHub のリポジトリの Secrets に <code>KANZUME_TOKEN</code> として登録します。</li>
-<li>次のワークフローを <code>.github/workflows/deploy.yml</code> に置いて push します。<code>url</code> は Kanzume の URL（管理画面やサイトの URL）、<code>site</code> はデプロイ先のサイトの名前です。サイトの「デプロイ」タブの「GitHub Actions から」に、そのまま使えるものが出ます。</li>
+<li>次のワークフローを <code>.github/workflows/deploy.yml</code> に置いて push します。<code>url</code> は Kanzume の URL（管理画面やサイトの URL）、<code>site</code> はデプロイ先のサイトの ID（管理画面で追加したときの名前。サブドメインを変えても変わりません）です。サイトの「デプロイ」タブの「GitHub Actions から」に、そのまま使えるものが出ます。</li>
 </ol>
 <pre><code>name: Deploy to Kanzume
 on:

@@ -157,7 +157,7 @@ export function deploymentItem(d, isActive) {
               detail,
               full.error ? h("div", { class: "notice mono", text: full.error }) : null,
               safeUrl(s.runUrl) ? h("a", { href: safeUrl(s.runUrl), target: "_blank", rel: "noopener", text: "GitHub Actions の実行ログを開く ↗" }) : null,
-              h("div", { class: "log-title", text: "ビルドログ（GitHub Actions）" }),
+              h("div", { class: "log-title", text: s.runUrl ? "ビルドログ（GitHub Actions）" : "ビルドログ" }),
               h("pre", { class: "log", text: full.buildLog || "（ビルドログはありません）" }),
               h("div", { class: "log-title", text: "Kanzume のログ" }),
               h("pre", { class: "log", text: full.log }),

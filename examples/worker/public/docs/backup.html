@@ -40,7 +40,7 @@
 <ul>
 <li>Cloudflare R2 の API トークンは「Object Read &amp; Write」で、対象をそのバケットだけに絞って作ります。エンドポイントは R2 のバケットの設定にある「S3 API」の URL です。</li>
 <li>鍵に <code>/</code> <code>+</code> <code>@</code> などが入るときはパーセントエンコードします。</li>
-<li>クエリで <code>keep</code>（残す世代数。既定 48）と <code>interval</code>（定期実行の間隔・分。既定 60）を変えられます。</li>
+<li>クエリで <code>keep</code>（残す世代数。既定 48）と <code>interval</code>（定期実行の間隔・分。既定 60）を変えられます。AWS 以外の S3 互換ストレージでリージョンが要るときは <code>region</code> も付けます（既定は AWS ならホスト名から、それ以外は <code>auto</code>）。</li>
 <li><code>s3+http://</code> は http のエンドポイント（手元の MinIO など）、<code>file:///path</code> はローカルのディレクトリ（開発用）です。</li>
 </ul>
 <h2>いつ保存されるか</h2>

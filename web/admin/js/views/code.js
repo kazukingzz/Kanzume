@@ -77,7 +77,7 @@ export async function viewCode(main) {
     select(g, rest.join(":"));
   });
   if (!groups.source.length) {
-    tree.prepend(h("p", { class: "muted", text: "ソースコードは Kanzume の Action でデプロイすると表示されます。" }));
+    tree.prepend(h("p", { class: "muted", text: "このリリースにはソースコードがありません（Worker のない静的サイトか、ソースを含めずにデプロイしたもの）。" }));
     tree.firstChild.style.padding = "8px 14px";
   }
 

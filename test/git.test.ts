@@ -346,7 +346,7 @@ test("リポジトリの容量の上限を超える push は受け付けない",
   assert.deepEqual(await app.repos.refs("blog"), []);
 });
 
-test("メンバーの最初の push はルートにならず、その後の全体の Token での push でもルートにならない", { skip: NO_GIT }, async (t) => {
+test("メンバーの最初の push はルートにならず、その後の管理者の push でもルートにならない", { skip: NO_GIT }, async (t) => {
   const { remote, sites, state, createRepo } = await start(t);
   for (const name of ["blog", "shop", "docs"]) await createRepo(name);
   const token = await memberToken(state, ["shop"]);
@@ -354,12 +354,12 @@ test("メンバーの最初の push はルートにならず、その後の全�
   assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
   assert.equal(sites.root, null, "メンバーのトークンでは自動でルートにしない");
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, null, "最初のデプロイではないので、全体の Token でもルートにしない");
+  assert.equal(sites.root, null, "最初のデプロイではないので、管理者の push でもルートにしない");
 
   assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");
 });
 
-test("全体の Token での最初の push はルートになる", { skip: NO_GIT }, async (t) => {
+test("管理者の最初の push はルートになる", { skip: NO_GIT }, async (t) => {
   const { remote, sites, createRepo } = await start(t);
   await createRepo("blog");
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);

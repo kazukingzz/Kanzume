@@ -53,7 +53,7 @@ export async function viewRepo(main, name) {
         { class: "muted hint" },
         "ユーザー名は何でもよく、パスワードには「",
         h("a", { href: "#/settings", text: "設定 > トークン" }),
-        `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`,
+        `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。デフォルトブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`,
       ),
     ),
   );

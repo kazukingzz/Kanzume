@@ -42,7 +42,7 @@ docker compose up -d</code></pre>
 <p>Compose を使わない場合は次のとおりです。</p>
 <pre><code>docker build -t kanzume .
 docker run -d -p 8080:8080 -v kanzume-data:/data kanzume</code></pre>
-<p><code>KANZUME_ORIGIN</code>・<code>KANZUME_SETUP_TOKEN</code>・<code>KANZUME_BACKUP_URL</code>・<code>KANZUME_PORT</code>（公開するポート。既定 8080）は、<code>.env</code> か環境変数で渡します。ほかの設定は <a href="/docs/reference#env">環境変数の一覧</a> を見てください。</p>
+<p>設定は <code>.env</code>（Compose はその中身をすべてコンテナに渡します）か環境変数で渡します。よく使うのは <code>KANZUME_ORIGIN</code>・<code>KANZUME_SETUP_TOKEN</code>・<code>KANZUME_BACKUP_URL</code>・<code>KANZUME_PORT</code>（公開するポート。既定 8080）です。ほかの設定は <a href="/docs/reference#env">環境変数の一覧</a> を見てください。</p>
 <h2>最初のパスキーを登録する</h2>
 <ol>
 <li><code>https://&lt;あなたのホスト&gt;/_admin/kanzume</code> を開きます。</li>

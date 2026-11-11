@@ -310,7 +310,7 @@ export function siteSettingsCards(settings) {
       h("h2", { text: "サブドメイン" }),
       h("p", {
         class: "muted",
-        text: `変えると前のサブドメインでは配信しなくなります。サイトの ID（${state.siteName}）と、git push・GitHub Actions で使う name は変わりません。`,
+        text: `変えると前のサブドメインでは配信しなくなります。サイトの ID（${state.siteName}）は変わらないので、GitHub Actions の site やリポジトリの名前はそのままで構いません。`,
       }),
       h("div", { class: "row narrow" }, h("div", { class: "grow" }, sub.el), subSave),
       subError,

@@ -29,7 +29,6 @@ jobs:
           token: \${{ secrets.KANZUME_TOKEN }}
 `;
 
-/** デプロイ前の設定カード（GitHub の URL・サンプル） */
 /**
  * GitHub の URL を読んだあとの確認カード。デプロイ先は作成済みのサイト（site）で、環境変数とシークレットを決めてからデプロイする。
  * cfg: inspect の結果（wrangler の vars）と、そのサイトの今の設定（current）
@@ -145,7 +144,7 @@ export async function viewNewSite(main) {
       h("h2", { text: "サイト名（配信ドメイン）" }),
       h("p", {
         class: "muted",
-        text: "サイトを作ると、次にデプロイの方法（サンプル・GitHub の公開リポジトリ・GitHub Actions・Kanzume のリポジトリ）を選べます。",
+        text: "サイトを作ると、次にデプロイの方法（ファイルから・GitHub の公開リポジトリから・GitHub Actions から・サイトのリポジトリから）を選べます。",
       }),
       h("div", { class: "row narrow" }, h("div", { class: "grow" }, sub.el), create),
       status,
@@ -496,7 +495,7 @@ export const METHOD_VIEWS = {
         "section",
         { class: "card" },
         h("h2", { text: "サイトのリポジトリから" }),
-        h("p", { class: "muted", text: `リポジトリ ${site} は作成済みです。push のコマンドとトークンはリポジトリのタブにあります。` }),
+        h("p", { class: "muted", text: `リポジトリ ${site} は作成済みです。push のコマンドはリポジトリのタブに、トークンは「設定 > トークン」にあります。` }),
         h("a", { href: siteHash("repo", site), text: "リポジトリを開く →" }),
       ),
     ];

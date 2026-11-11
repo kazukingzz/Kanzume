@@ -11,7 +11,7 @@ inputs:
     description: 個人トークン（管理画面の「設定 > トークン」で発行したもの）
     required: true
   site:
-    description: デプロイ先のサイトの名前（先に管理画面でサイトを追加しておく。wrangler の name は使わない）
+    description: デプロイ先のサイトの ID（先に管理画面で追加したときの名前。サブドメインを変えても変わらない。wrangler の name は使わない）
     required: true
   working-directory:
     description: wrangler.jsonc / wrangler.toml があるディレクトリ

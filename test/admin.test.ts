@@ -31,7 +31,7 @@ test("最初のパスキー登録はセットアップトークンでだけ始�
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 200);
 });
 
-test("パスキー登録後は、新しいパスキーの登録には招待が必要で（チーム ID では登録できない）、サインインには不要", async (t) => {
+test("パスキー登録後は、新しいパスキーの登録には招待が必要で（以前のチーム ID では登録できない）、サインインには不要", async (t) => {
   const { post, state } = await start(t);
   await state.addCredential(fakeCredential);
 

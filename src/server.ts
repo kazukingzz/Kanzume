@@ -23,15 +23,15 @@ import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
 import { PRIVATE_DIRS, PRIVATE_FILES, sitesDir } from "./layout.ts";
 
-/**
- * Worker の子プロセス（サイトごとの別ユーザー）から、本体のデータが見えないようにする。
- * 本体が作るファイルは本人とグループだけが読み書きできるようにし（umask 007）、/data の直下は一覧を見せない
- */
-/** 本体が作るファイルを、ほかのユーザー（Worker の子プロセス）から見えないようにする。復元より前に呼ぶ */
+/** 本体が作るファイルを、ほかのユーザー（Worker の子プロセス）から見えないようにする（umask 007）。復元より前に呼ぶ */
 function applyUmask(config: Config): void {
   if (config.isolation === "process" && isRoot()) process.umask(0o007);
 }
 
+/**
+ * Worker の子プロセス（サイトごとの別ユーザー）から、本体のデータが見えないようにする。
+ * 秘密のファイルは本人だけが読み書きできるようにし、/data の直下は一覧を見せない。サイトのディレクトリの権限もそろえる
+ */
 async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
   if (!isRoot()) {
     console.warn(
@@ -40,7 +40,6 @@ async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
     );
     return;
   }
-  process.umask(0o007);
   await fs.mkdir(sitesDir(dataDir), { recursive: true });
   await fs.chmod(dataDir, 0o711);
   await fs.chmod(sitesDir(dataDir), 0o711);
