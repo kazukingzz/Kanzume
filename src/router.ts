@@ -9,6 +9,7 @@ import type { Runtime } from "./runtime/runtime.ts";
 import { GIT_PATH, HOOK_PATH } from "./git/server.ts";
 import { matchHost, parentHost, type Sites } from "./sites.ts";
 import type { Release } from "./store.ts";
+import { DONE_TIMEOUT_MS } from "./runtime/protocol.ts";
 
 interface Deps {
   config: Config;
@@ -22,8 +23,6 @@ interface Deps {
   handleHook(req: IncomingMessage, res: ServerResponse): Promise<void>;
   observability: Observability;
 }
-
-const WAIT_UNTIL_LIMIT_MS = 30_000;
 
 const EMPTY = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kanzume</title>
 <body style="font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1d1d1b;background:#f6f6f4">
@@ -97,8 +96,16 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
     const status = response.status;
     const duration = performance.now() - invocation.startedAt;
     if (waitUntil.length) {
-      const limit = new Promise((resolve) => setTimeout(resolve, WAIT_UNTIL_LIMIT_MS).unref());
-      void Promise.race([Promise.allSettled(waitUntil), limit]).then(() => observability.record(invocation, status, duration));
+      // 子プロセスの Worker は done（waitUntil の終わり）を待つ。done は子が waitUntil を待つ上限に余裕を足して必ず来る
+      let timer: NodeJS.Timeout | undefined;
+      const limit = new Promise((resolve) => {
+        timer = setTimeout(resolve, DONE_TIMEOUT_MS);
+        timer.unref();
+      });
+      void Promise.race([Promise.allSettled(waitUntil), limit]).then(() => {
+        clearTimeout(timer);
+        observability.record(invocation, status, duration);
+      });
     } else {
       observability.record(invocation, status, duration);
     }

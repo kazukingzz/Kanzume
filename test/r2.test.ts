@@ -59,6 +59,16 @@ test("range 指定で一部だけ読める", async (t) => {
   const obj = (await b.get("k", { range: new Headers({ range: "bytes=5-" }) })) as R2ObjectBody;
   assert.equal(await obj.text(), "56789");
   assert.deepEqual(obj.range, { offset: 5, length: 5 });
+  assert.equal(await ((await b.get("k", { range: new Headers({ range: "bytes=8-100" }) })) as R2ObjectBody).text(), "89", "終わりがサイズを超えたら最後まで");
+});
+
+test("満たせない range はエラーにし、ファイルを開いたままにしない", async (t) => {
+  const b = bucket(t);
+  await b.put("k", "0123456789");
+  for (const range of [new Headers({ range: "bytes=5-2" }), new Headers({ range: "bytes=10-" }), { offset: -5 }, { suffix: -1 }, { offset: 1, length: -2 }]) {
+    await assert.rejects(b.get("k", { range }), RangeError, JSON.stringify(range instanceof Headers ? range.get("range") : range));
+  }
+  assert.equal(await ((await b.get("k")) as R2ObjectBody).text(), "0123456789");
 });
 
 test("onlyIf が満たされないと get は body なしの R2Object を返す", async (t) => {

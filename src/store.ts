@@ -46,6 +46,20 @@ const exists = (p: string) =>
 
 export const PROJECT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
+/**
+ * base の下に rel のディレクトリを 1 段ずつ作る。recursive と違い、base（やサイトのディレクトリ）が消されていたら
+ * 作り直さずに ENOENT になる（デプロイ中にサイトを消されても、サイトを生き返らせない）
+ */
+async function mkdirUnder(base: string, rel: string, mode: number): Promise<void> {
+  let dir = base;
+  for (const part of rel.split("/").filter(Boolean)) {
+    dir = path.join(dir, part);
+    await fs.mkdir(dir, { mode }).catch((err: NodeJS.ErrnoException) => {
+      if (err.code !== "EEXIST") throw err;
+    });
+  }
+}
+
 export class Store {
   readonly siteDir: string;
   #releasesDir: string;
@@ -83,12 +97,13 @@ export class Store {
     const id = `${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
     const tmp = path.join(this.#releasesDir, `${id}.tmp`);
     // リリースと current は、Worker の子プロセス（サイトのグループ）からは読むだけにする（書き換えさせない）
-    await fs.mkdir(tmp, { recursive: true, mode: 0o750 });
+    await fs.mkdir(tmp, { mode: 0o750 }).catch((err: NodeJS.ErrnoException) => {
+      throw err.code === "ENOENT" ? new Error("サイトが削除されました") : err;
+    });
     try {
       for (const file of files) {
-        const dest = path.join(tmp, file.path);
-        await fs.mkdir(path.dirname(dest), { recursive: true, mode: 0o750 });
-        await fs.writeFile(dest, file.data, { mode: 0o640 });
+        await mkdirUnder(tmp, path.posix.dirname(file.path), 0o750);
+        await fs.writeFile(path.join(tmp, file.path), file.data, { mode: 0o640 });
       }
       const deployedAt = new Date().toISOString();
       await fs.writeFile(path.join(tmp, MANIFEST_FILE), JSON.stringify({ deployedAt, manifest }), { mode: 0o640 });

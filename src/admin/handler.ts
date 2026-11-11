@@ -177,16 +177,20 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           response: body?.response as never,
           expectedChallenge: (c: string) => {
             challenge = c;
-            return challenges.check(c, "register");
+            return challenges.claim(c, "register");
           },
           expectedOrigin: origin,
           expectedRPID: rpID,
           requireUserVerification: false,
         });
       } catch (err) {
+        challenges.release(challenge);
         return sendJson(res, 400, { error: (err as Error).message });
       }
-      if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      if (!result.verified) {
+        challenges.release(challenge);
+        return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      }
       challenges.markUsed(challenge);
       const { credential, aaguid } = result.registrationInfo;
       const device = describeDevice(req.headers["user-agent"]);
@@ -237,7 +241,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           response: response as never,
           expectedChallenge: (c: string) => {
             challenge = c;
-            return challenges.check(c, "login");
+            return challenges.claim(c, "login");
           },
           expectedOrigin: origin,
           expectedRPID: rpID,
@@ -250,9 +254,13 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           requireUserVerification: false,
         });
       } catch (err) {
+        challenges.release(challenge);
         return sendJson(res, 400, { error: (err as Error).message });
       }
-      if (!result.verified) return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      if (!result.verified) {
+        challenges.release(challenge);
+        return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
+      }
       challenges.markUsed(challenge);
       await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
       if (!state.user(stored.userId)) return sendJson(res, 400, { error: "このパスキーのユーザーは削除されています" });
@@ -307,8 +315,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (route === "POST /api/domain") {
       if (config.origin) return sendJson(res, 409, { error: "環境変数 KANZUME_ORIGIN が優先されています。変えるには環境変数を変更してください" });
       const body = await readJson(req);
+      // 読めない本文で、保存したドメインを消さない
+      if (!body || (typeof body.domain !== "string" && body.domain !== null)) return sendJson(res, 400, { error: "domain を指定してください" });
       try {
-        return sendJson(res, 200, { domain: await state.setDomain(String(body?.domain ?? "")) });
+        return sendJson(res, 200, { domain: await state.setDomain(String(body.domain ?? "")) });
       } catch (err) {
         if (err instanceof DomainError) return sendJson(res, 400, { error: err.message });
         throw err;
@@ -882,14 +892,17 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     }
 
     if (siteRouteKey === "DELETE ") {
-      // 処理中のリクエストも待たずに止める（消したあとに Worker が KV / R2 を書いて、ディレクトリを作り直さないように）
-      runtime.evict(store.siteDir, { now: true });
-      await state.removeSiteAccess(name);
-      await sites.remove(name);
-      // リポジトリはサイトに属するので一緒に消す（残すと次の起動で空のサイトとして戻ってくる）
-      await repos.remove(name);
-      history.clear(name);
-      observability.clear(name);
+      // 進行中のデプロイ（アップロード・git push）が終わるのを待ってから消す（消したあとにリリースを書かせない）
+      await deployer.exclusive(name, async () => {
+        // 処理中のリクエストも待たずに止める（消したあとに Worker が KV / R2 を書いて、ディレクトリを作り直さないように）
+        runtime.evict(store.siteDir, { now: true });
+        await state.removeSiteAccess(name);
+        await sites.remove(name);
+        // リポジトリはサイトに属するので一緒に消す（残すと次の起動で空のサイトとして戻ってくる）
+        await repos.remove(name);
+        history.clear(name);
+        observability.clear(name);
+      });
       return sendJson(res, 200, { ok: true });
     }
 

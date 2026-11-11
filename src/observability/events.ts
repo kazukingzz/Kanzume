@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from "node:async_hooks";
 import type { DatabaseSync, StatementSync } from "node:sqlite";
 import { format } from "node:util";
+import { MAX_ERROR_MESSAGE, MAX_ERROR_NAME, MAX_ERROR_STACK } from "../runtime/protocol.ts";
 
 export type Outcome = "ok" | "exception" | "exceededCpu" | "canceled";
 export type LogLevel = "log" | "info" | "warn" | "error" | "debug";
@@ -39,12 +40,23 @@ function workerStack(stack: string): string {
     .join("\n");
 }
 
+/** Worker の例外を記録する形にする。大きさに上限を設ける（子から本体への知らせの 1 行と、保存するイベントの大きさのため） */
 export function toException(err: unknown): ExceptionInfo {
   if (err && typeof err === "object" && typeof (err as Error).message === "string") {
     const e = err as Error;
-    return { name: e.name || "Error", message: e.message, stack: typeof e.stack === "string" ? workerStack(e.stack) : null };
+    return {
+      name: typeof e.name === "string" && e.name ? e.name.slice(0, MAX_ERROR_NAME) : "Error",
+      message: e.message.slice(0, MAX_ERROR_MESSAGE),
+      stack: typeof e.stack === "string" ? workerStack(e.stack).slice(0, MAX_ERROR_STACK) : null,
+    };
   }
-  return { name: "Error", message: String(err), stack: null };
+  let message: string;
+  try {
+    message = String(err);
+  } catch {
+    message = "Worker threw exception";
+  }
+  return { name: "Error", message: message.slice(0, MAX_ERROR_MESSAGE), stack: null };
 }
 
 export class Invocation {
@@ -223,8 +235,8 @@ export class Observability {
     if (!this.#queue.length) return;
     const queue = this.#queue;
     this.#queue = [];
-    this.#db.exec("BEGIN");
     try {
+      this.#db.exec("BEGIN");
       for (const { invocation: inv, status, duration } of queue) {
         const error = inv.detail.exceptions[0] ? `${inv.detail.exceptions[0].name}: ${inv.detail.exceptions[0].message}` : null;
         this.#insert.run(
@@ -244,13 +256,21 @@ export class Observability {
       }
       this.#db.exec("COMMIT");
     } catch (err) {
-      this.#db.exec("ROLLBACK");
-      console.error("[kanzume] イベントの保存に失敗:", err);
+      // ディスクがいっぱいのときなど。SQLite が自分でロールバックしていることがあるので、トランザクション中のときだけ戻す。
+      // 記録できなかったイベントは捨てる（タイマーから呼ばれるので、ここで例外を投げると本体ごと落ちる）
+      try {
+        if (this.#db.isTransaction) this.#db.exec("ROLLBACK");
+      } catch {}
+      console.error("[kanzume] イベントの保存に失敗:", (err as Error)?.message ?? err);
     }
   }
 
   prune(now = Date.now()): void {
-    this.#db.prepare("DELETE FROM events WHERE ts < ?").run(now - this.#retentionMs);
+    try {
+      this.#db.prepare("DELETE FROM events WHERE ts < ?").run(now - this.#retentionMs);
+    } catch (err) {
+      console.error("[kanzume] 古いイベントを消せませんでした:", (err as Error)?.message ?? err);
+    }
   }
 
   clear(site: string): void {

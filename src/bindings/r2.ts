@@ -115,22 +115,35 @@ function passes(cond: Conditional | undefined, row: Row): boolean {
   return true;
 }
 
+/** Cloudflare と同じく、満たせない範囲はエラーにする */
+const unsatisfiable = () => new RangeError("get: The requested range is not satisfiable (10039)");
+const isCount = (n: unknown): n is number => typeof n === "number" && Number.isSafeInteger(n) && n >= 0;
+
 function resolveRange(input: unknown, size: number): { offset: number; length: number } | undefined {
   if (!input) return undefined;
   let range: Range;
   if (isHeaders(input)) {
     const m = /^bytes=(\d*)-(\d*)$/.exec(input.get("range") ?? "");
     if (!m) return undefined;
+    if (m[1] === "" && m[2] === "") throw unsatisfiable();
     if (m[1] === "") range = { suffix: Number(m[2]) };
-    else range = { offset: Number(m[1]), ...(m[2] !== "" && { length: Number(m[2]) - Number(m[1]) + 1 }) };
+    else {
+      const start = Number(m[1]);
+      if (m[2] !== "" && Number(m[2]) < start) throw unsatisfiable();
+      // 終わりがサイズを超えていたら、最後までにする（HTTP と同じ）
+      range = { offset: start, ...(m[2] !== "" && { length: Math.min(Number(m[2]), Number.MAX_SAFE_INTEGER - 1) - start + 1 }) };
+    }
   } else {
     range = input as Range;
   }
   if (range.suffix !== undefined) {
+    if (!isCount(range.suffix)) throw unsatisfiable();
     const length = Math.min(range.suffix, size);
     return { offset: size - length, length };
   }
-  const offset = Math.min(range.offset ?? 0, size);
+  const offset = range.offset ?? 0;
+  if (!isCount(offset) || (range.length !== undefined && !isCount(range.length))) throw unsatisfiable();
+  if (offset > size || (offset === size && size > 0 && range.length !== 0)) throw unsatisfiable();
   return { offset, length: Math.min(range.length ?? size - offset, size - offset) };
 }
 
@@ -293,8 +306,13 @@ export class R2Bucket {
         await handle.close();
         return new R2ObjectBody(row, new ReadableStream({ start: (c) => c.close() }), range);
       }
-      const stream = handle.createReadStream(range ? { start: range.offset, end: range.offset + length - 1 } : {});
-      return new R2ObjectBody(row, Readable.toWeb(stream) as ReadableStream<Uint8Array>, range);
+      try {
+        const stream = handle.createReadStream(range ? { start: range.offset, end: range.offset + length - 1 } : {});
+        return new R2ObjectBody(row, Readable.toWeb(stream) as ReadableStream<Uint8Array>, range);
+      } catch (err) {
+        await handle.close();
+        throw err;
+      }
     }
     return null;
   }

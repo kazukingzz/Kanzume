@@ -65,10 +65,17 @@ async function site(dataDir: string, name: string, source = PROBE): Promise<Rele
   return r;
 }
 
-function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number } = {}) {
+function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; stallMs?: number } = {}) {
   const dataDir = tmpDir(t);
   fs.writeFileSync(path.join(dataDir, "admin.json"), "{}", { mode: 0o600 });
-  const runtime = new Runtime({ idleMs: options.idleMs ?? 60_000, cpuTimeoutMs: 1000, maxWorkers: options.maxWorkers, isolation: "process", dataDir });
+  const runtime = new Runtime({
+    idleMs: options.idleMs ?? 60_000,
+    cpuTimeoutMs: 1000,
+    maxWorkers: options.maxWorkers,
+    stallMs: options.stallMs,
+    isolation: "process",
+    dataDir,
+  });
   t.after(() => runtime.close());
   return { dataDir, runtime };
 }
@@ -124,10 +131,7 @@ test("子プロセスが落ちても本体は動き続け、次のリクエス�
   const a = await site(dataDir, "a");
   const first = await probe(runtime, a, probeUrl(dataDir, "a", "b", "/crash"));
   const handle = (await runtime.get(a)) as ChildWorker;
-  await new Promise<void>((resolve) => {
-    const check = () => (handle.closed ? resolve() : setTimeout(check, 10));
-    check();
-  });
+  await waitClosed(handle);
   const second = await probe(runtime, a, probeUrl(dataDir, "a", "b"));
   assert.notEqual(second.pid, first.pid);
   assert.equal(second.kv, "v");
@@ -202,8 +206,20 @@ module.exports = {
       return new Response(new ReadableStream({ async pull(c) { await new Promise((r) => setTimeout(r, 50)); if (i++ < 5) c.enqueue(new TextEncoder().encode("x")); else c.close(); } }));
     }
     if (url.pathname === "/slow") {
-      ctx.waitUntil(new Promise((r) => setTimeout(r, 300)).then(() => env.KV.put("slow", "done")));
+      // テストが KV の go を書くまで終わらない waitUntil（時間で待つと、遅い環境で先に終わってしまう）
+      ctx.waitUntil((async () => {
+        while ((await env.KV.get("go")) !== "1") await new Promise((r) => setTimeout(r, 20));
+        await env.KV.put("slow", "done");
+      })());
       return new Response("later");
+    }
+    if (url.pathname === "/hang") {
+      await env.KV.get("x");
+      while (true) {}
+    }
+    if (url.pathname === "/huge-error") {
+      ctx.waitUntil(Promise.reject(new Error("x".repeat(3_000_000))));
+      return new Response("ok");
     }
     return Response.json({ url: request.url, host: request.headers.get("host"), id: request.headers.get("x-kanzume-id"), pid: host.pid });
   },
@@ -253,21 +269,55 @@ test("子が本体への知らせのパイプに不正な行を書いても本�
   assert.equal(((await (await w.fetch(new Request("http://x/"))).response!.json()) as { pid: number }).pid, w.pid);
 });
 
-test("再デプロイで外した子も、処理中の waitUntil は最後まで動く", async (t) => {
-  const { dataDir, runtime } = setup(t);
-  const v1 = await site(dataDir, "a", EDGE);
-  const w1 = (await runtime.get(v1)) as ChildWorker;
-  const slow = await w1.fetch(new Request("http://x/slow"));
-  assert.equal(await slow.response!.text(), "later");
-  const store = new Store(v1.siteDir);
-  const v2 = await store.createRelease(manifest({ name: "a", ...BINDINGS }), [{ path: "worker/index.cjs", data: Buffer.from(EDGE) }]);
-  runtime.install((await runtime.preload(v2)) as ChildWorker);
-  assert.equal(w1.closed, false, "処理中なのですぐには止めない");
-  await Promise.all(slow.waitUntil);
-  await waitClosed(w1);
+/** /slow の waitUntil を終わらせる（本体から同じサイトの KV に書く） */
+async function release(r: Release) {
   const { siteDb } = await import("../src/bindings/db.ts");
   const { KVNamespace } = await import("../src/bindings/kv.ts");
-  assert.equal(await new KVNamespace(siteDb(v1.siteDir), "KV").get("slow"), "done");
+  const kv = new KVNamespace(siteDb(r.siteDir), "KV");
+  await kv.put("go", "1");
+  return kv;
+}
+
+for (const maxWorkers of [undefined, 1]) {
+  test(`再デプロイで外した子も、処理中の waitUntil は最後まで動く（maxWorkers: ${maxWorkers ?? "なし"}）`, async (t) => {
+    const { dataDir, runtime } = setup(t, { maxWorkers });
+    const v1 = await site(dataDir, "a", EDGE);
+    const w1 = (await runtime.get(v1)) as ChildWorker;
+    const slow = await w1.fetch(new Request("http://x/slow"));
+    assert.equal(await slow.response!.text(), "later");
+    const store = new Store(v1.siteDir);
+    const v2 = await store.createRelease(manifest({ name: "a", ...BINDINGS }), [{ path: "worker/index.cjs", data: Buffer.from(EDGE) }]);
+    runtime.install((await runtime.preload(v2)) as ChildWorker);
+    await new Promise((r) => setTimeout(r, 100));
+    assert.equal(w1.closed, false, "処理中なのですぐには止めない（上限ちょうどで動いていても）");
+    const kv = await release(v1);
+    await Promise.all(slow.waitUntil);
+    await waitClosed(w1);
+    assert.equal(await kv.get("slow"), "done");
+  });
+}
+
+test("await のあとで止まった（無限ループの）Worker は止めて、次のリクエストは新しい子で受ける", async (t) => {
+  const { dataDir, runtime } = setup(t, { stallMs: 1500 });
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const hang = await w.fetch(new Request("http://x/hang"));
+  assert.equal(hang.response, null, "応答を返さないまま止まる");
+  assert.match(String((hang.error as Error).message), /届きませんでした/);
+  assert.equal(w.closed, true);
+  const next = await (await runtime.get(r)).fetch(new Request("http://x/"));
+  assert.equal(next.response?.status, 200);
+  assert.notEqual(((await next.response!.json()) as { pid: number }).pid, w.pid);
+});
+
+test("大きな例外を出しても、子は落ちない（知らせは上限に収める）", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const res = await w.fetch(new Request("http://x/huge-error"));
+  assert.equal(await res.response!.text(), "ok");
+  await Promise.all(res.waitUntil);
+  assert.equal(w.closed, false);
 });
 
 test("大きなヘッダーでも、HEAD の passThroughOnException・Content-Length・長いストリームが正しく扱われ、待ち状態が残らない", async (t) => {

@@ -1,7 +1,7 @@
 /**
  * Worker をサイトごとの子プロセスで動かす（本体側）。
- * - 本体が root なら、子はサイトごとの別ユーザー（uid / gid）で動かす。サイトのディレクトリは root:<gid> の 2770 にして、
- *   ほかのサイトの子からは見えないようにする
+ * - 本体が root なら、子はサイトごとの別ユーザー（uid / gid）で動かす。サイトのディレクトリは root:<gid> の 2750
+ *   （子が書ける data/ だけ 2770）にして、ほかのサイトの子からは見えないようにする
  * - どの場合も Node の権限モデル（--permission）で、読み書きできる場所をサイトのディレクトリと Kanzume のソースだけにする
  */
 import { spawn, type ChildProcess } from "node:child_process";
@@ -12,11 +12,12 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
-import { siteDataDir } from "../bindings/db.ts";
+import { ensureSiteDataDir, siteDataDir } from "../bindings/db.ts";
 import { currentInvocation } from "../observability/events.ts";
 import { SETTINGS_FILE } from "../sites.ts";
 import type { Release } from "../store.ts";
 import { siteVars, WorkerError, type InvokeResult } from "./loader.ts";
+import { DONE_TIMEOUT_MS, decodeError, HEARTBEAT_MS, MAX_LINE_BYTES, NULL_BODY_STATUS } from "./protocol.ts";
 
 const CHILD_SOURCE = fileURLToPath(new URL("./child.ts", import.meta.url));
 
@@ -48,10 +49,11 @@ const REQUEST_SKIP = new Set(["connection", "keep-alive", "transfer-encoding", "
 const RESPONSE_SKIP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer"]);
 /** 再デプロイや追い出しで外した子が、処理中のリクエストと waitUntil を終えるのを待つ上限 */
 const RETIRE_DEADLINE_MS = 35_000;
-/** 子からの知らせ 1 行の上限（ログ 100 件 × 4 KiB と例外を収められる大きさ） */
-const MAX_LINE_BYTES = 2 * 1024 * 1024;
-/** 応答を送り終えてから done（waitUntil の終わり）を待つ上限。子は waitUntil を最大 30 秒待つ */
-const DONE_TIMEOUT_MS = 35_000;
+/**
+ * 子の alive が途切れてから止めるまでの猶予（CPU 時間の上限に足す）。Worker の同期処理は CPU 時間の上限で止まるが、
+ * await のあとで無限ループすると止まらないので、イベントループが止まった子はプロセスごと作り直す
+ */
+const STALL_GRACE_MS = 10_000;
 
 export const isRoot = () => typeof process.getuid === "function" && process.getuid() === 0;
 
@@ -60,8 +62,16 @@ export function siteUid(dataDir: string, site: string): number {
   const file = path.join(dataDir, "sites", "_uids.json");
   let map: Record<string, number> = {};
   try {
-    map = JSON.parse(fs.readFileSync(file, "utf8"));
-  } catch {}
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("形が違います");
+    map = parsed;
+  } catch (err) {
+    // 読めないまま割り当て直すと、ほかのサイトと同じ uid を配りかねない（そのサイトの data/ に書けてしまう）。
+    // ファイルがないときだけ新しく作る（消して再起動すると、起動時に全サイトの uid を割り当て直して所有者もそろえる）
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      throw new Error(`${file} を読めません（${(err as Error).message}）。消して再起動すると割り当て直します`);
+    }
+  }
   if (typeof map[site] === "number") return map[site];
   const used = new Set(Object.values(map));
   let uid = FIRST_UID;
@@ -171,10 +181,14 @@ function ensureTraversable(dataDir: string, siteDir: string): void {
 
 export interface ChildOptions {
   dataDir: string;
+  /** Worker の同期処理の CPU 時間の上限（ms） */
   timeout: number;
-  /** 子の V8 のヒープの上限（MB） */
-  heapMb?: number;
+  /** イベントループが止まったとみなすまでの時間（省略時は timeout + STALL_GRACE_MS） */
+  stallMs?: number;
 }
+
+/** 子の V8 のヒープの上限（MB） */
+const CHILD_HEAP_MB = 64;
 
 /** 子プロセスで動いている Worker。LoadedWorker と同じく fetch で呼べる */
 export class ChildWorker {
@@ -189,6 +203,9 @@ export class ChildWorker {
   #closed = false;
   #retiring = false;
   #retireTimer: NodeJS.Timeout | null = null;
+  /** 最後に子から知らせが届いた時刻（イベントループが止まっていないかを見る） */
+  #lastAlive = Date.now();
+  #watchdog: NodeJS.Timeout | null = null;
   #onMessage: ((m: Record<string, unknown>) => void) | null = null;
 
   private constructor(release: Release, child: ChildProcess, socket: string, socketDir: string) {
@@ -209,6 +226,7 @@ export class ChildWorker {
           return;
         }
         if (!m || typeof m !== "object" || Array.isArray(m)) return;
+        this.#lastAlive = Date.now();
         const msg = m as Record<string, unknown>;
         if (msg.type === "done") {
           if (typeof msg.id !== "string") return;
@@ -217,7 +235,7 @@ export class ChildWorker {
           this.#pending.delete(msg.id);
           resolve(msg);
           this.#maybeFinishRetire();
-        } else this.#onMessage?.(msg);
+        } else if (msg.type !== "alive") this.#onMessage?.(msg);
       },
       () => {
         console.error(`[runtime] Worker のプロセスが大きすぎる知らせを送ったので止めます（${release.manifest.name}）`);
@@ -241,6 +259,7 @@ export class ChildWorker {
     for (const resolve of this.#pending.values()) resolve(null);
     this.#pending.clear();
     if (this.#retireTimer) clearTimeout(this.#retireTimer);
+    if (this.#watchdog) clearInterval(this.#watchdog);
     fs.rmSync(this.#socketDir, { recursive: true, force: true });
   }
 
@@ -269,7 +288,7 @@ export class ChildWorker {
       ensureTraversable(options.dataDir, siteDir);
       prepareForChild(siteDir, release.dir, ids);
     }
-    fs.mkdirSync(siteDataDir(siteDir), { recursive: true });
+    ensureSiteDataDir(siteDir);
     const entry = await childEntry();
     const socketDir = fs.mkdtempSync(path.join(os.tmpdir(), "kanzume-"));
     if (ids !== null) fs.chownSync(socketDir, ids, ids);
@@ -285,7 +304,7 @@ export class ChildWorker {
         // 書けるのは KV / R2 の置き場所だけ（settings.json やリリースは書き換えさせない）
         `--allow-fs-write=${siteDataDir(siteDir)}`,
         `--allow-fs-write=${socketDir}`,
-        `--max-old-space-size=${options.heapMb ?? 64}`,
+        `--max-old-space-size=${CHILD_HEAP_MB}`,
         entry,
       ],
       {
@@ -325,7 +344,19 @@ export class ChildWorker {
     } finally {
       worker.#onMessage = null;
     }
+    worker.#watch(options.stallMs ?? options.timeout + STALL_GRACE_MS);
     return worker;
+  }
+
+  /** alive が limit ms 届かなければ、子のイベントループが止まっているので止める（次のリクエストで作り直される） */
+  #watch(limit: number): void {
+    this.#lastAlive = Date.now();
+    this.#watchdog = setInterval(() => {
+      if (this.#closed || Date.now() - this.#lastAlive <= limit) return;
+      console.error(`[runtime] Worker が ${Math.round(limit / 1000)} 秒以上応答しないので止めます（${this.release.manifest.name}）`);
+      this.#kill();
+    }, HEARTBEAT_MS);
+    this.#watchdog.unref();
   }
 
   async fetch(request: Request): Promise<InvokeResult> {
@@ -335,8 +366,10 @@ export class ChildWorker {
     const invocation = currentInvocation();
     // 子のログ・応答の送信・waitUntil が終わるのを待つ（本体は終わってから可観測性に記録する）
     let settle!: (d: Record<string, unknown> | null) => void;
+    let doneTimer: NodeJS.Timeout | undefined;
     const done = new Promise<void>((resolve) => {
       settle = (d) => {
+        clearTimeout(doneTimer);
         try {
           if (d && invocation) invocation.merge(d);
         } catch (err) {
@@ -368,7 +401,8 @@ export class ChildWorker {
       finished = true;
       this.#inflight--;
       // 応答を送り終えたあと、done（waitUntil の終わり）が来なければあきらめる
-      setTimeout(giveUp, DONE_TIMEOUT_MS).unref();
+      doneTimer = setTimeout(giveUp, DONE_TIMEOUT_MS);
+      doneTimer.unref();
       this.#maybeFinishRetire();
     };
     try {
@@ -388,7 +422,7 @@ export class ChildWorker {
       const failure = res.headers["x-kanzume-error"];
       if (failure) {
         res.resume();
-        const info = parseError(String(failure));
+        const info = decodeError(String(failure));
         // 子のスタックトレース（Worker のコードの行）をそのまま使う
         const error = Object.assign(new Error(info.message), { name: info.name }, info.stack ? { stack: info.stack } : {});
         return { response: null, error, passThrough: info.passThrough, waitUntil: [done] };
@@ -399,7 +433,7 @@ export class ChildWorker {
         if (!RESPONSE_SKIP.has(name) && !name.startsWith("x-kanzume-")) out.append(res.rawHeaders[i], res.rawHeaders[i + 1]);
       }
       const status = res.statusCode ?? 500;
-      const nullBody = status === 204 || status === 205 || status === 304 || request.method === "HEAD";
+      const nullBody = NULL_BODY_STATUS.has(status) || request.method === "HEAD";
       const body = nullBody ? null : (Readable.toWeb(res) as ReadableStream<Uint8Array>);
       if (nullBody) res.resume();
       return { response: new Response(body, { status, statusText: res.statusMessage, headers: out }), error: null, passThrough: false, waitUntil: [done] };
@@ -435,6 +469,7 @@ export class ChildWorker {
     if (this.#closed) return;
     this.#closed = true;
     if (this.#retireTimer) clearTimeout(this.#retireTimer);
+    if (this.#watchdog) clearInterval(this.#watchdog);
     this.#child.kill("SIGKILL");
   }
 }
@@ -459,19 +494,4 @@ function readLines(stream: NodeJS.ReadableStream | null, max: number, onLine: (l
       onTooLong();
     }
   });
-}
-
-/** 子が返した Worker の例外（x-kanzume-error ヘッダーの base64url の JSON）を読む。壊れたものは丸める */
-function parseError(value: string): { message: string; name: string; stack?: string; passThrough: boolean } {
-  try {
-    const info = JSON.parse(Buffer.from(value, "base64url").toString("utf8")) as Record<string, unknown>;
-    return {
-      message: typeof info.message === "string" ? info.message.slice(0, 8 * 1024) : "Worker threw exception",
-      name: typeof info.name === "string" ? info.name.slice(0, 200) : "Error",
-      stack: typeof info.stack === "string" ? info.stack.slice(0, 16 * 1024) : undefined,
-      passThrough: info.passThrough === true,
-    };
-  } catch {
-    return { message: "Worker threw exception", name: "Error", passThrough: false };
-  }
 }

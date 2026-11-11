@@ -28,6 +28,18 @@ const MIN_TTL = 60;
 
 const now = () => Math.floor(Date.now() / 1000);
 
+/** 期限切れのキーを消す間隔。期限切れは読むときに隠すが、消さないと data.sqlite が大きくなり続ける */
+const PURGE_INTERVAL_MS = 60 * 60 * 1000;
+const lastPurge = new WeakMap<DatabaseSync, number>();
+
+/** 期限切れのキーを消す（書き込みのついでに、DB ごとに 1 時間に 1 回） */
+function purgeExpired(db: DatabaseSync): void {
+  const t = Date.now();
+  if (t - (lastPurge.get(db) ?? 0) < PURGE_INTERVAL_MS) return;
+  lastPurge.set(db, t);
+  db.prepare("DELETE FROM kv WHERE expiration IS NOT NULL AND expiration <= ?").run(now());
+}
+
 function validateKey(key: unknown): string {
   if (typeof key !== "string" || key === "") throw new TypeError("KV のキーは空でない文字列にしてください");
   if (key === "." || key === "..") throw new TypeError(`KV のキーに "${key}" は使えません`);
@@ -60,9 +72,11 @@ export class KVNamespace {
   #delete: StatementSync;
   #list: StatementSync;
   #namespace: string;
+  #db: DatabaseSync;
 
   constructor(db: DatabaseSync, namespace: string) {
     this.#namespace = namespace;
+    this.#db = db;
     this.#get = db.prepare("SELECT value, metadata FROM kv WHERE namespace = ? AND key = ? AND (expiration IS NULL OR expiration > ?)");
     this.#put = db.prepare("INSERT OR REPLACE INTO kv (namespace, key, value, metadata, expiration) VALUES (?, ?, ?, ?, ?)");
     this.#delete = db.prepare("DELETE FROM kv WHERE namespace = ? AND key = ?");
@@ -123,6 +137,7 @@ export class KVNamespace {
     }
 
     this.#put.run(this.#namespace, key, bytes, metadata, expiration);
+    purgeExpired(this.#db);
   }
 
   async delete(key: string): Promise<void> {

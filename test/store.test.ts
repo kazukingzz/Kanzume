@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { test } from "node:test";
+import { siteDb } from "../src/bindings/db.ts";
 import { Store } from "../src/store.ts";
 import { manifest, tmpDir } from "./helpers.ts";
 
@@ -57,4 +58,15 @@ test("remove でサイトのディレクトリごと消え、また新しくデ�
   assert.equal(fs.existsSync(path.join(store.siteDir, "data.sqlite")), false);
   await store.activate(await store.createRelease(manifest(), [file("worker/index.js", "2")]));
   assert.ok(store.get());
+});
+
+test("デプロイの途中でサイトのディレクトリが消されたら、作り直さずに失敗する", async (t) => {
+  const siteDir = path.join(tmpDir(t), "sites", "gone");
+  const store = new Store(siteDir);
+  await store.init();
+  fs.rmSync(siteDir, { recursive: true });
+  await assert.rejects(store.createRelease(manifest(), [{ path: "worker/a/b.cjs", data: Buffer.from("x") }]), /削除されました/);
+  assert.equal(fs.existsSync(siteDir), false);
+  assert.throws(() => siteDb(siteDir), /ENOENT/);
+  assert.equal(fs.existsSync(siteDir), false);
 });

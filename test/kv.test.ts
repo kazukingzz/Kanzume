@@ -101,3 +101,18 @@ test("namespace（binding）ごとにデータが分かれる", async (t) => {
   await a.put("k", "a");
   assert.equal(await b.get("k"), null);
 });
+
+test("期限切れのキーは、書き込みのついでに DB から消す", async (t) => {
+  const dir = tmpDir(t);
+  t.after(() => closeSiteDb(dir));
+  const db = siteDb(dir);
+  db.prepare("INSERT INTO kv (namespace, key, value, metadata, expiration) VALUES ('KV', 'old', x'00', NULL, 1)").run();
+  await new KVNamespace(db, "KV").put("new", "v");
+  assert.deepEqual(
+    db
+      .prepare("SELECT key FROM kv ORDER BY key")
+      .all()
+      .map((r) => r.key),
+    ["new"],
+  );
+});

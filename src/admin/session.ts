@@ -28,6 +28,8 @@ const MAC = 16;
 export class Challenges {
   #secret = randomBytes(32);
   #used = new Map<string, number>();
+  /** 検証中の challenge */
+  #claimed = new Set<string>();
 
   #mac(body: Buffer): Buffer {
     return createHmac("sha256", this.#secret).update(body).digest().subarray(0, MAC);
@@ -52,8 +54,23 @@ export class Challenges {
     return !this.#used.has(challenge);
   }
 
+  /**
+   * 検証を始めるときに、その challenge を押さえる（同時に送られた同じ応答の 2 つ目以降は通さない）。
+   * 検証に失敗したら release、成功したら markUsed する
+   */
+  claim(challenge: string, purpose: ChallengePurpose, now = Date.now()): boolean {
+    if (this.#claimed.has(challenge) || !this.check(challenge, purpose, now)) return false;
+    this.#claimed.add(challenge);
+    return true;
+  }
+
+  release(challenge: string): void {
+    this.#claimed.delete(challenge);
+  }
+
   // 検証に成功したものだけを記録するので、この Map が増えるのは本当に登録・ログインした回数ぶんだけ
   markUsed(challenge: string, now = Date.now()): void {
+    this.#claimed.delete(challenge);
     for (const [c, at] of this.#used) {
       if (now - at <= CHALLENGE_TTL_MS) break;
       this.#used.delete(c);

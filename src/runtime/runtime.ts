@@ -36,6 +36,8 @@ export interface RuntimeOptions {
   isolation?: "process" | "inline";
   /** process のとき、サイトごとの uid の割り当てを保存する場所 */
   dataDir?: string;
+  /** process のとき、子のイベントループが止まったとみなして止めるまでの時間（省略時は CPU 時間の上限 + 10 秒） */
+  stallMs?: number;
 }
 
 /** 読み込んだ Worker をサイト（siteDir）ごとに 1 つずつ持つ */
@@ -98,7 +100,8 @@ export class Runtime {
 
   preload(release: Release): Promise<WorkerHandle> {
     if (this.#options.isolation === "process") {
-      return ChildWorker.start(release, { dataDir: this.#options.dataDir ?? "/data", timeout: this.#options.cpuTimeoutMs });
+      if (!this.#options.dataDir) return Promise.reject(new Error("子プロセスで動かすには dataDir が要ります"));
+      return ChildWorker.start(release, { dataDir: this.#options.dataDir, timeout: this.#options.cpuTimeoutMs, stallMs: this.#options.stallMs });
     }
     return loadWorker(release, release.siteDir, this.#options.cpuTimeoutMs);
   }
@@ -107,10 +110,7 @@ export class Runtime {
     this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now() });
   }
 
-  /**
-   * 捨てた Worker が子プロセスなら止める。now でなければ、処理中のリクエストと waitUntil を終えてから止める
-   * （止める途中のものも数に含め、上限を超えたら古いものからすぐに止める）
-   */
+  /** 捨てた Worker が子プロセスなら止める。now でなければ、処理中のリクエストと waitUntil を終えてから止める */
   #drop(key: string, now = false): void {
     const entry = this.#entries.get(key);
     this.#entries.delete(key);
@@ -127,10 +127,12 @@ export class Runtime {
   }
 
   #limitRetiring(): void {
+    // 止める途中の子は、処理中のリクエストを終えるか RETIRE_DEADLINE_MS で必ず終わる。使っている子の上限（maxWorkers）には
+    // 数えない（数えると、上限ちょうどで動いているときの再デプロイで、処理中のリクエストをすぐに切ってしまう）。
+    // 再デプロイが続いても増え続けないよう、止める途中の子も maxWorkers までにし、超えたら古いものからすぐに止める
     const max = this.#options.maxWorkers ?? Infinity;
     const retiring = this.#liveRetiring();
-    // 動いている子の合計（使っているもの + 止める途中のもの）を上限に収める
-    for (let i = 0; i < retiring.length && this.#entries.size + retiring.length - i > max; i++) {
+    for (let i = 0; i < retiring.length - max; i++) {
       retiring[i].close?.();
       this.#retiring.delete(retiring[i]);
     }

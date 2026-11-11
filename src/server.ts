@@ -181,7 +181,7 @@ if (import.meta.main) {
     console.error(`[kanzume] 起動できません: ${err instanceof BackupUrlError ? err.message : ((err as Error)?.message ?? err)}`);
     process.exit(1);
   }
-  const { server } = await createServer(config, { backup });
+  const { server, state } = await createServer(config, { backup });
   server.listen(config.port, () => {
     console.log(`[kanzume] listening on :${config.port} (data: ${config.dataDir})`);
     console.log(`[kanzume] 管理画面: ${config.publicUrl ?? `http://localhost:${config.port}`}${ADMIN_PATH}`);
@@ -192,7 +192,10 @@ if (import.meta.main) {
       setTimeout(() => process.exit(0), 8000).unref();
       // 止まる前に、最後の変更を送っておく（間に合わなければあきらめる）
       if (backup) await Promise.race([backup.backupNow("停止").catch(() => {}), new Promise((r) => setTimeout(r, 6000))]);
-      server.close(() => process.exit(0));
+      server.close(async () => {
+        await state.flush().catch(() => {});
+        process.exit(0);
+      });
     });
   }
 }

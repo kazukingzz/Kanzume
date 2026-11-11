@@ -1,16 +1,7 @@
 /**
  * Worker を動かす子プロセス（サイトごとに 1 つ）。本体から起動され、本体とは別のユーザーと
  * Node の権限モデル（--permission）で、そのサイトのリリースと KV / R2 だけを扱える状態で動く。
- *
- * 本体との取り決め（Node の IPC は使わない。本体が自分で読む、ただのパイプにする）:
- * - stdin の 1 行目で { release, siteDir, timeout, vars, socket } を受け取る。stdin が閉じたら（本体がいなくなったら）終わる
- * - 本体への知らせは fd 3 に 1 行 1 つの JSON で書く。Worker を読み込み、Unix ソケットで HTTP を待ち受けたら
- *   { type: "ready" }、失敗したら { type: "error", message }
- * - リクエストは本体がソケットに転送する。x-kanzume-id（リクエスト ID）・x-kanzume-url（元の URL）・
- *   x-kanzume-content-length（元の Content-Length）が付く
- * - 応答にはすべて x-kanzume-handled: 1 を付ける（Node が手前で断ったもの、431 などと見分けるため）
- * - Worker が例外を出したら 500 と x-kanzume-error（base64url の JSON）で返す（HEAD でも消えないようにヘッダーで）
- * - 応答を送り終え、waitUntil も終わったら { type: "done", id, logs, droppedLogs, exceptions, subrequests } を書く
+ * 本体との取り決めは protocol.ts にまとめてある
  */
 import fs from "node:fs";
 import http from "node:http";
@@ -18,25 +9,11 @@ import net from "node:net";
 import { Readable } from "node:stream";
 import { setBusyTimeout } from "../bindings/db.ts";
 import { Invocation, runInvocation } from "../observability/events.ts";
-import type { Release } from "../store.ts";
 import { loadWorker, type LoadedWorker } from "./loader.ts";
+import { type ChildInit, encodeError, HEARTBEAT_MS, NULL_BODY_STATUS, WAIT_UNTIL_LIMIT_MS } from "./protocol.ts";
 
-interface Init {
-  release: Release;
-  siteDir: string;
-  timeout: number;
-  vars: Record<string, unknown>;
-  socket: string;
-}
-
-const WAIT_UNTIL_LIMIT_MS = 30_000;
 /** 本体とのやりとりに使うヘッダー。Worker には渡さない */
 const INTERNAL = new Set(["x-kanzume-id", "x-kanzume-url", "x-kanzume-content-length", "connection", "keep-alive", "transfer-encoding"]);
-/** 本文を持たない応答 */
-const NULL_BODY = new Set([101, 103, 204, 205, 304]);
-/** 例外の情報の上限（ヘッダーに入れるため） */
-const MAX_ERROR_MESSAGE = 8 * 1024;
-const MAX_ERROR_STACK = 16 * 1024;
 
 const out = new net.Socket({ fd: 3, readable: false });
 out.on("error", () => process.exit(0));
@@ -52,33 +29,18 @@ setBusyTimeout(5000);
 // Worker のコードが投げっぱなしにした Promise でプロセスごと落とさない（同じサイトのほかのリクエストを巻き込むため）
 process.on("unhandledRejection", (err) => console.error("[worker] 未処理の Promise の拒否:", err));
 
-function errorHeader(error: unknown, passThrough: boolean): string {
-  const e = error as { message?: unknown; name?: unknown; stack?: unknown } | null;
-  let message: string;
-  try {
-    message = String(e?.message ?? error);
-  } catch {
-    message = "Worker threw exception";
-  }
-  const info = {
-    message: message.slice(0, MAX_ERROR_MESSAGE),
-    name: typeof e?.name === "string" ? e.name.slice(0, 200) : "Error",
-    stack: typeof e?.stack === "string" ? e.stack.slice(0, MAX_ERROR_STACK) : undefined,
-    passThrough,
-  };
-  return Buffer.from(JSON.stringify(info)).toString("base64url");
-}
-
 function sendError(res: http.ServerResponse, error: unknown, passThrough: boolean): void {
   if (res.headersSent) {
     res.destroy();
     return;
   }
-  res.writeHead(500, { "content-type": "text/plain; charset=utf-8", "x-kanzume-handled": "1", "x-kanzume-error": errorHeader(error, passThrough) });
+  res.writeHead(500, { "content-type": "text/plain; charset=utf-8", "x-kanzume-handled": "1", "x-kanzume-error": encodeError(error, passThrough) });
   res.end("Worker threw exception");
 }
 
 async function handle(worker: LoadedWorker, req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  // 応答を送り終える（か、本体との接続が切れる）のを待つ。Worker の処理中に切れることもあるので、最初に待ち始める
+  const sent = new Promise<void>((resolve) => (res.closed ? resolve() : res.once("close", () => resolve())));
   const id = String(req.headers["x-kanzume-id"] ?? "");
   const url = String(req.headers["x-kanzume-url"] ?? "http://localhost/");
   const headers = new Headers();
@@ -101,8 +63,6 @@ async function handle(worker: LoadedWorker, req: http.IncomingMessage, res: http
   const invocation = new Invocation(worker.release.manifest.name, worker.release.id, request, "");
   const result = await runInvocation(invocation, () => worker.fetch(request));
 
-  // 応答を送り終えるまで待つ（送信中のログやストリームのエラーも本体に返すため）
-  const sent = new Promise<void>((resolve) => res.once("close", () => resolve()));
   if (result.response) {
     const response = result.response;
     try {
@@ -118,7 +78,7 @@ async function handle(worker: LoadedWorker, req: http.IncomingMessage, res: http
       sendError(res, err, false);
       return finish(id, invocation, result.waitUntil, sent);
     }
-    if (response.body && method !== "HEAD" && !NULL_BODY.has(response.status)) {
+    if (response.body && method !== "HEAD" && !NULL_BODY_STATUS.has(response.status)) {
       const body = Readable.fromWeb(response.body as never);
       body.on("error", (err) => {
         invocation.exception(err);
@@ -174,12 +134,14 @@ function serve(worker: LoadedWorker, socket: string): Promise<void> {
   });
 }
 
-async function start(init: Init): Promise<void> {
+async function start(init: ChildInit): Promise<void> {
   try {
     const worker = await loadWorker(init.release, init.siteDir, init.timeout, init.vars);
     if (fs.existsSync(init.socket)) fs.rmSync(init.socket);
     await serve(worker, init.socket);
     send({ type: "ready" });
+    // 生きている知らせ。届かなくなったら、本体は Worker がイベントループを止めたとみなして作り直す
+    setInterval(() => send({ type: "alive" }), HEARTBEAT_MS).unref();
   } catch (err) {
     send({ type: "error", message: String((err as Error)?.message ?? err) });
     out.end(() => process.exit(1));
@@ -196,6 +158,6 @@ process.stdin.on("data", (chunk: string) => {
   const nl = input.indexOf("\n");
   if (nl === -1) return;
   started = true;
-  void start(JSON.parse(input.slice(0, nl)) as Init);
+  void start(JSON.parse(input.slice(0, nl)) as ChildInit);
 });
 process.stdin.on("end", () => process.exit(0));

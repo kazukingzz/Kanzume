@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
+import { NULL_BODY_STATUS } from "./runtime/protocol.ts";
 
 /** リクエストされたホストのオリジン */
 export function requestOrigin(req: IncomingMessage): string {
@@ -73,7 +74,7 @@ export async function sendWebResponse(res: ServerResponse, response: Response, m
   const cookies = response.headers.getSetCookie();
   if (cookies.length) headers["set-cookie"] = cookies;
   res.writeHead(response.status, response.statusText || undefined, headers);
-  if (!response.body || method === "HEAD" || response.status === 204 || response.status === 304) {
+  if (!response.body || method === "HEAD" || NULL_BODY_STATUS.has(response.status)) {
     await response.body?.cancel().catch(() => {});
     res.end();
     return;

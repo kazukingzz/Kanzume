@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Challenges } from "../src/admin/session.ts";
 import { AdminState } from "../src/admin/state.ts";
-import { loadConfig } from "../src/config.ts";
+import { ConfigError, loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
 import { tmpDir } from "./helpers.ts";
@@ -218,9 +218,20 @@ test("challenge は署名・用途・期限・使用済みを確かめる", () =
   assert.equal(challenges.check(c, "login", now), false, "一度使ったものは受け付けない");
 });
 
-test("Render の独自ドメインから開いても、Host と同じ Origin なら管理画面の API を使える", async (t) => {
+test("同じ challenge で同時に検証しても、通るのは 1 つだけ（失敗したら押さえを外す）", () => {
+  const challenges = new Challenges();
+  const c = b64(challenges.create("login"));
+  assert.equal(challenges.claim(c, "login"), true);
+  assert.equal(challenges.claim(c, "login"), false, "検証中は 2 つ目を通さない");
+  challenges.release(c);
+  assert.equal(challenges.claim(c, "login"), true, "失敗したらもう一度使える");
+  challenges.markUsed(c);
+  assert.equal(challenges.claim(c, "login"), false);
+});
+
+test("ホスティングの URL があっても、独自ドメインから開けば Host と同じ Origin で管理画面の API を使える", async (t) => {
   const app = await createServer(
-    loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", RENDER_EXTERNAL_URL: "https://kanzume-abcd.onrender.com" }),
+    loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", RAILWAY_PUBLIC_DOMAIN: "kanzume-abcd.up.railway.app" }),
   );
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
@@ -242,9 +253,17 @@ test("Render の独自ドメインから開いても、Host と同じ Origin な
 
 test("KANZUME_ORIGIN を設定したときはその Origin だけを受け付ける", () => {
   assert.equal(loadConfig({ KANZUME_ORIGIN: "https://tekitou.app/" }).origin, "https://tekitou.app");
-  const render = loadConfig({ RENDER_EXTERNAL_URL: "https://kanzume-abcd.onrender.com" });
-  assert.equal(render.origin, undefined);
-  assert.equal(render.publicUrl, "https://kanzume-abcd.onrender.com");
+  const railway = loadConfig({ RAILWAY_PUBLIC_DOMAIN: "kanzume-abcd.up.railway.app" });
+  assert.equal(railway.origin, undefined);
+  assert.equal(railway.publicUrl, "https://kanzume-abcd.up.railway.app", "起動ログに出すだけ");
+});
+
+test("数値の環境変数が数でない・範囲外なら、起動時に止める（上限が効かないまま動かさない）", () => {
+  for (const env of [{ KANZUME_MAX_UPLOAD_MB: "50MB" }, { KANZUME_MAX_WORKERS: "0" }, { PORT: "abc" }, { KANZUME_CPU_TIMEOUT_MS: "-1" }]) {
+    assert.throws(() => loadConfig(env), ConfigError, JSON.stringify(env));
+  }
+  assert.equal(loadConfig({ KANZUME_MAX_UPLOAD_MB: "0.5" }).maxUploadBytes, 512 * 1024);
+  assert.equal(loadConfig({ KANZUME_MAX_WORKERS: "" }).maxWorkers, 5);
 });
 
 test("パスキーの識別名を AAGUID と User-Agent から推測する", () => {

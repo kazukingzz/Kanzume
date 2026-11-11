@@ -40,10 +40,19 @@ export function setBusyTimeout(ms: number): void {
  */
 export const siteDataDir = (siteDir: string) => path.join(siteDir, "data");
 
+/** data/ を作る。サイトのディレクトリが消されていたら作り直さない（ENOENT になる） */
+export function ensureSiteDataDir(siteDir: string): void {
+  try {
+    fs.mkdirSync(siteDataDir(siteDir));
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code !== "EEXIST") throw err;
+  }
+}
+
 export function siteDb(siteDir: string): DatabaseSync {
   let db = open.get(siteDir);
   if (!db) {
-    fs.mkdirSync(siteDataDir(siteDir), { recursive: true });
+    ensureSiteDataDir(siteDir);
     db = new DatabaseSync(path.join(siteDataDir(siteDir), "data.sqlite"));
     // Worker の子プロセスと本体（管理画面のデータタブ）が同時に書くことがあるので、ロックを少し待つ。
     // DatabaseSync は待つ間イベントループを止めるので、全サイトを配信する本体では短くし、子だけ長く待つ（setBusyTimeout）
