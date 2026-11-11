@@ -12,8 +12,7 @@ export function readCookie(req: IncomingMessage, name: string): string | null {
     if (eq === -1 || part.slice(0, eq).trim() !== name) continue;
     try {
       return decodeURIComponent(part.slice(eq + 1).trim());
-    } catch {
-    }
+    } catch {}
   }
   return null;
 }

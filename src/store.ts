@@ -38,7 +38,11 @@ export interface UploadedFile {
 const MANIFEST_FILE = "_manifest.json";
 const KEEP_RELEASES = 3;
 
-const exists = (p: string) => fs.lstat(p).then(() => true, () => false);
+const exists = (p: string) =>
+  fs.lstat(p).then(
+    () => true,
+    () => false,
+  );
 
 export const PROJECT_NAME = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
@@ -105,7 +109,9 @@ export class Store {
     this.#current = release;
     onSwitch?.();
     // ここまでで切り替えは済んでいる。古いリリースの掃除に失敗しても、デプロイは成功のままにする（次の掃除でまた消す）
-    await this.#prune().catch((err) => console.error(`[store] 古いリリースを消せませんでした（${path.basename(this.siteDir)}）:`, (err as Error)?.message ?? err));
+    await this.#prune().catch((err) =>
+      console.error(`[store] 古いリリースを消せませんでした（${path.basename(this.siteDir)}）:`, (err as Error)?.message ?? err),
+    );
   }
 
   async discard(release: Release): Promise<void> {
@@ -126,7 +132,10 @@ export class Store {
 
   async #prune(): Promise<void> {
     const active = this.#current?.id;
-    const ids = (await fs.readdir(this.#releasesDir)).filter((id) => !id.endsWith(".tmp")).sort().reverse();
+    const ids = (await fs.readdir(this.#releasesDir))
+      .filter((id) => !id.endsWith(".tmp"))
+      .sort()
+      .reverse();
     for (const id of ids.slice(KEEP_RELEASES)) {
       if (id !== active) await fs.rm(path.join(this.#releasesDir, id), { recursive: true, force: true });
     }

@@ -56,7 +56,6 @@ function workerFailure(release: Release, error: unknown): Response {
 }
 
 export function createRouter({ config, state, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability }: Deps) {
-
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
     // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
     const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });

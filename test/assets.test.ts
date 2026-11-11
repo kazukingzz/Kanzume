@@ -37,7 +37,10 @@ test("auto-trailing-slash で Workers Static Assets と同じように HTML を�
   assert.equal((await matchAsset(r, req("/index.html")))!.headers.get("location"), "/");
   assert.equal(await matchAsset(r, req("/nope")), null);
   // 日本語のパスは、リダイレクト先をエンコードして返す（そのままではヘッダーに入れられない）
-  assert.equal((await matchAsset(r, req("/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8.html")))!.headers.get("location"), "/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8");
+  assert.equal(
+    (await matchAsset(r, req("/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8.html")))!.headers.get("location"),
+    "/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8",
+  );
   assert.equal(await (await matchAsset(r, req("/%E6%97%A5%E6%9C%AC%E8%AA%9E/%E3%83%9A%E3%83%BC%E3%82%B8")))!.text(), "jp");
 });
 

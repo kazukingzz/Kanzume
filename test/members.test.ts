@@ -21,12 +21,14 @@ async function start(t: TestContext) {
     await app.state.flush();
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const as = (cookie: string | null) => (p: string, method = "GET", body?: unknown) =>
-    fetch(`${base}/_admin/kanzume/api${p}`, {
-      method,
-      headers: { ...(cookie ? { cookie } : {}), origin: base, "content-type": "application/json" },
-      body: body === undefined ? undefined : JSON.stringify(body),
-    });
+  const as =
+    (cookie: string | null) =>
+    (p: string, method = "GET", body?: unknown) =>
+      fetch(`${base}/_admin/kanzume/api${p}`, {
+        method,
+        headers: { ...(cookie ? { cookie } : {}), origin: base, "content-type": "application/json" },
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
   const deploy = async (name: string) => {
     await app.sites.ensure(name);
     const result = await deployFromFiles(
@@ -59,7 +61,10 @@ test("ユーザーのない admin.json は、既存のパスキーとセッシ�
   );
   const state = new AdminState(dir);
   await state.init();
-  assert.deepEqual(state.users.map((u) => [u.id, u.role]), [["legacy", "admin"]]);
+  assert.deepEqual(
+    state.users.map((u) => [u.id, u.role]),
+    [["legacy", "admin"]],
+  );
   assert.equal(state.credentialsOf("legacy").length, 1);
   assert.equal(state.sessionCount, 1);
   await state.flush();
@@ -78,7 +83,11 @@ test("招待リンクは 1 回だけ使え、期限切れ・取り消し済み�
   const { url } = (await created.json()) as { url: string };
   const token = url.split("#/invite/")[1];
   assert.match(token, /^kzi_/);
-  assert.deepEqual(await (await app.as(null)(`/invite?token=${token}`)).json(), { valid: true, site: "blog", expiresAt: app.state.checkInvite(token)!.expiresAt });
+  assert.deepEqual(await (await app.as(null)(`/invite?token=${token}`)).json(), {
+    valid: true,
+    site: "blog",
+    expiresAt: app.state.checkInvite(token)!.expiresAt,
+  });
   // パスキーの登録画面は招待で開ける（チーム ID なし）
   assert.equal((await app.as(null)("/register/options", "POST", { inviteToken: token, name: "太郎" })).status, 200);
   assert.equal((await app.as(null)("/register/options", "POST", { inviteToken: "kzi_nope" })).status, 403);
@@ -100,8 +109,14 @@ test("招待リンクは 1 回だけ使え、期限切れ・取り消し済み�
   // 取り消しと期限切れ
   const third = (await (await app.admin("/sites/blog/invites", "POST", {})).json()) as { id: string; url: string };
   const members = (await (await app.admin("/sites/blog/members")).json()) as { members: { name: string }[]; invites: { id: string }[] };
-  assert.deepEqual(members.members.map((m) => m.name), ["太郎"]);
-  assert.deepEqual(members.invites.map((i) => i.id), [third.id]);
+  assert.deepEqual(
+    members.members.map((m) => m.name),
+    ["太郎"],
+  );
+  assert.deepEqual(
+    members.invites.map((i) => i.id),
+    [third.id],
+  );
   assert.equal((await app.admin(`/sites/blog/invites/${third.id}`, "DELETE")).status, 200);
   assert.equal(app.state.checkInvite(third.url.split("#/invite/")[1]), null);
   const { token: expired, invite } = await app.state.createInvite("blog", "x");
@@ -124,8 +139,14 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
   assert.deepEqual(overview.me, { id: user.id, name: "参加者", role: "member", sites: ["blog"] });
   assert.equal(overview.token, undefined);
   assert.equal(overview.teamId, undefined);
-  assert.deepEqual(((await (await api("/sites")).json()) as { sites: { name: string }[] }).sites.map((s) => s.name), ["blog"]);
-  assert.deepEqual(((await (await api("/repos")).json()) as { repos: { name: string }[] }).repos.map((r) => r.name), ["blog"]);
+  assert.deepEqual(
+    ((await (await api("/sites")).json()) as { sites: { name: string }[] }).sites.map((s) => s.name),
+    ["blog"],
+  );
+  assert.deepEqual(
+    ((await (await api("/repos")).json()) as { repos: { name: string }[] }).repos.map((r) => r.name),
+    ["blog"],
+  );
 
   // 自分のサイト
   assert.equal((await api("/sites/blog")).status, 200);
@@ -158,7 +179,10 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
 
   // 自分のパスキーだけが見える
   const passkeys = (await (await api("/passkeys")).json()) as { passkeys: { id: string }[] };
-  assert.deepEqual(passkeys.passkeys.map((p) => p.id), [`cred-${user.id}`]);
+  assert.deepEqual(
+    passkeys.passkeys.map((p) => p.id),
+    [`cred-${user.id}`],
+  );
   assert.equal((await api("/passkeys/rename", "POST", { id: "admin-cred", name: "x" })).status, 404);
   assert.equal((await api(`/passkeys/cred-${user.id}`, "DELETE")).status, 400, "最後のパスキーは消せない");
   assert.equal((await api("/me", "PUT", { name: "  花子 " })).status, 200);
@@ -175,7 +199,13 @@ test("管理者はメンバーのロールを変え、サイトから外し、�
   const { user, api } = await member(app, ["blog"]);
 
   const users = (await (await app.admin("/users")).json()) as { users: { id: string; role: string; passkeys: number; me: boolean }[] };
-  assert.deepEqual(users.users.map((u) => [u.role, u.passkeys, u.me]), [["admin", 1, true], ["member", 1, false]]);
+  assert.deepEqual(
+    users.users.map((u) => [u.role, u.passkeys, u.me]),
+    [
+      ["admin", 1, true],
+      ["member", 1, false],
+    ],
+  );
   const adminId = users.users[0].id;
   assert.equal((await app.admin(`/users/${adminId}`, "PUT", { role: "member" })).status, 400, "最後の管理者は降格できない");
   assert.equal((await app.admin(`/users/${adminId}`, "DELETE")).status, 400, "自分は削除できない");
@@ -213,7 +243,10 @@ test("メンバーの個人トークンは、参加しているサイトへの /
   assert.equal(other.status, 403);
   assert.match(((await other.json()) as { error: string }).error, /参加しているサイト（blog）にしかデプロイできません/);
   assert.equal(app.sites.get("shop")!.get(), undefined, "ほかのサイトにはデプロイされない");
-  assert.ok(app.history.list().every((d) => d.name !== "shop"), "ほかのサイトの履歴にも残さない");
+  assert.ok(
+    app.history.list().every((d) => d.name !== "shop"),
+    "ほかのサイトの履歴にも残さない",
+  );
   // 消されたユーザーのトークンは使えない
   await app.state.removeUser(app.state.users.find((u) => u.role === "member")!.id);
   assert.equal((await upload("blog")).status, 401);
@@ -230,7 +263,10 @@ test("サイトを先に作り（未デプロイ）、デプロイ前でも設�
   assert.equal((await app.admin("/sites", "POST", { name: "news" })).status, 400, "ほかのサイトのサブドメインとは重ねない");
 
   const list = (await (await app.admin("/sites")).json()) as { sites: { name: string; deployed: boolean; deployedAt: string | null }[] };
-  assert.deepEqual(list.sites.map((s) => [s.name, s.deployed, s.deployedAt]), [["blog", false, null]]);
+  assert.deepEqual(
+    list.sites.map((s) => [s.name, s.deployed, s.deployedAt]),
+    [["blog", false, null]],
+  );
   const detail = (await (await app.admin("/sites/blog")).json()) as { deployed: boolean; release: unknown; repo: boolean };
   assert.deepEqual({ deployed: detail.deployed, release: detail.release, repo: detail.repo }, { deployed: false, release: null, repo: false });
   assert.equal((await app.admin("/sites/blog/files")).status, 404);
@@ -283,8 +319,24 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   await app.sites.ensure("blog");
   const result = await deployFromFiles(
     [
-      { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: "blog", main: "index.js", compatibility_date: "2026-10-01", kv_namespaces: [{ binding: "KV", id: "x" }], r2_buckets: [{ binding: "FILES", bucket_name: "files" }] })) },
-      { path: "index.js", data: Buffer.from(`export default { async fetch(r, env) { await env.KV.put("hello", "world", { metadata: { a: 1 } }); await env.FILES.put("img/a.txt", "abc", { httpMetadata: { contentType: "text/plain" } }); await env.FILES.put("b.bin", new Uint8Array([0, 1, 2])); return new Response("ok"); } };`) },
+      {
+        path: "wrangler.jsonc",
+        data: Buffer.from(
+          JSON.stringify({
+            name: "blog",
+            main: "index.js",
+            compatibility_date: "2026-10-01",
+            kv_namespaces: [{ binding: "KV", id: "x" }],
+            r2_buckets: [{ binding: "FILES", bucket_name: "files" }],
+          }),
+        ),
+      },
+      {
+        path: "index.js",
+        data: Buffer.from(
+          `export default { async fetch(r, env) { await env.KV.put("hello", "world", { metadata: { a: 1 } }); await env.FILES.put("img/a.txt", "abc", { httpMetadata: { contentType: "text/plain" } }); await env.FILES.put("b.bin", new Uint8Array([0, 1, 2])); return new Response("ok"); } };`,
+        ),
+      },
     ],
     app.deployer,
     { source: {}, log: new DeployLog("t"), buildLog: [], autoRoot: true, siteName: "blog" },
@@ -304,11 +356,20 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   assert.equal((await app.admin("/sites/blog/kv/KV/value?key=new")).status, 404);
 
   assert.deepEqual(await (await app.admin("/sites/blog/r2")).json(), { buckets: [{ name: "files", binding: "FILES", count: 2, size: 6 }] });
-  const top = (await (await app.admin("/sites/blog/r2/files/objects")).json()) as { objects: { key: string; contentType: string | null }[]; prefixes: string[] };
+  const top = (await (await app.admin("/sites/blog/r2/files/objects")).json()) as {
+    objects: { key: string; contentType: string | null }[];
+    prefixes: string[];
+  };
   assert.deepEqual(top.prefixes, ["img/"]);
-  assert.deepEqual(top.objects.map((o) => o.key), ["b.bin"]);
+  assert.deepEqual(
+    top.objects.map((o) => o.key),
+    ["b.bin"],
+  );
   const inner = (await (await app.admin("/sites/blog/r2/files/objects?prefix=img/")).json()) as { objects: { key: string; contentType: string | null }[] };
-  assert.deepEqual(inner.objects.map((o) => [o.key, o.contentType]), [["img/a.txt", "text/plain"]]);
+  assert.deepEqual(
+    inner.objects.map((o) => [o.key, o.contentType]),
+    [["img/a.txt", "text/plain"]],
+  );
   assert.deepEqual(await (await app.admin("/sites/blog/r2/files/preview?key=img/a.txt")).json(), { text: "abc", size: 3, truncated: false });
   assert.equal(((await (await app.admin("/sites/blog/r2/files/preview?key=b.bin")).json()) as { text: string | null }).text, null);
   const download = await app.admin("/sites/blog/r2/files/object?key=img/a.txt");
@@ -316,7 +377,7 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
   assert.match(download.headers.get("content-disposition") ?? "", /^attachment/);
   const up = await fetch(`${app.base}/_admin/kanzume/api/sites/blog/r2/files/object?key=up/x.json`, {
     method: "PUT",
-    headers: { cookie: (await app.adminCookie()), origin: app.base, "x-object-content-type": "application/json" },
+    headers: { cookie: await app.adminCookie(), origin: app.base, "x-object-content-type": "application/json" },
     body: '{"x":1}',
   });
   assert.equal(up.status, 200);
@@ -330,14 +391,18 @@ test("初回のパスキー登録は verify でもセットアップトークン
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.server.close());
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const post = (p: string, body: unknown) => fetch(`${base}/_admin/kanzume/api${p}`, { method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
+  const post = (p: string, body: unknown) =>
+    fetch(`${base}/_admin/kanzume/api${p}`, { method: "POST", headers: { origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
   const { challenge } = (await (await post("/register/options", { setupToken: "setup" })).json()) as { challenge: string };
   const response = {
     id: "x",
     rawId: "x",
     type: "public-key",
     clientExtensionResults: {},
-    response: { clientDataJSON: Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: base })).toString("base64url"), attestationObject: "eA" },
+    response: {
+      clientDataJSON: Buffer.from(JSON.stringify({ type: "webauthn.create", challenge, origin: base })).toString("base64url"),
+      attestationObject: "eA",
+    },
   };
   assert.equal((await post("/register/verify", { response })).status, 403);
   const ok = await post("/register/verify", { setupToken: "setup", response });
@@ -388,7 +453,12 @@ test("URL にできないドメインは保存しない。管理画面で追加�
   const res = await fetch(`${app.base}/_api/deploy`, {
     method: "POST",
     headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": "news" },
-    body: gzipSync(rawTar([rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "news", compatibility_date: "2026-10-01", assets: { directory: "public" } }))), rawTarEntry("assets/index.html", Buffer.from("x"))])),
+    body: gzipSync(
+      rawTar([
+        rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "news", compatibility_date: "2026-10-01", assets: { directory: "public" } }))),
+        rawTarEntry("assets/index.html", Buffer.from("x")),
+      ]),
+    ),
   });
   assert.equal(res.status, 404, "管理画面で追加していないサイトにはデプロイできない");
   assert.match(((await res.json()) as { error: string }).error, /サイト news がありません/);

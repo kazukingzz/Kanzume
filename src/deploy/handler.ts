@@ -41,7 +41,9 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
     const access = authorized(req, state);
     if (!access) return sendJson(res, 401, { error: "Token が違います" });
     // デプロイ先は Action の site で指定する（wrangler の name は使わない）。サイトは先に管理画面で追加しておく
-    const site = String(req.headers["x-kanzume-site"] ?? "").trim().toLowerCase();
+    const site = String(req.headers["x-kanzume-site"] ?? "")
+      .trim()
+      .toLowerCase();
     if (!site) return sendJson(res, 400, { error: "デプロイ先のサイトを指定してください（Action の site）" });
     if (access.sites !== null && !access.sites.includes(site)) {
       return sendJson(res, 403, { error: `このトークンでは、参加しているサイト（${access.sites.join(", ") || "なし"}）にしかデプロイできません` });
@@ -73,7 +75,11 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
       log,
     });
     if (!result.ok) return sendJson(res, 400, { error: result.error });
-    sendJson(res, 200, { name: result.release.manifest.name, release: result.release.id, url: sites.urls(rootOrigin(req, config.origin, state.domain), result.release.manifest.name).url });
+    sendJson(res, 200, {
+      name: result.release.manifest.name,
+      release: result.release.id,
+      url: sites.urls(rootOrigin(req, config.origin, state.domain), result.release.manifest.name).url,
+    });
   }
 
   async function handleReport(req: IncomingMessage, res: ServerResponse): Promise<void> {

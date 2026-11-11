@@ -198,27 +198,32 @@ export class ChildWorker {
     this.#socketDir = socketDir;
     // 子は信頼できない（Worker が vm から抜け出せる）。Node の IPC は使わず、fd 3 のパイプを 1 行ずつ自分で読む。
     // 行の長さに上限を設け、JSON として読めないものや形の違うものは捨てる（本体を落とさない）
-    readLines(child.stdio[3] as NodeJS.ReadableStream, MAX_LINE_BYTES, (line) => {
-      let m: unknown;
-      try {
-        m = JSON.parse(line);
-      } catch {
-        return;
-      }
-      if (!m || typeof m !== "object" || Array.isArray(m)) return;
-      const msg = m as Record<string, unknown>;
-      if (msg.type === "done") {
-        if (typeof msg.id !== "string") return;
-        const resolve = this.#pending.get(msg.id);
-        if (!resolve) return;
-        this.#pending.delete(msg.id);
-        resolve(msg);
-        this.#maybeFinishRetire();
-      } else this.#onMessage?.(msg);
-    }, () => {
-      console.error(`[runtime] Worker のプロセスが大きすぎる知らせを送ったので止めます（${release.manifest.name}）`);
-      this.#kill();
-    });
+    readLines(
+      child.stdio[3] as NodeJS.ReadableStream,
+      MAX_LINE_BYTES,
+      (line) => {
+        let m: unknown;
+        try {
+          m = JSON.parse(line);
+        } catch {
+          return;
+        }
+        if (!m || typeof m !== "object" || Array.isArray(m)) return;
+        const msg = m as Record<string, unknown>;
+        if (msg.type === "done") {
+          if (typeof msg.id !== "string") return;
+          const resolve = this.#pending.get(msg.id);
+          if (!resolve) return;
+          this.#pending.delete(msg.id);
+          resolve(msg);
+          this.#maybeFinishRetire();
+        } else this.#onMessage?.(msg);
+      },
+      () => {
+        console.error(`[runtime] Worker のプロセスが大きすぎる知らせを送ったので止めます（${release.manifest.name}）`);
+        this.#kill();
+      },
+    );
     // 起動の失敗（EACCES / EAGAIN など）。リスナーがないと本体ごと落ちる
     child.on("error", (err) => {
       console.error(`[runtime] Worker のプロセスでエラー（${release.manifest.name}）:`, err.message);
@@ -370,7 +375,10 @@ export class ChildWorker {
       const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
         const req = http.request({ socketPath: this.#socket, method: request.method, path: "/", headers, maxHeaderSize: 256 * 1024 }, resolve);
         req.on("error", reject);
-        if (request.body) Readable.fromWeb(request.body as never).on("error", (err) => req.destroy(err)).pipe(req);
+        if (request.body)
+          Readable.fromWeb(request.body as never)
+            .on("error", (err) => req.destroy(err))
+            .pipe(req);
         else req.end();
       });
       res.once("close", finish);

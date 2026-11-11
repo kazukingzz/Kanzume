@@ -37,7 +37,13 @@ test("複数キーの get は Map を返す", async (t) => {
   const { kv: ns } = kv(t);
   await ns.put("a", "1");
   const m = (await ns.get(["a", "b"])) as Map<string, unknown>;
-  assert.deepEqual([...m], [["a", "1"], ["b", null]]);
+  assert.deepEqual(
+    [...m],
+    [
+      ["a", "1"],
+      ["b", null],
+    ],
+  );
 });
 
 test("getWithMetadata で metadata が返る", async (t) => {
@@ -77,7 +83,10 @@ test("list は prefix で絞り込み、cursor でページングできる", asy
   const { kv: ns } = kv(t);
   for (const k of ["user:1", "user:2", "user:3", "post:1"]) await ns.put(k, k, { metadata: { k } });
   const page1 = (await ns.list({ prefix: "user:", limit: 2 })) as { keys: { name: string }[]; list_complete: boolean; cursor: string };
-  assert.deepEqual(page1.keys.map((k) => k.name), ["user:1", "user:2"]);
+  assert.deepEqual(
+    page1.keys.map((k) => k.name),
+    ["user:1", "user:2"],
+  );
   assert.equal(page1.list_complete, false);
   const page2 = (await ns.list({ prefix: "user:", limit: 2, cursor: page1.cursor })) as { keys: { name: string; metadata: unknown }[]; list_complete: boolean };
   assert.deepEqual(page2.keys, [{ name: "user:3", metadata: { k: "user:3" } }]);

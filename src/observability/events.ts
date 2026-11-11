@@ -114,7 +114,11 @@ export class Invocation {
       for (const e of d.exceptions.slice(0, MAX_EXCEPTIONS)) {
         if (!e || typeof e !== "object" || this.detail.exceptions.length >= MAX_EXCEPTIONS) continue;
         const x = e as Record<string, unknown>;
-        this.detail.exceptions.push({ name: str(x.name, 200) || "Error", message: str(x.message, MAX_MESSAGE), stack: typeof x.stack === "string" ? x.stack.slice(0, MAX_MESSAGE * 4) : null });
+        this.detail.exceptions.push({
+          name: str(x.name, 200) || "Error",
+          message: str(x.message, MAX_MESSAGE),
+          stack: typeof x.stack === "string" ? x.stack.slice(0, MAX_MESSAGE * 4) : null,
+        });
       }
     }
     if (Array.isArray(d.subrequests)) {
@@ -304,9 +308,7 @@ export class Observability {
 
   event(site: string, id: number) {
     this.flush();
-    const row = this.#db.prepare("SELECT * FROM events WHERE site = ? AND id = ?").get(site, id) as
-      | (EventRow & { detail: string })
-      | undefined;
+    const row = this.#db.prepare("SELECT * FROM events WHERE site = ? AND id = ?").get(site, id) as (EventRow & { detail: string }) | undefined;
     if (!row) return null;
     return {
       id: row.id,
@@ -329,9 +331,13 @@ export class Observability {
     const { range: span, step } = BUCKETS[range] ?? BUCKETS["24h"];
     const end = Math.ceil(now / step) * step;
     const start = end - span;
-    const rows = this.#db
-      .prepare("SELECT ts, status, outcome, duration_ms, kind FROM events WHERE site = ? AND ts >= ? ORDER BY ts")
-      .all(site, start) as { ts: number; status: number; outcome: string; duration_ms: number; kind: string }[];
+    const rows = this.#db.prepare("SELECT ts, status, outcome, duration_ms, kind FROM events WHERE site = ? AND ts >= ? ORDER BY ts").all(site, start) as {
+      ts: number;
+      status: number;
+      outcome: string;
+      duration_ms: number;
+      kind: string;
+    }[];
 
     const count = span / step;
     const buckets = Array.from({ length: count }, (_, i) => ({ t: start + i * step, ok: 0, errors: 0, durations: [] as number[] }));

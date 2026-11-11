@@ -110,11 +110,7 @@ function newTeamId(): string {
 }
 
 export function normalizeTeamId(input: string): string {
-  return input
-    .toUpperCase()
-    .replace(/[\s-]/g, "")
-    .replace(/O/g, "0")
-    .replace(/[IL]/g, "1");
+  return input.toUpperCase().replace(/[\s-]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
 }
 
 export function formatTeamId(id: string): string {
@@ -128,7 +124,11 @@ const DOMAIN = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*(?::\\d{1,5})?$`);
 
 /** 入力されたドメインを example.com の形にそろえる。空なら null（自動）。https:// や末尾の / は外す */
 export function normalizeDomain(input: string): string | null {
-  const v = input.trim().toLowerCase().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+  const v = input
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, "")
+    .replace(/\/+$/, "");
   if (!v) return null;
   if (v.length > 253 || !DOMAIN.test(v)) throw new DomainError("ドメインの形式が正しくありません（例: example.com）");
   // URL として使えるか（ポートの範囲、数字だけの最後のラベルなど）。サイトの URL を作るときに new URL が失敗しないようにする
@@ -448,7 +448,13 @@ export class AdminState {
   }
 
   async createUser(name: string, role: Role, sites: string[] = []): Promise<User> {
-    const user: User = { id: randomBytes(16).toString("base64url"), name: normalizeUserName(name) || (role === "admin" ? "管理者" : "メンバー"), role, sites: [...new Set(sites)], createdAt: new Date().toISOString() };
+    const user: User = {
+      id: randomBytes(16).toString("base64url"),
+      name: normalizeUserName(name) || (role === "admin" ? "管理者" : "メンバー"),
+      role,
+      sites: [...new Set(sites)],
+      createdAt: new Date().toISOString(),
+    };
     this.#state.users = [...this.users, user];
     await this.#save();
     return user;
@@ -461,7 +467,8 @@ export class AdminState {
   async updateUser(id: string, patch: { name?: string; role?: Role; addSite?: string; removeSite?: string }): Promise<User> {
     const user = this.user(id);
     if (!user) throw new UserError("ユーザーが見つかりません");
-    if (patch.role && patch.role !== user.role && user.role === "admin" && this.#admins().length <= 1) throw new UserError("最後の管理者はメンバーにできません");
+    if (patch.role && patch.role !== user.role && user.role === "admin" && this.#admins().length <= 1)
+      throw new UserError("最後の管理者はメンバーにできません");
     if (patch.name !== undefined) {
       const name = normalizeUserName(patch.name);
       if (!name) throw new UserError("名前を入力してください");
@@ -554,7 +561,13 @@ export class AdminState {
   async redeemInviteAsNewUser(token: string, name: string): Promise<User | null> {
     const invite = this.checkInvite(token);
     if (!invite) return null;
-    const user: User = { id: randomBytes(16).toString("base64url"), name: normalizeUserName(name) || "メンバー", role: "member", sites: [invite.site], createdAt: new Date().toISOString() };
+    const user: User = {
+      id: randomBytes(16).toString("base64url"),
+      name: normalizeUserName(name) || "メンバー",
+      role: "member",
+      sites: [invite.site],
+      createdAt: new Date().toISOString(),
+    };
     invite.usedAt = new Date().toISOString();
     invite.usedBy = user.id;
     this.#state.users = [...this.users, user];

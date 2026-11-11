@@ -146,7 +146,9 @@ export class Repos {
   }
 
   async log(name: string, ref: string, limit = 50) {
-    const { stdout } = await this.git(name, ["log", `--max-count=${limit}`, "--format=%H%x00%an%x00%aI%x00%s", safeRef(ref), "--"]).catch(() => ({ stdout: "" }));
+    const { stdout } = await this.git(name, ["log", `--max-count=${limit}`, "--format=%H%x00%an%x00%aI%x00%s", safeRef(ref), "--"]).catch(() => ({
+      stdout: "",
+    }));
     return String(stdout)
       .split("\n")
       .filter(Boolean)
@@ -252,7 +254,9 @@ export class Repos {
       // -f: アップロードに .gitignore があっても、デプロイしたファイルはすべて入れる
       await this.git(name, ["-C", work, "-c", "core.autocrlf=false", "--work-tree", work, "add", "--all", "--force", "."], { env });
       const tree = String((await this.git(name, ["write-tree"], { env })).stdout).trim();
-      pending.sha = String((await this.git(name, ["commit-tree", tree, ...(pending.parent ? ["-p", pending.parent] : []), "-m", options.message], { env })).stdout).trim();
+      pending.sha = String(
+        (await this.git(name, ["commit-tree", tree, ...(pending.parent ? ["-p", pending.parent] : []), "-m", options.message], { env })).stdout,
+      ).trim();
       return pending;
     } catch (err) {
       await this.discardCommit(pending);
@@ -313,7 +317,13 @@ export interface PendingCommit {
  */
 async function moveObjects(from: string, to: string): Promise<void> {
   const move = async (src: string, dest: string) => {
-    if (await fs.stat(dest).then(() => true, () => false)) return;
+    if (
+      await fs.stat(dest).then(
+        () => true,
+        () => false,
+      )
+    )
+      return;
     await fs.mkdir(path.dirname(dest), { recursive: true });
     await fs.rename(src, dest).catch(async (err: NodeJS.ErrnoException) => {
       // 一時ディレクトリが別のファイルシステムにあるとき

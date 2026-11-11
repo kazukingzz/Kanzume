@@ -157,7 +157,9 @@ test("再デプロイで新しい子に入れ替わり、読み込めないデ�
   await assert.rejects(runtime.preload(broken), /boom/);
   assert.equal(w1.closed, false);
 
-  const v2 = await store.createRelease(manifest({ name: "a" }), [{ path: "worker/index.cjs", data: Buffer.from(`module.exports = { fetch: () => new Response("v2") };`) }]);
+  const v2 = await store.createRelease(manifest({ name: "a" }), [
+    { path: "worker/index.cjs", data: Buffer.from(`module.exports = { fetch: () => new Response("v2") };`) },
+  ]);
   const w2 = (await runtime.preload(v2)) as ChildWorker;
   runtime.install(w2);
   await waitClosed(w1);
@@ -211,7 +213,9 @@ test("訪問者が内部用のヘッダーを付けても、URL や ID を偽れ
   const { dataDir, runtime } = setup(t);
   const r = await site(dataDir, "a", EDGE);
   const w = await runtime.get(r);
-  const res = await w.fetch(new Request("http://a.example.com/path?q=1", { headers: { host: "a.example.com", "x-kanzume-url": "x", "x-kanzume-id": "spoof" } }));
+  const res = await w.fetch(
+    new Request("http://a.example.com/path?q=1", { headers: { host: "a.example.com", "x-kanzume-url": "x", "x-kanzume-id": "spoof" } }),
+  );
   const body = (await res.response!.json()) as { url: string; host: string; id: string | null; pid: number };
   assert.equal(body.url, "http://a.example.com/path?q=1");
   assert.equal(body.host, "a.example.com");
@@ -236,7 +240,7 @@ test("Worker の不正な応答や長い例外は、そのリクエストだけ�
   await Promise.all([...bad.waitUntil, ...header.waitUntil, ...long.waitUntil]);
   assert.equal(w.closed, false);
   assert.equal(w.pid, pid);
-  assert.equal((await (await w.fetch(new Request("http://x/"))).response!.json() as { pid: number }).pid, pid);
+  assert.equal(((await (await w.fetch(new Request("http://x/"))).response!.json()) as { pid: number }).pid, pid);
 });
 
 test("子が本体への知らせのパイプに不正な行を書いても本体は落ちない", async (t) => {
@@ -246,7 +250,7 @@ test("子が本体への知らせのパイプに不正な行を書いても本�
   const res = await w.fetch(new Request("http://x/bad-ipc"));
   assert.equal(await res.response!.text(), "sent");
   await Promise.all(res.waitUntil);
-  assert.equal((await (await w.fetch(new Request("http://x/"))).response!.json() as { pid: number }).pid, w.pid);
+  assert.equal(((await (await w.fetch(new Request("http://x/"))).response!.json()) as { pid: number }).pid, w.pid);
 });
 
 test("再デプロイで外した子も、処理中の waitUntil は最後まで動く", async (t) => {
@@ -309,7 +313,14 @@ test("止める途中の子もリソースに出て、サイトの削除（now�
   runtime.install(w2);
   await new Promise((r) => setTimeout(r, 10));
   assert.equal(w1.closed, false);
-  assert.deepEqual(runtime.processes().map((p) => p.pid).sort(), [w1.pid, w2.pid].sort(), "止める途中の子もリソースに出る");
+  assert.deepEqual(
+    runtime
+      .processes()
+      .map((p) => p.pid)
+      .sort(),
+    [w1.pid, w2.pid].sort(),
+    "止める途中の子もリソースに出る",
+  );
 
   // デプロイの前に古いリリースを読んだリクエストは、新しい子で受ける（新しい子を追い出さない）
   assert.equal(await runtime.get(v1), w2);

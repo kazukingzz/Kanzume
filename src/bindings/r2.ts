@@ -80,7 +80,10 @@ function normalizeHttpMetadata(input: unknown): Record<string, string> {
 }
 
 function stripEtag(etag: string): string {
-  return etag.trim().replace(/^W\//, "").replace(/^"(.*)"$/, "$1");
+  return etag
+    .trim()
+    .replace(/^W\//, "")
+    .replace(/^"(.*)"$/, "$1");
 }
 
 function etagMatches(condition: string, etag: string): boolean {

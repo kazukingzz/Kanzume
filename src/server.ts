@@ -67,7 +67,13 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const state = new AdminState(config.dataDir);
   await state.init();
   if (config.isolation === "process") await protectDataDir(config.dataDir, sites);
-  const runtime = new Runtime({ idleMs: config.workerIdleMs, cpuTimeoutMs: config.cpuTimeoutMs, maxWorkers: config.maxWorkers, isolation: config.isolation, dataDir: config.dataDir });
+  const runtime = new Runtime({
+    idleMs: config.workerIdleMs,
+    cpuTimeoutMs: config.cpuTimeoutMs,
+    maxWorkers: config.maxWorkers,
+    isolation: config.isolation,
+    dataDir: config.dataDir,
+  });
 
   const metaDb = openMetaDb(config.dataDir);
   const history = new DeployHistory(metaDb);

@@ -68,7 +68,10 @@ export class Runtime {
       return existing.worker;
     }
     const entry: Entry = { release, worker: this.preload(release), lastUsed: Date.now() };
-    void entry.worker.then((w) => (entry.handle = w), () => {});
+    void entry.worker.then(
+      (w) => (entry.handle = w),
+      () => {},
+    );
     this.#set(entry);
     entry.worker.catch(() => {
       if (this.#entries.get(release.siteDir) === entry) this.#entries.delete(release.siteDir);

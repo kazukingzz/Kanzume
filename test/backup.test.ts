@@ -27,7 +27,13 @@ const WORKER = `export default {
     return Response.json({ kv: await env.KV.get(key), r2: obj ? await obj.text() : null });
   },
 };`;
-const WRANGLER = JSON.stringify({ name: "app", main: "index.js", compatibility_date: "2026-10-01", kv_namespaces: [{ binding: "KV", id: "x" }], r2_buckets: [{ binding: "BUCKET", bucket_name: "files" }] });
+const WRANGLER = JSON.stringify({
+  name: "app",
+  main: "index.js",
+  compatibility_date: "2026-10-01",
+  kv_namespaces: [{ binding: "KV", id: "x" }],
+  r2_buckets: [{ binding: "BUCKET", bucket_name: "files" }],
+});
 
 /** 起動と同じ手順（復元 → サーバー作成）で立ち上げる */
 async function boot(t: TestContext, config: Config) {
@@ -158,7 +164,10 @@ test("残す世代の数を超えた古い世代と、使われなくなった�
   assert.deepEqual(await app.backup.snapshots(), names.slice(1));
   // 最初の世代だけが参照していたデータ（K=/x の settings.json など）は消え、残りの世代は復元できる
   const after = new Set(await local.list("blobs/"));
-  assert.ok(before.some((k) => !after.has(k)), "使われなくなったデータが消える");
+  assert.ok(
+    before.some((k) => !after.has(k)),
+    "使われなくなったデータが消える",
+  );
   const fresh = new Backup(make().backup!, tmpDir(t));
   await fresh.restoreIfEmpty();
   assert.equal(fresh.lastRestore?.ok, true);
@@ -217,10 +226,26 @@ test("KANZUME_BACKUP_URL を読む（パーセントエンコード・プレフ�
   assert.equal(aws.kind === "s3" && aws.region, "ap-northeast-1");
   const minio = parseBackupUrl("s3+http://A:B@localhost:9000/b")!;
   assert.equal(minio.kind === "s3" && minio.endpoint, "http://localhost:9000");
-  assert.deepEqual(parseBackupUrl("file:///var/backup%20dir"), { kind: "file", dir: "/var/backup dir", secret: "kanzume-local-backup", previous: undefined, keep: 48, intervalMs: 3_600_000, target: "file:///var/backup dir" });
+  assert.deepEqual(parseBackupUrl("file:///var/backup%20dir"), {
+    kind: "file",
+    dir: "/var/backup dir",
+    secret: "kanzume-local-backup",
+    previous: undefined,
+    keep: 48,
+    intervalMs: 3_600_000,
+    target: "file:///var/backup dir",
+  });
 
   // エラーに URL（認証情報）を含めない
-  for (const bad of ["s3://AKID:TOPSECRET@host", "s3://host/bucket", "http://AKID:TOPSECRET@host/b", "s3://AKID:TOP%ZZSECRET@host/b", "s3://AKID:TOPSECRET@host/b?keep=0", "not a url TOPSECRET", "file:///"]) {
+  for (const bad of [
+    "s3://AKID:TOPSECRET@host",
+    "s3://host/bucket",
+    "http://AKID:TOPSECRET@host/b",
+    "s3://AKID:TOP%ZZSECRET@host/b",
+    "s3://AKID:TOPSECRET@host/b?keep=0",
+    "not a url TOPSECRET",
+    "file:///",
+  ]) {
     assert.throws(
       () => parseBackupUrl(bad),
       (err: Error) => err instanceof BackupUrlError && !err.message.includes("TOPSECRET") && !err.message.includes("AKID"),
@@ -289,7 +314,15 @@ function fakeS3(pageSize = 2) {
 
 test("S3Store: プレフィックスの下に読み書きし、一覧はページングをたどる", async () => {
   const s3 = fakeS3();
-  const store = new S3Store({ endpoint: "https://acct.r2.cloudflarestorage.com", bucket: "bkt", prefix: "kz/prod", accessKeyId: "AKID", secret: "TOPSECRET", region: "auto", fetch: s3.fetcher });
+  const store = new S3Store({
+    endpoint: "https://acct.r2.cloudflarestorage.com",
+    bucket: "bkt",
+    prefix: "kz/prod",
+    accessKeyId: "AKID",
+    secret: "TOPSECRET",
+    region: "auto",
+    fetch: s3.fetcher,
+  });
   for (const k of ["blobs/a", "blobs/b", "blobs/c&d", "snapshots/x/manifest"]) await store.put(k, Buffer.from(k));
   assert.ok([...s3.objects.keys()].every((k) => k.startsWith("kz/prod/")));
   assert.deepEqual(await store.list("blobs/"), ["blobs/a", "blobs/b", "blobs/c&d"]);
@@ -301,9 +334,22 @@ test("S3Store: プレフィックスの下に読み書きし、一覧はペー�
 
 test("S3 のエラーやログに認証情報を出さない", async (t) => {
   const fetcher = (async () =>
-    new Response("<Error><Code>SignatureDoesNotMatch</Code><Message>bad TOPSECRET</Message><AWSAccessKeyId>AKIDXYZ</AWSAccessKeyId></Error>", { status: 403 })) as unknown as typeof fetch;
-  const store = new S3Store({ endpoint: "https://acct.r2.cloudflarestorage.com", bucket: "bkt", prefix: "", accessKeyId: "AKIDXYZ", secret: "TOPSECRET", region: "auto", fetch: fetcher });
-  await assert.rejects(store.put("k", Buffer.from("x")), (err: Error) => /SignatureDoesNotMatch/.test(err.message) && !err.message.includes("TOPSECRET") && !err.message.includes("AKIDXYZ"));
+    new Response("<Error><Code>SignatureDoesNotMatch</Code><Message>bad TOPSECRET</Message><AWSAccessKeyId>AKIDXYZ</AWSAccessKeyId></Error>", {
+      status: 403,
+    })) as unknown as typeof fetch;
+  const store = new S3Store({
+    endpoint: "https://acct.r2.cloudflarestorage.com",
+    bucket: "bkt",
+    prefix: "",
+    accessKeyId: "AKIDXYZ",
+    secret: "TOPSECRET",
+    region: "auto",
+    fetch: fetcher,
+  });
+  await assert.rejects(
+    store.put("k", Buffer.from("x")),
+    (err: Error) => /SignatureDoesNotMatch/.test(err.message) && !err.message.includes("TOPSECRET") && !err.message.includes("AKIDXYZ"),
+  );
 
   // バックアップが失敗したときのログ・状態にも出ない
   const config = parseBackupUrl("s3://AKIDXYZ:TOPSECRET@acct.r2.cloudflarestorage.com/bkt")!;

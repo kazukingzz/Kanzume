@@ -50,7 +50,6 @@ async function start(t: TestContext) {
   const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }));
   t.after(() => {
     app.server.close();
-    
   });
   return app;
 }
@@ -107,7 +106,10 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   });
   assert.match(app.history.get(d.id)!.buildLog, /バンドルしました: worker\/index\.cjs/);
   const sources = JSON.parse(fs.readFileSync(path.join(release.dir, "_sources.json"), "utf8")) as { path: string }[];
-  assert.deepEqual(sources.map((s) => s.path), ["src/index.ts"]);
+  assert.deepEqual(
+    sources.map((s) => s.path),
+    ["src/index.ts"],
+  );
 });
 
 test("スラッシュを含むブランチ名とリポジトリのトップを解決できる", async (t) => {
@@ -176,7 +178,13 @@ test("リポジトリの外のファイルを import・alias するリポジト�
   await app.sites.ensure("evil");
   const run = async (files: Record<string, string>) => {
     const { fetcher } = fakeGitHub(repoTarball(t, files));
-    return deployFromGitHub(url, app.deployer, { siteName: "evil", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 });
+    return deployFromGitHub(url, app.deployer, {
+      siteName: "evil",
+      fetch: fetcher,
+      apiBase: "https://api.test",
+      codeloadBase: "https://codeload.test",
+      maxBytes: 1024 * 1024,
+    });
   };
   const config = (extra: Record<string, unknown> = {}) => JSON.stringify({ name: "evil", main: "src/index.ts", ...extra });
 
@@ -214,20 +222,30 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
       "apps/hello/index.js": worker,
     }),
   );
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), {
+    github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" },
+  });
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.server.close());
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const cookie = `kanzume_session=${await app.state.createSession()}`;
   const api = (p: string, method = "GET", body?: unknown) =>
-    fetch(`${base}/_admin/kanzume/api${p}`, { method, headers: { cookie, origin: base, "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+    fetch(`${base}/_admin/kanzume/api${p}`, {
+      method,
+      headers: { cookie, origin: base, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
   const site = async (host: string) => fetch(`${base}/`, { headers: { "x-forwarded-host": host } });
   const url = "https://github.com/kazukingzz/kanzume/tree/main/apps/hello";
 
   const inspect = await api("/deploy-github/inspect", "POST", { url });
   assert.equal(inspect.status, 200);
   const info = (await inspect.json()) as Record<string, unknown>;
-  assert.deepEqual(info, { name: "hello", vars: { GREETING: "wrangler", LEVEL: "1" } }, "name がなければディレクトリ名。文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない");
+  assert.deepEqual(
+    info,
+    { name: "hello", vars: { GREETING: "wrangler", LEVEL: "1" } },
+    "name がなければディレクトリ名。文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない",
+  );
 
   // サイトがなければデプロイできない（先に管理画面でサイトを追加する）
   assert.equal((await api("/deploy-github", "POST", { url, name: "blog", vars: {}, secrets: {} })).status, 404);
@@ -272,8 +290,15 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
 });
 
 test("メンバーが管理画面の GitHub デプロイで自分のサイトをデプロイしても、ルートにはならない", async (t) => {
-  const { fetcher } = fakeGitHub(repoTarball(t, { "apps/hello/wrangler.jsonc": `{ "main": "index.js", "compatibility_date": "2026-10-01" }`, "apps/hello/index.js": "export default { fetch() { return new Response('hi'); } };" }));
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  const { fetcher } = fakeGitHub(
+    repoTarball(t, {
+      "apps/hello/wrangler.jsonc": `{ "main": "index.js", "compatibility_date": "2026-10-01" }`,
+      "apps/hello/index.js": "export default { fetch() { return new Response('hi'); } };",
+    }),
+  );
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), {
+    github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" },
+  });
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.server.close());
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
@@ -292,7 +317,9 @@ test("メンバーが管理画面の GitHub デプロイで自分のサイトを
 
 test("既存のサイトの GitHub からの再デプロイに失敗したら、環境変数は元に戻る", async (t) => {
   const { fetcher } = fakeGitHub(repoTarball(t, { "apps/broken/index.js": "export default {}" }));
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), { github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" } });
+  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t) }), {
+    github: { fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test" },
+  });
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(() => app.server.close());
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;

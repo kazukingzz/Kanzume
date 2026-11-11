@@ -85,12 +85,15 @@ test("Kanzume のリポジトリに main を push すると、wrangler の設定
   assert.equal(await (await fetch(`${base}/robots.txt`)).text(), "User-agent: *");
   const [d] = history.list("blog");
   assert.equal(d.status, "success");
-  assert.deepEqual({ repository: d.source.repository, ref: d.source.ref, commitMessage: d.source.commitMessage, actor: d.source.actor }, {
-    repository: "blog",
-    ref: "main",
-    commitMessage: "最初のコミット",
-    actor: "テスト",
-  });
+  assert.deepEqual(
+    { repository: d.source.repository, ref: d.source.ref, commitMessage: d.source.commitMessage, actor: d.source.actor },
+    {
+      repository: "blog",
+      ref: "main",
+      commitMessage: "最初のコミット",
+      actor: "テスト",
+    },
+  );
 
   // main 以外への push は保存だけ
   execFileSync("git", ["checkout", "-q", "-b", "feature"], { cwd: dir, env: GIT_ENV });
@@ -178,10 +181,21 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
 
   const detail = (await api("/repos/blog")).body;
-  assert.deepEqual(detail.refs.map((r: { branch: string }) => r.branch), ["main"]);
+  assert.deepEqual(
+    detail.refs.map((r: { branch: string }) => r.branch),
+    ["main"],
+  );
   assert.equal(detail.site, "blog");
-  assert.deepEqual((await api("/repos/blog/log")).body.commits.map((c: { subject: string }) => c.subject), ["最初のコミット"]);
-  assert.deepEqual((await api("/repos/blog/tree")).body.files.map((f: { path: string }) => f.path).sort(), ["public/robots.txt", "src/index.js", "src/label.js", "wrangler.jsonc"]);
+  assert.deepEqual(
+    (await api("/repos/blog/log")).body.commits.map((c: { subject: string }) => c.subject),
+    ["最初のコミット"],
+  );
+  assert.deepEqual((await api("/repos/blog/tree")).body.files.map((f: { path: string }) => f.path).sort(), [
+    "public/robots.txt",
+    "src/index.js",
+    "src/label.js",
+    "wrangler.jsonc",
+  ]);
   assert.equal((await api("/repos/blog/blob?path=public/robots.txt")).body.text, "User-agent: *");
   assert.equal((await api("/repos/blog/blob?path=../../etc/passwd")).status, 400);
   assert.equal((await api("/repos/blog/log?ref=--output=/tmp/x")).status, 400, "オプションに見える ref は弾く");
@@ -190,7 +204,10 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   const issued = (await api("/tokens", { method: "POST", body: JSON.stringify({ name: "ノート PC", ttl: 3600 }) })).body;
   assert.match(issued.token, /^kzu_/);
   assert.equal(state.repoAccess("blog", issued.token), "write");
-  assert.deepEqual((await api("/tokens")).body.tokens.map((t: { name: string }) => t.name), ["ノート PC"]);
+  assert.deepEqual(
+    (await api("/tokens")).body.tokens.map((t: { name: string }) => t.name),
+    ["ノート PC"],
+  );
   assert.equal((await api(`/tokens/${issued.id}`, { method: "DELETE" })).status, 200);
   assert.equal(state.repoAccess("blog", issued.token), null);
 
@@ -210,7 +227,10 @@ test("name がほかのサイトのコミットも、リポジトリのサイト
   assert.equal(push.status, 0, push.output);
   assert.match(push.output, /remote: デプロイしました/);
   assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git", "blog はそのまま");
-  assert.deepEqual(sites.list().map((s) => s.name), ["blog", "sample"]);
+  assert.deepEqual(
+    sites.list().map((s) => s.name),
+    ["blog", "sample"],
+  );
   assert.equal(history.list("blog").length, 1, "blog の履歴には入らない");
   assert.equal(history.list("sample")[0].status, "success");
   assert.equal(sites.settings("sample").vars.GREETING, undefined, "管理画面の設定は変わらない");
@@ -224,11 +244,17 @@ test("main の削除は拒否し（ほかのブランチは消せる）、続け
   const del = await git(dir, ["push", remote("blog"), ":main"]);
   assert.notEqual(del.status, 0, del.output);
   assert.match(del.output, /main はデプロイ元なので削除できません/);
-  assert.deepEqual((await repos.refs("blog")).map((r) => r.branch), ["main"]);
+  assert.deepEqual(
+    (await repos.refs("blog")).map((r) => r.branch),
+    ["main"],
+  );
   // main 以外のブランチは削除できる
   assert.equal((await git(dir, ["push", remote("blog"), "main:feature"])).status, 0);
   assert.equal((await git(dir, ["push", remote("blog"), ":feature"])).status, 0);
-  assert.deepEqual((await repos.refs("blog")).map((r) => r.branch), ["main"]);
+  assert.deepEqual(
+    (await repos.refs("blog")).map((r) => r.branch),
+    ["main"],
+  );
 
   for (const v of ["v2", "v3"]) {
     writeTree(dir, { "src/label.js": `export const label = (g) => \`\${g} ${v}\`;` });
@@ -273,7 +299,11 @@ test("途中で切れた push の git プロセスは残らない", { skip: NO_G
     port: url.port,
     path: url.pathname,
     method: "POST",
-    headers: { "content-type": "application/x-git-receive-pack-request", "transfer-encoding": "chunked", authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}` },
+    headers: {
+      "content-type": "application/x-git-receive-pack-request",
+      "transfer-encoding": "chunked",
+      authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}`,
+    },
   });
   req.on("error", () => {});
   // 長さだけを送って中身を送らない（git は続きを待ち続ける）
@@ -288,7 +318,10 @@ test("途中で切れた push の git プロセスは残らない", { skip: NO_G
 test("IP アドレスの先頭の数字と同じ名前のサイトがあっても、フックは Kanzume に届く", { skip: NO_GIT }, async (t) => {
   const { remote, repos, sites } = await start(t);
   for (const name of ["127", "blog"]) await repos.create(name);
-  const evil = workTree(t, { "wrangler.json": JSON.stringify({ name: "127", main: "i.js" }), "i.js": `export default { fetch() { return new Response("site 127 でフックを横取り"); } };` });
+  const evil = workTree(t, {
+    "wrangler.json": JSON.stringify({ name: "127", main: "i.js" }),
+    "i.js": `export default { fetch() { return new Response("site 127 でフックを横取り"); } };`,
+  });
   assert.equal((await git(evil, ["push", remote("127"), "main"])).status, 0);
   const push = await git(workTree(t, WORKER), ["push", remote("blog"), "main"]);
   assert.doesNotMatch(push.output, /横取り/);
@@ -353,10 +386,16 @@ test("設定のない push は、ファイルを取り出す前に止まり、�
   const noConfig = await git(workTree(t, { "index.js": "x" }), ["push", remote("sample"), "main"]);
   assert.match(noConfig.output, /wrangler\.jsonc \/ wrangler\.json \/ wrangler\.toml がありません/);
   assert.equal(readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length, before, "作業ディレクトリを作っていない");
-  assert.deepEqual(history.list("sample").map((d) => d.status), ["failed"], "設定がない失敗もリポジトリの履歴に入る");
+  assert.deepEqual(
+    history.list("sample").map((d) => d.status),
+    ["failed"],
+    "設定がない失敗もリポジトリの履歴に入る",
+  );
 });
 
-test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", { skip: NO_GIT }, async (t) => {
+test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", {
+  skip: NO_GIT,
+}, async (t) => {
   const { base, remote, repos, state } = await start(t);
   await repos.create("blog");
   mkdirSync(path.join(repos.dir, "broken.git"));
@@ -367,7 +406,11 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   };
   const list = await api("/repos");
   assert.equal(list.status, 200);
-  assert.deepEqual(list.body.repos.map((r: { name: string }) => r.name), ["blog"], "HEAD のないディレクトリは一覧に出さない");
+  assert.deepEqual(
+    list.body.repos.map((r: { name: string }) => r.name),
+    ["blog"],
+    "HEAD のないディレクトリは一覧に出さない",
+  );
 
   const token = await memberToken(state, ["blog"]);
   const auth = { authorization: `Basic ${Buffer.from(`x:${token}`).toString("base64")}` };

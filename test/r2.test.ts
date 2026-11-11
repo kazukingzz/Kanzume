@@ -92,20 +92,32 @@ test("list は prefix・delimiter・cursor に対応する", async (t) => {
   const b = bucket(t);
   for (const k of ["img/a.png", "img/b.png", "img/sub/c.png", "doc/x.md", "top.txt"]) await b.put(k, k);
   const all = (await b.list()) as { objects: { key: string }[]; truncated: boolean };
-  assert.deepEqual(all.objects.map((o) => o.key), ["doc/x.md", "img/a.png", "img/b.png", "img/sub/c.png", "top.txt"]);
+  assert.deepEqual(
+    all.objects.map((o) => o.key),
+    ["doc/x.md", "img/a.png", "img/b.png", "img/sub/c.png", "top.txt"],
+  );
 
   const dirs = (await b.list({ delimiter: "/" })) as { objects: { key: string }[]; delimitedPrefixes: string[] };
-  assert.deepEqual(dirs.objects.map((o) => o.key), ["top.txt"]);
+  assert.deepEqual(
+    dirs.objects.map((o) => o.key),
+    ["top.txt"],
+  );
   assert.deepEqual(dirs.delimitedPrefixes, ["doc/", "img/"]);
 
   const img = (await b.list({ prefix: "img/", delimiter: "/" })) as { objects: { key: string }[]; delimitedPrefixes: string[] };
-  assert.deepEqual(img.objects.map((o) => o.key), ["img/a.png", "img/b.png"]);
+  assert.deepEqual(
+    img.objects.map((o) => o.key),
+    ["img/a.png", "img/b.png"],
+  );
   assert.deepEqual(img.delimitedPrefixes, ["img/sub/"]);
 
   const p1 = (await b.list({ limit: 2 })) as { objects: { key: string }[]; truncated: boolean; cursor: string };
   assert.equal(p1.truncated, true);
   const p2 = (await b.list({ limit: 10, cursor: p1.cursor })) as { objects: { key: string }[]; truncated: boolean };
-  assert.deepEqual(p2.objects.map((o) => o.key), ["img/b.png", "img/sub/c.png", "top.txt"]);
+  assert.deepEqual(
+    p2.objects.map((o) => o.key),
+    ["img/b.png", "img/sub/c.png", "top.txt"],
+  );
   assert.equal(p2.truncated, false);
 });
 

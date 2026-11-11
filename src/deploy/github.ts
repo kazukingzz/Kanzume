@@ -173,7 +173,11 @@ export async function fetchFromGitHub(input: string, options: GitHubOptions, log
   const dir = resolved.dir.join("/");
   log.add(`${source.repository}@${resolved.ref}${resolved.sha ? `（${resolved.sha.slice(0, 7)}）` : ""} ${dir ? `の ${dir}/ ` : ""}をダウンロードします`);
 
-  const archive = await download(fetcher, `${codeload}/${repo.owner}/${repo.repo}/tar.gz/${encodeURIComponent(resolved.sha ?? resolved.ref)}`, options.maxBytes);
+  const archive = await download(
+    fetcher,
+    `${codeload}/${repo.owner}/${repo.repo}/tar.gz/${encodeURIComponent(resolved.sha ?? resolved.ref)}`,
+    options.maxBytes,
+  );
   if (!archive) throw new GitHubError("リポジトリをダウンロードできません（public リポジトリのみ対応しています）");
   const entries = readTar(gunzipSync(archive, { maxOutputLength: options.maxBytes * 4 }), { skipLinks: true });
   const prefix = dir ? `${dir}/` : "";
@@ -224,7 +228,11 @@ export function inspectFiles(fetched: Fetched): Inspection {
 }
 
 /** autoRoot: ルートのサイトがまだないとき、このサイトをルートにしてよいか（管理者のときだけ。ルートは管理画面と同じオリジンになるため） */
-export async function deployFromGitHub(input: string, deployer: Deployer, options: GitHubOptions & { siteName: string; autoRoot?: boolean }): Promise<DeployResult> {
+export async function deployFromGitHub(
+  input: string,
+  deployer: Deployer,
+  options: GitHubOptions & { siteName: string; autoRoot?: boolean },
+): Promise<DeployResult> {
   const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
   let fetched: Fetched;
   try {
@@ -233,7 +241,14 @@ export async function deployFromGitHub(input: string, deployer: Deployer, option
     return fail(deployer, options.siteName, err, { source: {}, buildLog: [], log, siteName: options.siteName }, "GitHub からのデプロイ");
   }
   const { source, dir, files } = fetched;
-  return deployFromFiles(files, deployer, { source, log, buildLog: [], where: dir ? `${dir}/ ` : "リポジトリのトップ", autoRoot: options.autoRoot ?? false, siteName: options.siteName });
+  return deployFromFiles(files, deployer, {
+    source,
+    log,
+    buildLog: [],
+    where: dir ? `${dir}/ ` : "リポジトリのトップ",
+    autoRoot: options.autoRoot ?? false,
+    siteName: options.siteName,
+  });
 }
 
 export interface BuildContext {
@@ -286,7 +301,12 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
   try {
     let configFile: (typeof CONFIG_FILES)[number] | undefined;
     for (const c of CONFIG_FILES) {
-      if (await fs.stat(path.join(work, c)).then((st) => st.isFile()).catch(() => false)) {
+      if (
+        await fs
+          .stat(path.join(work, c))
+          .then((st) => st.isFile())
+          .catch(() => false)
+      ) {
         configFile = c;
         break;
       }
@@ -354,14 +374,26 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
     if (assets?.directory) {
       const assetsRoot = path.resolve(work, assets.directory);
       if (!inside(work, assetsRoot)) throw new GitHubError("assets.directory のパスが不正です");
-      const exists = await fs.stat(assetsRoot).then((s) => s.isDirectory()).catch(() => false);
-      if (!exists) throw new GitHubError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
+      const exists = await fs
+        .stat(assetsRoot)
+        .then((s) => s.isDirectory())
+        .catch(() => false);
+      if (!exists)
+        throw new GitHubError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
       const list = (await collect(assetsRoot)).filter((p) => path.basename(p) !== ".assetsignore");
       for (const p of list) out.push({ path: `assets/${p}`, data: await fs.readFile(path.join(assetsRoot, p)) });
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
     }
 
-    return await deployer.deploy({ files: out, sources, source: ctx.source, buildLog: buildLog.join("\n"), log, autoRoot: ctx.autoRoot, siteName: ctx.siteName });
+    return await deployer.deploy({
+      files: out,
+      sources,
+      source: ctx.source,
+      buildLog: buildLog.join("\n"),
+      log,
+      autoRoot: ctx.autoRoot,
+      siteName: ctx.siteName,
+    });
   } catch (err) {
     return fail(deployer, name, err, ctx, "デプロイ");
   }

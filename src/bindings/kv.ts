@@ -79,10 +79,12 @@ export class KVNamespace {
     const type = typeOf(options);
     if (Array.isArray(key)) {
       if (type !== "text" && type !== "json") throw new TypeError("複数キーの get は text か json のみ対応しています");
-      return new Map(key.map((k) => {
-        const row = this.#row(k);
-        return [k, row ? decode(row, type) : null];
-      }));
+      return new Map(
+        key.map((k) => {
+          const row = this.#row(k);
+          return [k, row ? decode(row, type) : null];
+        }),
+      );
     }
     const row = this.#row(key);
     return row ? decode(row, type) : null;

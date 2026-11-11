@@ -13,7 +13,6 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise((resolve) => server.close(resolve));
-    
   });
   const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const deploy = async (body: Buffer, token = state.deployToken) => {
@@ -113,11 +112,13 @@ test("SPA 指定時はナビゲーションのリクエストだけ index.html �
   await deploy(workerBundle(t, source, { assets: { directory: "dist", not_found_handling: "single-page-application" } }, { "assets/index.html": "app" }));
   // fetch は sec-fetch-mode を上書きするので、ブラウザのナビゲーションを node:http で再現する
   const navigate = await new Promise<string>((resolve, reject) => {
-    http.get(`${base}/users/1`, { headers: { "sec-fetch-mode": "navigate" } }, (res) => {
-      let body = "";
-      res.on("data", (c) => (body += c));
-      res.on("end", () => resolve(body));
-    }).on("error", reject);
+    http
+      .get(`${base}/users/1`, { headers: { "sec-fetch-mode": "navigate" } }, (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve(body));
+      })
+      .on("error", reject);
   });
   assert.equal(navigate, "app");
   assert.equal(await (await fetch(`${base}/api/users`)).text(), "worker");
@@ -184,7 +185,8 @@ test("予約パスはサイトに渡さない", async (t) => {
 test("Actions からのデプロイは、管理画面で追加したサイトを指定したときだけ受け付ける（wrangler の name は使わない）", async (t) => {
   const { base, state, sites } = await start(t);
   const body = new Uint8Array(tarGz(t, { "wrangler.json": JSON.stringify({ name: "other", assets: { directory: "public" } }), "public/index.html": "x" }));
-  const post = (headers: Record<string, string>) => fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${state.deployToken}`, ...headers }, body });
+  const post = (headers: Record<string, string>) =>
+    fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${state.deployToken}`, ...headers }, body });
   assert.equal((await post({})).status, 400, "サイトの指定がない");
   assert.equal((await post({ "x-kanzume-site": "blog" })).status, 404, "まだ追加していないサイト");
   assert.equal(sites.has("blog") || sites.has("other"), false, "デプロイでサイトを作らない");

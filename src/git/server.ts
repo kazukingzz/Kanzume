@@ -261,7 +261,8 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
           if (!configFile) throw new GitHubError(`リポジトリのトップに ${CONFIG_FILES.join(" / ")} がありません`);
           const size = await repos.treeSize(name, head.sha);
           const limit = config.maxUploadBytes * 4;
-          if (size > limit) throw new GitHubError(`ファイルの合計（${Math.round(size / 1024 / 1024)} MB）が上限（${Math.round(limit / 1024 / 1024)} MB）を超えています`);
+          if (size > limit)
+            throw new GitHubError(`ファイルの合計（${Math.round(size / 1024 / 1024)} MB）が上限（${Math.round(limit / 1024 / 1024)} MB）を超えています`);
 
           const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-push-")));
           try {

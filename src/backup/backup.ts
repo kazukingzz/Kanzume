@@ -489,7 +489,9 @@ export class Backup {
       this.#manifests.set(name, manifest);
       names.push(name);
       await this.#prune(names);
-      console.log(`[backup] ${this.target} に世代 ${name} を保存しました（${files.length} ファイル、送信 ${uploadedFiles} 件 ${(uploadedBytes / 1024).toFixed(1)} KiB）`);
+      console.log(
+        `[backup] ${this.target} に世代 ${name} を保存しました（${files.length} ファイル、送信 ${uploadedFiles} 件 ${(uploadedBytes / 1024).toFixed(1)} KiB）`,
+      );
       return done({ ok: true, snapshot: name, files: files.length, uploadedFiles, uploadedBytes });
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);

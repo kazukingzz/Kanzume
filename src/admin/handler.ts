@@ -3,12 +3,7 @@ import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import { gunzipSync } from "node:zlib";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import {
-  generateAuthenticationOptions,
-  generateRegistrationOptions,
-  verifyAuthenticationResponse,
-  verifyRegistrationResponse,
-} from "@simplewebauthn/server";
+import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import type { Backup } from "../backup/backup.ts";
 import type { Config } from "../config.ts";
 import type { Deployer } from "../deploy/deployer.ts";
@@ -50,14 +45,7 @@ const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
 /** 管理者だけが呼べる API（全体の設定） */
 /** サイト名にできない名前（管理画面の URL の #/invite・#/repos と重なるもの） */
 const RESERVED_SITE_NAMES = ["invite", "repos"];
-const ADMIN_ROUTES = new Set([
-  "POST /api/domain",
-  "GET /api/backup",
-  "POST /api/backup/run",
-  "GET /api/resources",
-  "POST /api/root-site",
-  "GET /api/users",
-]);
+const ADMIN_ROUTES = new Set(["POST /api/domain", "GET /api/backup", "POST /api/backup/run", "GET /api/resources", "POST /api/root-site", "GET /api/users"]);
 
 interface Deps {
   config: Config;
@@ -109,7 +97,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return safeEqual(String(body?.setupToken ?? ""), config.setupToken) ? { kind: "setup" } : "セットアップトークンが違います";
     }
     if (typeof body?.inviteToken === "string" && body.inviteToken) {
-      return state.checkInvite(body.inviteToken) ? { kind: "invite", token: body.inviteToken } : "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
+      return state.checkInvite(body.inviteToken)
+        ? { kind: "invite", token: body.inviteToken }
+        : "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
     }
     return "パスキーを登録するには、管理者から届いた招待リンクを開いてください";
   };
@@ -290,7 +280,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     const canSite = (name: string) => isAdmin || user.sites.includes(name);
     const forbidden = () => sendJson(res, 403, { error: "この操作の権限がありません" });
     const adminOnly =
-      ADMIN_ROUTES.has(route) || /^(PUT|DELETE) \/api\/users\//.test(route) || /^(GET|POST|DELETE) \/api\/sites\/[a-z0-9-]+\/(members|invites)(\/|$)/.test(route);
+      ADMIN_ROUTES.has(route) ||
+      /^(PUT|DELETE) \/api\/users\//.test(route) ||
+      /^(GET|POST|DELETE) \/api\/sites\/[a-z0-9-]+\/(members|invites)(\/|$)/.test(route);
     if (adminOnly && !isAdmin) return forbidden();
 
     if (route === "GET /api/overview") {
@@ -389,7 +381,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     const tokenRevoke = /^DELETE \/api\/tokens\/([0-9a-f]+)$/.exec(route);
     if (tokenRevoke) {
-      return (await state.revokeUserToken(user.id, tokenRevoke[1])) ? sendJson(res, 200, { ok: true }) : sendJson(res, 404, { error: "トークンが見つかりません" });
+      return (await state.revokeUserToken(user.id, tokenRevoke[1]))
+        ? sendJson(res, 200, { ok: true })
+        : sendJson(res, 404, { error: "トークンが見つかりません" });
     }
 
     // ログイン中に招待リンクを開いたとき: 自分をそのサイトのメンバーにする
@@ -406,8 +400,21 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return sendJson(res, 200, {
         users: state.users.map((u) => {
           const creds = state.credentialsOf(u.id);
-          const used = creds.map((c) => c.lastUsedAt ?? c.createdAt).sort().at(-1) ?? null;
-          return { id: u.id, name: u.name, role: u.role, sites: u.sites, createdAt: u.createdAt, passkeys: creds.length, lastUsedAt: used, me: u.id === user.id };
+          const used =
+            creds
+              .map((c) => c.lastUsedAt ?? c.createdAt)
+              .sort()
+              .at(-1) ?? null;
+          return {
+            id: u.id,
+            name: u.name,
+            role: u.role,
+            sites: u.sites,
+            createdAt: u.createdAt,
+            passkeys: creds.length,
+            lastUsedAt: used,
+            me: u.id === user.id,
+          };
         }),
       });
     }
@@ -569,7 +576,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (route === "POST /api/sites") {
       if (!isAdmin) return forbidden();
       const body = await readJson(req);
-      const name = String(body?.name ?? "").trim().toLowerCase();
+      const name = String(body?.name ?? "")
+        .trim()
+        .toLowerCase();
       if (!PROJECT_NAME.test(name)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
       if (reservedLabels.has(name)) return sendJson(res, 400, { error: `${name} は管理画面で使っている名前なので、サイト名にできません` });
       if (sites.has(name)) return sendJson(res, 409, { error: `サイト ${name} は既にあります` });
@@ -629,7 +638,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       if (!canSite(siteName)) return forbidden();
       if (!sites.has(siteName)) return sendJson(res, 404, { error: `サイト ${siteName} がありません。先にサイトを追加してください` });
       const patch = envPatch(body);
-      if (sites.deployed(siteName) && body?.confirm !== true) return sendJson(res, 409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
+      if (sites.deployed(siteName) && body?.confirm !== true)
+        return sendJson(res, 409, { error: `サイト ${siteName} は既にあります。上書きしてデプロイしますか？`, exists: true });
       if (githubDeploying) return sendJson(res, 409, { error: "別のデプロイを実行中です" });
       githubDeploying = true;
       // 失敗したときに戻す、デプロイ前の設定（今動いているリリースは、この設定のまま動かし続ける）
@@ -725,7 +735,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
           console.error("[upload] リポジトリへのコミットに失敗:", err);
           repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
         }
-        const source = commit ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user!.name } : { actor: user!.name, commitMessage: message };
+        const source = commit
+          ? { repository: name, ref: commit.branch, sha: commit.sha, commitMessage: message, actor: user!.name }
+          : { actor: user!.name, commitMessage: message };
         const result = await deployFromFiles(uploaded, deployer, {
           source,
           log: new DeployLog(name),
@@ -750,19 +762,35 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
             return "error" as const;
           });
           if (moved === "error") repoWarning = "デプロイはしましたが、リポジトリに保存できませんでした";
-          else if (moved === "quota") repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
+          else if (moved === "quota")
+            repoWarning = `デプロイはしましたが、リポジトリの容量の上限（${Math.round(repos.quotaBytes / 1024 / 1024)} MB）を超えるので保存しませんでした`;
           else if (moved === "moved") repoWarning = "デプロイはしましたが、その間にリポジトリに push があったので保存しませんでした";
         }
         return {
           status: 200,
-          body: { site: name, release: result.release.id, url: siteUrls(name).url, static: !hasConfig, commit: repoWarning ? null : (commit?.sha ?? null), repoWarning },
+          body: {
+            site: name,
+            release: result.release.id,
+            url: siteUrls(name).url,
+            static: !hasConfig,
+            commit: repoWarning ? null : (commit?.sha ?? null),
+            repoWarning,
+          },
         };
       });
       return sendJson(res, out.status, out.body);
     }
 
     if (siteRouteKey === "GET " && !release) {
-      return sendJson(res, 200, { name, ...siteUrls(name), root: sites.root === name, deployed: false, release: null, latest: history.latest(name) ?? null, repo: await repos.exists(name) });
+      return sendJson(res, 200, {
+        name,
+        ...siteUrls(name),
+        root: sites.root === name,
+        deployed: false,
+        release: null,
+        latest: history.latest(name) ?? null,
+        repo: await repos.exists(name),
+      });
     }
 
     if (siteRouteKey === "GET " && release) {
@@ -823,14 +851,21 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     // ---------- サイトのメンバーと招待（管理者） ----------
 
     if (siteRouteKey === "GET /members") {
-      const invites = state.invites(name).map((i) => ({ id: i.id, createdAt: i.createdAt, expiresAt: i.expiresAt, createdBy: state.user(i.createdBy)?.name ?? null }));
+      const invites = state
+        .invites(name)
+        .map((i) => ({ id: i.id, createdAt: i.createdAt, expiresAt: i.expiresAt, createdBy: state.user(i.createdBy)?.name ?? null }));
       const members = state.users.filter((u) => u.role === "member" && u.sites.includes(name)).map((u) => ({ id: u.id, name: u.name, createdAt: u.createdAt }));
       return sendJson(res, 200, { members, invites });
     }
 
     if (siteRouteKey === "POST /invites") {
       const { token, invite } = await state.createInvite(name, user.id);
-      return sendJson(res, 200, { id: invite.id, expiresAt: invite.expiresAt, ttlDays: INVITE_TTL_MS / 86_400_000, url: `${origin}${ADMIN_PATH}/#/invite/${token}` });
+      return sendJson(res, 200, {
+        id: invite.id,
+        expiresAt: invite.expiresAt,
+        ttlDays: INVITE_TTL_MS / 86_400_000,
+        url: `${origin}${ADMIN_PATH}/#/invite/${token}`,
+      });
     }
 
     const inviteRevoke = /^DELETE \/invites\/([0-9a-f]+)$/.exec(siteRouteKey);
@@ -913,10 +948,14 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       if (!R2_BUCKET_NAME.test(bucketName)) return sendJson(res, 400, { error: "バケット名が不正です" });
       const key = query.get("key") ?? "";
       try {
-        if (m === "GET" && what === "objects") return sendJson(res, 200, await r2List(store.siteDir, bucketName, query.get("prefix") ?? "", query.get("cursor") || undefined));
+        if (m === "GET" && what === "objects")
+          return sendJson(res, 200, await r2List(store.siteDir, bucketName, query.get("prefix") ?? "", query.get("cursor") || undefined));
         const bucket = r2Bucket(store.siteDir, bucketName);
         if (m === "GET" && what === "preview") {
-          const obj = (await bucket.get(key, { range: { offset: 0, length: PREVIEW_BYTES } })) as { size: number; arrayBuffer?: () => Promise<ArrayBuffer> } | null;
+          const obj = (await bucket.get(key, { range: { offset: 0, length: PREVIEW_BYTES } })) as {
+            size: number;
+            arrayBuffer?: () => Promise<ArrayBuffer>;
+          } | null;
           if (!obj?.arrayBuffer) return sendJson(res, 404, { error: "オブジェクトが見つかりません" });
           const head = await bucket.head(key);
           const size = head?.size ?? 0;

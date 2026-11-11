@@ -30,7 +30,9 @@ const quota = Number(process.env.KANZUME_REPO_QUOTA_BYTES ?? 0);
 if (quota > 0) {
   const size = await dirSize(path.join(gitDir, "objects"));
   if (size > quota) {
-    process.stdout.write(`リポジトリの容量の上限（${Math.round(quota / 1024 / 1024)} MB）を超えるので受け付けません（push 後 ${Math.round(size / 1024 / 1024)} MB）\n`);
+    process.stdout.write(
+      `リポジトリの容量の上限（${Math.round(quota / 1024 / 1024)} MB）を超えるので受け付けません（push 後 ${Math.round(size / 1024 / 1024)} MB）\n`,
+    );
     process.exit(1);
   }
 }

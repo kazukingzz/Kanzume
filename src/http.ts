@@ -4,7 +4,10 @@ import { pipeline } from "node:stream/promises";
 
 /** リクエストされたホストのオリジン */
 export function requestOrigin(req: IncomingMessage): string {
-  const proto = String(req.headers["x-forwarded-proto"] ?? "").split(",")[0].trim() || "http";
+  const proto =
+    String(req.headers["x-forwarded-proto"] ?? "")
+      .split(",")[0]
+      .trim() || "http";
   return `${proto}://${req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"}`;
 }
 
@@ -30,7 +33,9 @@ export function siteOrigin(rootOrigin: string, name: string): string {
 }
 
 export function clientIp(req: IncomingMessage): string {
-  const forwarded = String(req.headers["x-forwarded-for"] ?? "").split(",")[0].trim();
+  const forwarded = String(req.headers["x-forwarded-for"] ?? "")
+    .split(",")[0]
+    .trim();
   return forwarded || req.socket.remoteAddress || "";
 }
 

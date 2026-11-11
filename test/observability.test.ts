@@ -12,7 +12,6 @@ async function start(t: TestContext) {
   await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
   t.after(async () => {
     await new Promise((resolve) => app.server.close(resolve));
-    
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const auth = { authorization: `Bearer ${app.state.deployToken}` };
@@ -41,7 +40,6 @@ const META = {
     { path: "../../etc/passwd", content: "x" },
   ]),
 };
-
 
 test("成功したデプロイがビルドログ・コミット情報・Kanzume のログ付きで履歴に残る", async (t) => {
   const { deploy, history } = await start(t);
@@ -123,15 +121,30 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
   assert.equal(subDetail.subrequests.length, 1);
   assert.equal(subDetail.subrequests[0].url, upstream);
   assert.equal(subDetail.subrequests[0].status, 200);
-  assert.deepEqual(subDetail.logs.map((l) => l.level), ["log", "warn", "log"]);
+  assert.deepEqual(
+    subDetail.logs.map((l) => l.level),
+    ["log", "warn", "log"],
+  );
   const stack = observability.event("app", boom.id)!.detail.exceptions[0].stack ?? "";
   assert.match(stack, /TypeError: 壊れた\n\s+at .*worker\/index\.cjs/);
   assert.doesNotMatch(stack, /src\/runtime|node:/);
 
-  assert.deepEqual(observability.events("app", { result: "error" }).map((e) => e.id), [boom.id]);
-  assert.deepEqual(observability.events("app", { kind: "asset" }).map((e) => e.id), [asset.id]);
-  assert.deepEqual(observability.events("app", { q: "fetched" }).map((e) => e.id), [sub.id]);
-  assert.deepEqual(observability.events("app", { before: events[0].id, limit: 1 }).map((e) => e.id), [events[1].id]);
+  assert.deepEqual(
+    observability.events("app", { result: "error" }).map((e) => e.id),
+    [boom.id],
+  );
+  assert.deepEqual(
+    observability.events("app", { kind: "asset" }).map((e) => e.id),
+    [asset.id],
+  );
+  assert.deepEqual(
+    observability.events("app", { q: "fetched" }).map((e) => e.id),
+    [sub.id],
+  );
+  assert.deepEqual(
+    observability.events("app", { before: events[0].id, limit: 1 }).map((e) => e.id),
+    [events[1].id],
+  );
 });
 
 test("同期処理の時間超過は exceededCpu として記録される", async (t) => {
@@ -167,7 +180,10 @@ test("メトリクスは期間内のリクエスト数・エラー数・実行�
   assert.equal(m.totals.errors, 2);
   assert.equal(m.totals.statuses["5xx"], 2);
   assert.equal(m.buckets.length, 60);
-  assert.equal(m.buckets.reduce((n, b) => n + b.ok + b.errors, 0), 8);
+  assert.equal(
+    m.buckets.reduce((n, b) => n + b.ok + b.errors, 0),
+    8,
+  );
   assert.ok(m.totals.p50! > 0 && m.totals.p99! >= m.totals.p50!);
 
   const old = observability.metrics("app", "1h", Date.now() + 2 * 3600e3);
@@ -194,10 +210,22 @@ test("管理 API でデプロイ中のコード（ソース・設定・変換後
   const { listFiles, readFile } = await import("../src/admin/files.ts");
   const release = sites.get("app")!.get()!;
   const groups = listFiles(release);
-  assert.deepEqual(groups.source.map((f) => f.path), ["etc/passwd", "src/index.ts"]);
-  assert.deepEqual(groups.config.map((f) => f.path), ["wrangler.jsonc"]);
-  assert.deepEqual(groups.worker.map((f) => f.path), ["index.cjs"]);
-  assert.deepEqual(groups.assets.map((f) => f.path), ["index.html", "logo.bin"]);
+  assert.deepEqual(
+    groups.source.map((f) => f.path),
+    ["etc/passwd", "src/index.ts"],
+  );
+  assert.deepEqual(
+    groups.config.map((f) => f.path),
+    ["wrangler.jsonc"],
+  );
+  assert.deepEqual(
+    groups.worker.map((f) => f.path),
+    ["index.cjs"],
+  );
+  assert.deepEqual(
+    groups.assets.map((f) => f.path),
+    ["index.html", "logo.bin"],
+  );
 
   assert.equal(readFile(release, "source", "src/index.ts")?.text, "export default {}");
   assert.match(readFile(release, "config", "wrangler.jsonc")!.text!, /"name":"app"/);

@@ -16,7 +16,6 @@ async function start(t: TestContext, dataDir = tmpDir(t)) {
   t.after(async () => {
     await new Promise((resolve) => app.server.close(resolve));
     await app.state.flush();
-    
   });
   const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
   const post = (path: string, body: unknown) =>
@@ -68,11 +67,17 @@ test("パスキー登録後は、新しいパスキーの登録には招待が�
   assert.equal(register.status, 200);
   const options = (await register.json()) as { excludeCredentials: { id: string }[] };
   // 招待での登録は新しいユーザーになるので、既存のパスキーは除外しない
-  assert.deepEqual(options.excludeCredentials.map((c) => c.id), []);
+  assert.deepEqual(
+    options.excludeCredentials.map((c) => c.id),
+    [],
+  );
 
   const login = await post("/login/options", {});
   assert.equal(login.status, 200);
-  assert.deepEqual(((await login.json()) as { allowCredentials: { id: string }[] }).allowCredentials.map((c) => c.id), ["cred-1"]);
+  assert.deepEqual(
+    ((await login.json()) as { allowCredentials: { id: string }[] }).allowCredentials.map((c) => c.id),
+    ["cred-1"],
+  );
 });
 
 test("チーム ID や管理 API はログインしないと見えない", async (t) => {
@@ -271,7 +276,10 @@ test("パスキーの識別名を AAGUID と User-Agent から推測する", () 
   const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36";
   assert.equal(describeDevice(mac), "Mac・Chrome");
   assert.equal(describeDevice(`${mac} Edg/131.0.0.0`), "Mac・Edge");
-  assert.equal(describeDevice("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"), "iPhone・Safari");
+  assert.equal(
+    describeDevice("Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1"),
+    "iPhone・Safari",
+  );
   assert.equal(describeDevice("Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0"), "Windows・Firefox");
   assert.equal(describeDevice(undefined), undefined);
 });
@@ -281,9 +289,14 @@ test("パスキーの一覧を取得し、名前を変更できる", async (t) =
   await state.addCredential({ ...fakeCredential, name: "Mac・Chrome", device: "Mac・Chrome", aaguid: "ea9b8d66-4d01-1d21-3ce4-b6b48cb575d4" });
   await state.addCredential({ ...fakeCredential, id: "cred-old" });
   const cookie = `kanzume_session=${await state.createSession()}`;
-  const list = async () => ((await (await fetch(`${base}/_admin/kanzume/api/passkeys`, { headers: { cookie } })).json()) as { passkeys: Record<string, unknown>[] }).passkeys;
+  const list = async () =>
+    ((await (await fetch(`${base}/_admin/kanzume/api/passkeys`, { headers: { cookie } })).json()) as { passkeys: Record<string, unknown>[] }).passkeys;
   const rename = (body: unknown) =>
-    fetch(`${base}/_admin/kanzume/api/passkeys/rename`, { method: "POST", headers: { cookie, origin: base, "content-type": "application/json" }, body: JSON.stringify(body) });
+    fetch(`${base}/_admin/kanzume/api/passkeys/rename`, {
+      method: "POST",
+      headers: { cookie, origin: base, "content-type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
   const before = await list();
   assert.equal(before.length, 2);

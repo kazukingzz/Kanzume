@@ -81,12 +81,16 @@ export function parseBackupUrl(raw: string | undefined): BackupConfig | null {
   const secret = decode(url.password, "シークレットキー");
   if (!accessKeyId || !secret) throw new BackupUrlError("KANZUME_BACKUP_URL に <ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@ を含めてください");
   if (!url.hostname) throw new BackupUrlError("KANZUME_BACKUP_URL にエンドポイントのホストを含めてください");
-  const parts = url.pathname.split("/").filter(Boolean).map((p) => decode(p, "パス"));
+  const parts = url.pathname
+    .split("/")
+    .filter(Boolean)
+    .map((p) => decode(p, "パス"));
   const [bucket, ...rest] = parts;
   if (!bucket) throw new BackupUrlError("KANZUME_BACKUP_URL にバケット名を含めてください（…/<BUCKET>）");
   const prefix = rest.join("/");
   const host = url.host;
-  const region = params.get("region") || /\bs3[.-]([a-z0-9-]+)\.amazonaws\.com$/.exec(url.hostname)?.[1] || (url.hostname.endsWith(".amazonaws.com") ? "us-east-1" : "auto");
+  const region =
+    params.get("region") || /\bs3[.-]([a-z0-9-]+)\.amazonaws\.com$/.exec(url.hostname)?.[1] || (url.hostname.endsWith(".amazonaws.com") ? "us-east-1" : "auto");
   return {
     kind: "s3",
     endpoint: `${url.protocol === "s3+http:" ? "http" : "https"}://${host}`,

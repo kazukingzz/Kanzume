@@ -21,12 +21,23 @@ test("Host のサブドメインが既存のサイト名ならそのサイト、
   assert.deepEqual(matchHost("blog.localhost:8080", ids(has)), { kind: "site", name: "blog" });
   assert.deepEqual(matchHost("localhost:8080", ids(has)), { kind: "root" });
   assert.deepEqual(matchHost("127.0.0.1:8080", ids(has)), { kind: "root" });
-  assert.deepEqual(matchHost("127.0.0.1", ids((n) => n === "127")), { kind: "root" }, "IP アドレスの先頭の数字はサイト名にしない");
+  assert.deepEqual(
+    matchHost(
+      "127.0.0.1",
+      ids((n) => n === "127"),
+    ),
+    { kind: "root" },
+    "IP アドレスの先頭の数字はサイト名にしない",
+  );
   assert.deepEqual(matchHost("[::1]:8080", ids(has)), { kind: "root" });
 
   assert.deepEqual(matchHost("blog.tekitou.app", ids(has), "tekitou.app"), { kind: "site", name: "blog" });
   assert.deepEqual(matchHost("tekitou.app", ids(has), "tekitou.app"), { kind: "root" });
-  assert.deepEqual(matchHost("shop.tekitou.app", ids(has), "tekitou.app"), { kind: "other" }, "ルートドメインが決まっていれば、存在しないサブドメインはサイトでもルートでもない");
+  assert.deepEqual(
+    matchHost("shop.tekitou.app", ids(has), "tekitou.app"),
+    { kind: "other" },
+    "ルートドメインが決まっていれば、存在しないサブドメインはサイトでもルートでもない",
+  );
   assert.deepEqual(matchHost("a.blog.tekitou.app", ids(has), "tekitou.app"), { kind: "other" });
   assert.deepEqual(matchHost("fa.tekitou.app", ids(has), "tekitou.app"), { kind: "other" });
   assert.deepEqual(matchHost("kanzume-abcd.onrender.com", ids(has), "tekitou.app"), { kind: "other" });
@@ -45,7 +56,11 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
   const deploy = async (body: Buffer) => {
     const name = nameInTarGz(body);
     await app.sites.ensure(name);
-    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": name }, body: new Uint8Array(body) });
+    return fetch(`${base}/_api/deploy`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": name },
+      body: new Uint8Array(body),
+    });
   };
   // テストでは *.localhost を名前解決できないので、Host の代わりに X-Forwarded-Host でサブドメインを指定する
   const site = (host: string, path = "/", init: RequestInit = {}) =>
@@ -55,7 +70,12 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
 
 const counter = (t: TestContext, name: string) =>
   tarGz(t, {
-    "wrangler.jsonc": JSON.stringify({ name, main: "src/index.ts", kv_namespaces: [{ binding: "KV", id: "x" }], r2_buckets: [{ binding: "R2", bucket_name: "files" }] }),
+    "wrangler.jsonc": JSON.stringify({
+      name,
+      main: "src/index.ts",
+      kv_namespaces: [{ binding: "KV", id: "x" }],
+      r2_buckets: [{ binding: "R2", bucket_name: "files" }],
+    }),
     ...toCjs(t, {
       "worker/index.js": `export default {
         async fetch(request, env) {
@@ -72,7 +92,10 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
   const { deploy, site, sites } = await start(t);
   assert.equal((await deploy(counter(t, "blog"))).status, 200);
   assert.equal((await deploy(counter(t, "shop"))).status, 200);
-  assert.deepEqual(sites.list().map((s) => s.name), ["blog", "shop"]);
+  assert.deepEqual(
+    sites.list().map((s) => s.name),
+    ["blog", "shop"],
+  );
   assert.equal(sites.root, "blog", "最初のサイトがルートドメインでも配信される");
 
   await site("blog.localhost:8080");
@@ -151,11 +174,18 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   const api = (path: string, init: RequestInit = {}) =>
     fetch(`${base}/_admin/kanzume/api${path}`, { ...init, headers: { cookie, origin: base, "content-type": "application/json", ...(init.headers ?? {}) } });
   const list = (await (await api("/sites")).json()) as { root: string; sites: { name: string; url: string; subdomainUrl: string; kind: string | null }[] };
-  assert.deepEqual(list.sites.map((s) => s.kind), ["dynamic", "dynamic"], "Worker のあるサイトは動的");
-  assert.deepEqual(list.sites.map((s) => [s.name, s.url, s.subdomainUrl]), [
-    ["blog", `${base}/`, `${base.replace("://", "://blog.")}/`],
-    ["shop", `${base.replace("://", "://shop.")}/`, `${base.replace("://", "://shop.")}/`],
-  ]);
+  assert.deepEqual(
+    list.sites.map((s) => s.kind),
+    ["dynamic", "dynamic"],
+    "Worker のあるサイトは動的",
+  );
+  assert.deepEqual(
+    list.sites.map((s) => [s.name, s.url, s.subdomainUrl]),
+    [
+      ["blog", `${base}/`, `${base.replace("://", "://blog.")}/`],
+      ["shop", `${base.replace("://", "://shop.")}/`, `${base.replace("://", "://shop.")}/`],
+    ],
+  );
   assert.equal(((await (await api("/sites/shop/events")).json()) as { events: unknown[] }).events.length, 2);
   assert.equal((await api("/sites/nope")).status, 404);
   assert.deepEqual(await (await api("/samples")).json(), {
@@ -166,7 +196,10 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   assert.equal(sites.root, "shop");
 
   assert.equal((await api("/sites/shop", { method: "DELETE" })).status, 200);
-  assert.deepEqual(sites.list().map((s) => s.name), ["blog"]);
+  assert.deepEqual(
+    sites.list().map((s) => s.name),
+    ["blog"],
+  );
   assert.equal(sites.root, null, "ルートで配信していたサイトを消すと、ルートは空になる");
   assert.equal(observability.events("shop").length, 0);
   assert.equal(history.list("shop").length, 0);
@@ -196,14 +229,21 @@ test("ルートドメインを管理画面で設定すると、サイトはそ�
   const overview = (await (await admin("/overview")).json()) as { domain: { value: string; effective: string; current: string } };
   assert.deepEqual(overview.domain, { value: "tekitou.app", fromEnv: false, effective: "tekitou.app", current: "fa.tekitou.app" });
   const list = (await (await admin("/sites")).json()) as { sites: { name: string; url: string }[] };
-  assert.deepEqual(list.sites.map((s) => s.url), ["https://tekitou.app/", "https://shop.tekitou.app/"]);
+  assert.deepEqual(
+    list.sites.map((s) => s.url),
+    ["https://tekitou.app/", "https://shop.tekitou.app/"],
+  );
 
   assert.equal(((await (await site("tekitou.app")).json()) as { site: string }).site, "blog", "ルートドメインでルートのサイト");
   assert.equal(((await (await site("shop.tekitou.app")).json()) as { site: string }).site, "shop");
   assert.equal((await site("fa.tekitou.app")).status, 404, "サイトでもルートでもないホストではサイトを出さない");
   assert.equal((await site("fa.tekitou.app", "/_admin/kanzume")).status, 200, "管理画面はそのホストでも開ける");
   assert.equal((await site("nope.tekitou.app")).status, 404);
-  assert.equal((await site("shop.tekitou.app", "/_admin/kanzume")).headers.get("location"), "http://tekitou.app/_admin/kanzume", "サイトのサブドメインからはルートドメインの管理画面へ");
+  assert.equal(
+    (await site("shop.tekitou.app", "/_admin/kanzume")).headers.get("location"),
+    "http://tekitou.app/_admin/kanzume",
+    "サイトのサブドメインからはルートドメインの管理画面へ",
+  );
 
   assert.equal((await setDomain("")).status, 200);
   assert.equal(state.domain, null, "空にすると自動に戻る");
@@ -213,7 +253,11 @@ test("ルートドメインを管理画面で設定すると、サイトはそ�
 test("KANZUME_ORIGIN があるときは管理画面からドメインを変えられない", async (t) => {
   const { base, state } = await start(t, { KANZUME_ORIGIN: "https://tekitou.app" });
   const cookie = `kanzume_session=${await state.createSession()}`;
-  const res = await fetch(`${base}/_admin/kanzume/api/domain`, { method: "POST", headers: { cookie, origin: base, "content-type": "application/json" }, body: JSON.stringify({ domain: "x.example" }) });
+  const res = await fetch(`${base}/_admin/kanzume/api/domain`, {
+    method: "POST",
+    headers: { cookie, origin: base, "content-type": "application/json" },
+    body: JSON.stringify({ domain: "x.example" }),
+  });
   assert.equal(res.status, 409);
 });
 

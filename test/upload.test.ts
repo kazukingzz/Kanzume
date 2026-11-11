@@ -30,7 +30,11 @@ async function start(t: TestContext, env: Record<string, string> = {}) {
     });
   const site = (host: string, p = "/") => fetch(`${base}${p}`, { headers: { "x-forwarded-host": host } });
   const sitesList = async () =>
-    ((await (await fetch(`${base}/_admin/kanzume/api/sites`, { headers: { cookie: adminCookie, origin: base } })).json()) as { sites: { name: string; kind: string | null }[] }).sites;
+    (
+      (await (await fetch(`${base}/_admin/kanzume/api/sites`, { headers: { cookie: adminCookie, origin: base } })).json()) as {
+        sites: { name: string; kind: string | null }[];
+      }
+    ).sites;
   return { ...app, base, upload, site, sitesList };
 }
 
@@ -42,7 +46,10 @@ test("設定ファイルのないファイルは、静的サイトとしてデ�
   assert.equal(((await res.json()) as { static: boolean }).static, true);
   assert.equal(await (await site("blog.localhost")).text(), "<h1>hello</h1>");
   assert.equal(await (await site("blog.localhost", "/css/a.css")).text(), "body{}");
-  assert.deepEqual((await sitesList()).map((s) => [s.name, s.kind]), [["blog", "static"]]);
+  assert.deepEqual(
+    (await sitesList()).map((s) => [s.name, s.kind]),
+    [["blog", "static"]],
+  );
   const files = sites.get("blog")!.get()!;
   assert.equal(files.manifest.main, null);
   assert.match(history.latest("blog")?.source.commitMessage ?? "", /ファイルをアップロード（2 ファイル・静的サイト）/);
@@ -58,7 +65,10 @@ test("wrangler の設定があれば、その設定でバンドルして Worker 
   });
   assert.equal(res.status, 200, await res.clone().text());
   assert.equal(await (await site("api.localhost")).text(), "from worker");
-  assert.deepEqual((await sitesList()).map((s) => [s.name, s.kind]), [["api", "dynamic"]]);
+  assert.deepEqual(
+    (await sitesList()).map((s) => [s.name, s.kind]),
+    [["api", "dynamic"]],
+  );
   assert.equal(sites.has("something-else"), false);
 });
 
@@ -86,7 +96,11 @@ test("アップロードしたファイルはサイトのリポジトリのコ�
   assert.equal(await repos.exists("blog"), true, "リポジトリがなければ作る");
   const first = await repos.commit("blog", "refs/heads/main");
   assert.equal(first.subject, "ファイルをアップロード（1 ファイル・静的サイト）");
-  assert.deepEqual((await repos.tree("blog", "main")).map((f) => f.path), ["public/index.html", "wrangler.jsonc"], "静的サイトは git push し直せる形（wrangler.jsonc と public/）で保存する");
+  assert.deepEqual(
+    (await repos.tree("blog", "main")).map((f) => f.path),
+    ["public/index.html", "wrangler.jsonc"],
+    "静的サイトは git push し直せる形（wrangler.jsonc と public/）で保存する",
+  );
   assert.equal(JSON.parse((await repos.readFile("blog", first.sha, "wrangler.jsonc"))!).name, "blog");
   assert.equal(history.latest("blog")?.source.sha, first.sha, "デプロイ履歴にコミットが付く");
 
@@ -94,7 +108,11 @@ test("アップロードしたファイルはサイトのリポジトリのコ�
   assert.equal(((await res.json()) as { commit: string }).commit, (await repos.commit("blog", "refs/heads/main")).sha);
   const log = await repos.log("blog", "main");
   assert.equal(log.length, 2, "前のコミットの次に積む");
-  assert.deepEqual((await repos.tree("blog", "main")).map((f) => f.path), ["public/.gitignore", "public/index.html", "wrangler.jsonc"], "前のファイルは引き継がず、.gitignore があってもすべて入れる");
+  assert.deepEqual(
+    (await repos.tree("blog", "main")).map((f) => f.path),
+    ["public/.gitignore", "public/index.html", "wrangler.jsonc"],
+    "前のファイルは引き継がず、.gitignore があってもすべて入れる",
+  );
 
   const dest = path.join(tmpDir(t), "clone");
   execFileSync("git", ["clone", "--quiet", repos.path("blog"), dest]);
@@ -114,7 +132,6 @@ test("wrangler の設定はそのまま保存して push し直せ、デプロ�
   assert.equal(bad.status, 400);
   assert.equal(await repos.exists("broken"), false);
 });
-
 
 test("容量の上限を超えるアップロードはリポジトリに取り込まず、オブジェクトも残さない", async (t) => {
   const { upload, sites, repos } = await start(t, { KANZUME_REPO_QUOTA_MB: "0.05" });

@@ -112,11 +112,9 @@ export class DeployHistory {
 
   /** site を省略するとすべてのサイト */
   list(site?: string) {
-    const rows = (
-      site === undefined
-        ? this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC").all()
-        : this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC").all(site)
-    ) as unknown as Row[];
+    const rows = (site === undefined
+      ? this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC").all()
+      : this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC").all(site)) as unknown as Row[];
     return rows.map(summary);
   }
 

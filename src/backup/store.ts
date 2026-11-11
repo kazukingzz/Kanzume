@@ -165,7 +165,17 @@ export class S3Store implements BackupStore {
     const amzDate = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
     const payloadHash = sha256(body ?? new Uint8Array());
     const headers: Record<string, string> = { host: url.host, "x-amz-content-sha256": payloadHash, "x-amz-date": amzDate };
-    const authorization = signV4({ method, path: p, query, headers, payloadHash, accessKeyId: this.#o.accessKeyId, secret: this.#o.secret, region: this.#o.region, amzDate });
+    const authorization = signV4({
+      method,
+      path: p,
+      query,
+      headers,
+      payloadHash,
+      accessKeyId: this.#o.accessKeyId,
+      secret: this.#o.secret,
+      region: this.#o.region,
+      amzDate,
+    });
     const qs = Object.keys(query)
       .sort()
       .map((k) => `${uriEncode(k)}=${uriEncode(query[k])}`)
@@ -191,7 +201,9 @@ export class S3Store implements BackupStore {
     const code = /<Code>([^<]*)<\/Code>/.exec(text)?.[1];
     const message = /<Message>([^<]*)<\/Message>/.exec(text)?.[1];
     // AccessKeyId などを含む要素は出さず、Code と Message だけを残す
-    throw new BackupStoreError(this.#scrub(`保存先の ${what} に失敗しました（HTTP ${res.status}${code ? ` ${decodeXml(code)}` : ""}${message ? `: ${decodeXml(message)}` : ""}）`));
+    throw new BackupStoreError(
+      this.#scrub(`保存先の ${what} に失敗しました（HTTP ${res.status}${code ? ` ${decodeXml(code)}` : ""}${message ? `: ${decodeXml(message)}` : ""}）`),
+    );
   }
 
   async put(key: string, body: Uint8Array): Promise<void> {
@@ -221,7 +233,9 @@ export class S3Store implements BackupStore {
       if (!res.ok) return this.#fail(res, "一覧の取得");
       const xml = await res.text();
       for (const m of xml.matchAll(/<Key>([^<]*)<\/Key>/g)) out.push(decodeXml(m[1]).slice(strip));
-      token = /<IsTruncated>true<\/IsTruncated>/.test(xml) ? decodeXml(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/.exec(xml)?.[1] ?? "") || undefined : undefined;
+      token = /<IsTruncated>true<\/IsTruncated>/.test(xml)
+        ? decodeXml(/<NextContinuationToken>([^<]*)<\/NextContinuationToken>/.exec(xml)?.[1] ?? "") || undefined
+        : undefined;
     } while (token);
     return out.sort();
   }

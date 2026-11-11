@@ -139,9 +139,7 @@ export class Sites {
 
   /** 名前順。まだデプロイしていない（作っただけの）サイトも含める */
   list(): { name: string; store: Store }[] {
-    return [...this.#stores]
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([name, store]) => ({ name, store }));
+    return [...this.#stores].sort(([a], [b]) => a.localeCompare(b)).map(([name, store]) => ({ name, store }));
   }
 
   async ensure(name: string): Promise<Store> {

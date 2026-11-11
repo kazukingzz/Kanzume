@@ -33,7 +33,10 @@ function parsePax(data: Buffer): Record<string, string> {
 }
 
 export function safePath(name: string): string | null {
-  const normalized = path.posix.normalize(name.replace(/\\/g, "/")).replace(/^(\.\/)+/, "").replace(/\/+$/, "");
+  const normalized = path.posix
+    .normalize(name.replace(/\\/g, "/"))
+    .replace(/^(\.\/)+/, "")
+    .replace(/\/+$/, "");
   if (!normalized || normalized === ".") return null;
   if (normalized.startsWith("/") || normalized.split("/").includes("..")) throw new TarError(`不正なパスです: ${name}`);
   return normalized;

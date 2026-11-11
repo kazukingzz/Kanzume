@@ -106,7 +106,10 @@ function collectSources(mapFile, bundledDir) {
   (map.sources ?? []).forEach((src, i) => {
     const content = map.sourcesContent?.[i];
     if (typeof content !== "string") return;
-    const rel = path.relative(process.cwd(), path.resolve(bundledDir, map.sourceRoot ?? "", src)).split(path.sep).join("/");
+    const rel = path
+      .relative(process.cwd(), path.resolve(bundledDir, map.sourceRoot ?? "", src))
+      .split(path.sep)
+      .join("/");
     if (rel.startsWith("..") || rel.split("/").includes("node_modules")) return;
     total += Buffer.byteLength(content);
     if (total <= MAX_SOURCES_BYTES) out.push({ path: rel, content });

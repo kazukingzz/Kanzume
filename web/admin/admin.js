@@ -1,7 +1,15 @@
 const BASE = "/_admin/kanzume";
 const $ = (id) => document.getElementById(id);
 // サイトごとのタブ（#/<サイト>/<タブ>）と、全体のタブ（#/<タブ>）
-const SITE_TABS = { deployments: "デプロイ", code: "コード", observability: "可観測性", database: "データベース", storage: "ストレージ", repo: "リポジトリ", site: "サイト設定" };
+const SITE_TABS = {
+  deployments: "デプロイ",
+  code: "コード",
+  observability: "可観測性",
+  database: "データベース",
+  storage: "ストレージ",
+  repo: "リポジトリ",
+  site: "サイト設定",
+};
 const GLOBAL_TABS = { new: "サイトを追加", resources: "リソース", settings: "設定", admin: "管理者設定" };
 // まだデプロイしていないサイトでは出さないタブ
 const DEPLOYED_TABS = new Set(["code", "observability"]);
@@ -68,10 +76,24 @@ async function api(path, options = {}) {
   return data;
 }
 
-const fmtDate = (v) => new Date(v).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+const fmtDate = (v) =>
+  new Date(v).toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 const fmtTime = (v) => new Date(v).toLocaleTimeString("ja-JP", { timeZone: "Asia/Tokyo", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 const fmtShort = (v, withDate) =>
-  new Date(v).toLocaleString("ja-JP", { timeZone: "Asia/Tokyo", ...(withDate ? { month: "numeric", day: "numeric" } : {}), hour: "2-digit", minute: "2-digit" });
+  new Date(v).toLocaleString("ja-JP", {
+    timeZone: "Asia/Tokyo",
+    ...(withDate ? { month: "numeric", day: "numeric" } : {}),
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 
 function fmtAgo(v) {
   const s = Math.round((Date.now() - new Date(v).getTime()) / 1000);
@@ -111,7 +133,11 @@ const b64ToBuf = (s) => {
   const bin = atob(s.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((s.length + 3) % 4));
   return Uint8Array.from(bin, (c) => c.charCodeAt(0)).buffer;
 };
-const bufToB64 = (buf) => btoa(String.fromCharCode(...new Uint8Array(buf))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+const bufToB64 = (buf) =>
+  btoa(String.fromCharCode(...new Uint8Array(buf)))
+    .replace(/\+/g, "-")
+    .replace(/\//g, "_")
+    .replace(/=+$/, "");
 
 function creationOptions(json) {
   if (PublicKeyCredential.parseCreationOptionsFromJSON) return PublicKeyCredential.parseCreationOptionsFromJSON(json);
@@ -140,7 +166,14 @@ function credentialJSON(cred) {
     response.signature = bufToB64(r.signature);
     if (r.userHandle) response.userHandle = bufToB64(r.userHandle);
   }
-  return { id: cred.id, rawId: bufToB64(cred.rawId), type: cred.type, response, clientExtensionResults: cred.getClientExtensionResults(), authenticatorAttachment: cred.authenticatorAttachment };
+  return {
+    id: cred.id,
+    rawId: bufToB64(cred.rawId),
+    type: cred.type,
+    response,
+    clientExtensionResults: cred.getClientExtensionResults(),
+    authenticatorAttachment: cred.authenticatorAttachment,
+  };
 }
 
 function showAuth(view) {
@@ -191,7 +224,8 @@ async function showInvite(token) {
       $("invite-desc").textContent = "この招待リンクは使えません（使用済み・期限切れ・取り消し済みのいずれか）。管理者に新しいリンクを頼んでください。";
       return;
     }
-    $("invite-desc").textContent = `サイト ${info.site} のメンバーとして参加します。パスキーを登録すると、このサイトのデプロイ・設定・削除ができるようになります（${fmtDate(info.expiresAt).slice(0, 10)} まで有効）。`;
+    $("invite-desc").textContent =
+      `サイト ${info.site} のメンバーとして参加します。パスキーを登録すると、このサイトのデプロイ・設定・削除ができるようになります（${fmtDate(info.expiresAt).slice(0, 10)} まで有効）。`;
     $("invite-form").hidden = false;
     $("invite-name").focus();
   } catch (err) {
@@ -228,9 +262,20 @@ async function viewInvite(main, token) {
   const info = await api(`/invite?token=${encodeURIComponent(token)}`);
   const error = h("div", { class: "error" });
   if (!info.valid) {
-    page.append(h("section", { class: "card" }, h("p", { class: "muted", text: "この招待リンクは使えません（使用済み・期限切れ・取り消し済みのいずれか）。" })));
+    page.append(
+      h("section", { class: "card" }, h("p", { class: "muted", text: "この招待リンクは使えません（使用済み・期限切れ・取り消し済みのいずれか）。" })),
+    );
   } else if (isAdmin()) {
-    page.append(h("section", { class: "card" }, h("p", { class: "muted", text: `サイト ${info.site} への招待リンクです。管理者はすべてのサイトを扱えるので、参加の必要はありません。メンバーになる人にこのリンクを渡してください。` })));
+    page.append(
+      h(
+        "section",
+        { class: "card" },
+        h("p", {
+          class: "muted",
+          text: `サイト ${info.site} への招待リンクです。管理者はすべてのサイトを扱えるので、参加の必要はありません。メンバーになる人にこのリンクを渡してください。`,
+        }),
+      ),
+    );
   } else {
     const join = h("button", { class: "primary", text: "参加する" });
     join.addEventListener("click", async () => {
@@ -244,7 +289,16 @@ async function viewInvite(main, token) {
         join.disabled = false;
       }
     });
-    page.append(h("section", { class: "card" }, h("h2", { text: `サイト ${info.site}` }), h("p", { class: "muted", text: `${state.overview.me.name} として、このサイトのメンバーに参加します。` }), join, error));
+    page.append(
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: `サイト ${info.site}` }),
+        h("p", { class: "muted", text: `${state.overview.me.name} として、このサイトのメンバーに参加します。` }),
+        join,
+        error,
+      ),
+    );
   }
   main.replaceChildren(page);
 }
@@ -342,12 +396,28 @@ function renderPickerMenu() {
           "span",
           { class: "site-option-text" },
           h("span", { class: "site-option-name" }, x.name, kindBadge(x.kind)),
-          h("span", { class: "site-option-host" }, x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null, x.deployed ? hostOf(x.url) : `${hostOf(x.subdomainUrl)}・未デプロイ`),
+          h(
+            "span",
+            { class: "site-option-host" },
+            x.name === state.sites.root ? h("span", { class: "root-badge", text: "ルート" }) : null,
+            x.deployed ? hostOf(x.url) : `${hostOf(x.subdomainUrl)}・未デプロイ`,
+          ),
         ),
       ),
     ),
-    state.sites.sites.length ? (isAdmin() ? h("li", { class: "site-menu-sep", role: "presentation" }) : null) : h("li", { class: "site-menu-empty", role: "presentation", text: isAdmin() ? "サイトはまだありません" : "参加しているサイトはありません" }),
-    isAdmin() ? option(NEW_SITE, picker.items.length - 1, check(), h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: "＋ サイトを追加" }))) : null,
+    state.sites.sites.length
+      ? isAdmin()
+        ? h("li", { class: "site-menu-sep", role: "presentation" })
+        : null
+      : h("li", { class: "site-menu-empty", role: "presentation", text: isAdmin() ? "サイトはまだありません" : "参加しているサイトはありません" }),
+    isAdmin()
+      ? option(
+          NEW_SITE,
+          picker.items.length - 1,
+          check(),
+          h("span", { class: "site-option-text" }, h("span", { class: "site-option-name", text: "＋ サイトを追加" })),
+        )
+      : null,
   );
   if (picker.active >= 0) menu.setAttribute("aria-activedescendant", `site-option-${picker.active}`);
   else menu.removeAttribute("aria-activedescendant");
@@ -420,15 +490,27 @@ async function loadOverview() {
 function renderShell() {
   const current = state.tab === "new" ? null : state.sites.sites.find((x) => x.name === state.siteName);
   const name = $("site-trigger-name");
-  name.textContent = current ? current.name : state.tab === "new" ? "＋ サイトを追加" : state.sites.sites.length ? "サイトを選択" : isAdmin() ? "サイトがありません" : "参加しているサイトはありません";
+  name.textContent = current
+    ? current.name
+    : state.tab === "new"
+      ? "＋ サイトを追加"
+      : state.sites.sites.length
+        ? "サイトを選択"
+        : isAdmin()
+          ? "サイトがありません"
+          : "参加しているサイトはありません";
   name.classList.toggle("placeholder", !current && state.tab !== "new");
-  fill($("site-trigger-host"), current ? [kindBadge(current.kind), current.deployed ? hostOf(current.url) : `${hostOf(current.subdomainUrl)}・未デプロイ`] : []);
+  fill(
+    $("site-trigger-host"),
+    current ? [kindBadge(current.kind), current.deployed ? hostOf(current.url) : `${hostOf(current.subdomainUrl)}・未デプロイ`] : [],
+  );
   closePicker();
   for (const a of $("nav").querySelectorAll("a")) {
     a.classList.toggle("current", a.dataset.tab === state.tab);
-    a.hidden = (!!SITE_TABS[a.dataset.tab] && !current) || (DEPLOYED_TABS.has(a.dataset.tab) && !current?.deployed) || (ADMIN_TABS.has(a.dataset.tab) && !isAdmin());
+    a.hidden =
+      (!!SITE_TABS[a.dataset.tab] && !current) || (DEPLOYED_TABS.has(a.dataset.tab) && !current?.deployed) || (ADMIN_TABS.has(a.dataset.tab) && !isAdmin());
   }
-  $("topbar-title").textContent = current ? current.name : GLOBAL_TABS[state.tab] ?? "";
+  $("topbar-title").textContent = current ? current.name : (GLOBAL_TABS[state.tab] ?? "");
 }
 
 async function enterApp() {
@@ -467,7 +549,7 @@ function route() {
     if (!names.includes(state.siteName)) state.siteName = names[0] ?? null;
   } else {
     // 不明な URL・権限のないタブは最初のサイト（なければサイトの追加か設定）へ
-    const first = names.includes(state.siteName) ? state.siteName : (state.sites.root && names.includes(state.sites.root) ? state.sites.root : names[0]);
+    const first = names.includes(state.siteName) ? state.siteName : state.sites.root && names.includes(state.sites.root) ? state.sites.root : names[0];
     location.replace(first ? siteHash(SITE_TABS[tab] ? tab : "deployments", first) : home);
     return;
   }
@@ -508,7 +590,6 @@ function pageHead(title, extra = []) {
   );
 }
 
-
 function statusBadge(status) {
   return status === "success" ? h("span", { class: "status good", text: "成功" }) : h("span", { class: "status bad", text: "失敗" });
 }
@@ -541,15 +622,42 @@ async function viewDeployments(main) {
   if (detail.release) page.append(kindBanner(releaseKind(detail.release)));
 
   if (!detail.deployed) {
-    page.append(h("section", { class: "card" }, h("h2", { text: "デプロイ方法を選ぶ" }), h("p", { class: "muted", text: `サイト ${detail.name}（${hostOf(detail.subdomainUrl)}）はまだデプロイされていません。次のどれかの方法でデプロイしてください。` }), deployOptions(detail)));
+    page.append(
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "デプロイ方法を選ぶ" }),
+        h("p", {
+          class: "muted",
+          text: `サイト ${detail.name}（${hostOf(detail.subdomainUrl)}）はまだデプロイされていません。次のどれかの方法でデプロイしてください。`,
+        }),
+        deployOptions(detail),
+      ),
+    );
   }
 
   const latest = detail.latest;
   if (latest && latest.status === "failed" && (!detail.release || latest.id !== detail.release.deployment?.id)) {
-    page.append(h("div", { class: "notice" }, h("b", { text: `直近のデプロイ（${fmtAgo(latest.createdAt)}）は失敗しました` }), h("div", { class: "mono", text: latest.error ?? "" })));
+    page.append(
+      h(
+        "div",
+        { class: "notice" },
+        h("b", { text: `直近のデプロイ（${fmtAgo(latest.createdAt)}）は失敗しました` }),
+        h("div", { class: "mono", text: latest.error ?? "" }),
+      ),
+    );
   }
 
-  const current = h("section", { class: "card" }, h("div", { class: "card-head" }, h("h2", { text: "現在のデプロイ" }), detail.release ? h("span", { class: "status good", text: "アクティブ" }) : h("span", { class: "status neutral", text: "未公開" })));
+  const current = h(
+    "section",
+    { class: "card" },
+    h(
+      "div",
+      { class: "card-head" },
+      h("h2", { text: "現在のデプロイ" }),
+      detail.release ? h("span", { class: "status good", text: "アクティブ" }) : h("span", { class: "status neutral", text: "未公開" }),
+    ),
+  );
   if (detail.release) {
     const d = detail.release.deployment;
     const s = d?.source ?? {};
@@ -590,7 +698,12 @@ async function viewDeployments(main) {
           "summary",
           {},
           icon,
-          h("span", { class: "grow" }, h("b", { text: "新しくデプロイ" }), h("span", { class: "muted", text: "別の方法でデプロイして、今のリリースを置き換えます" })),
+          h(
+            "span",
+            { class: "grow" },
+            h("b", { text: "新しくデプロイ" }),
+            h("span", { class: "muted", text: "別の方法でデプロイして、今のリリースを置き換えます" }),
+          ),
           chevron,
         ),
         deployOptions(detail),
@@ -631,7 +744,13 @@ function kindBanner(kind) {
     "section",
     { class: `kind-banner ${kind}` },
     h("span", { class: "kind-icon", html: k.icon }),
-    h("div", { class: "kind-body" }, h("div", { class: "kind-eyebrow", text: "サイトの種類" }), h("div", { class: "kind-title", text: k.title }), h("p", { text: k.text })),
+    h(
+      "div",
+      { class: "kind-body" },
+      h("div", { class: "kind-eyebrow", text: "サイトの種類" }),
+      h("div", { class: "kind-title", text: k.title }),
+      h("p", { text: k.text }),
+    ),
   );
 }
 
@@ -650,7 +769,8 @@ async function deployGitHub(body, onError) {
     try {
       ({ site } = await api("/deploy-github", { method: "POST", body: JSON.stringify(body) }));
     } catch (err) {
-      if (!/既にあります/.test(err.message) || !confirm(`サイト ${body.name} は既にあります。上書きしてデプロイしますか？\n（KV / R2 のデータは残ります）`)) throw err;
+      if (!/既にあります/.test(err.message) || !confirm(`サイト ${body.name} は既にあります。上書きしてデプロイしますか？\n（KV / R2 のデータは残ります）`))
+        throw err;
       ({ site } = await api("/deploy-github", { method: "POST", body: JSON.stringify({ ...body, confirm: true }) }));
     }
   } catch (err) {
@@ -819,7 +939,12 @@ function renderFile(viewer, path, file, publicUrl = null) {
   if (file.binary) {
     return viewer.replaceChildren(
       head,
-      h("div", { class: "placeholder" }, "バイナリファイルのため表示できません。", publicUrl ? h("a", { href: publicUrl, target: "_blank", rel: "noopener", text: " 公開 URL で開く ↗" }) : null),
+      h(
+        "div",
+        { class: "placeholder" },
+        "バイナリファイルのため表示できません。",
+        publicUrl ? h("a", { href: publicUrl, target: "_blank", rel: "noopener", text: " 公開 URL で開く ↗" }) : null,
+      ),
     );
   }
   const text = file.text;
@@ -848,7 +973,25 @@ const RULES = {
   css: /(\/\*[\s\S]*?\*\/)|("(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*')|(#[\da-fA-F]{3,8}\b|-?\b\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|s|ms|fr|deg)?\b)|(@[\w-]+|![\w]+)/g,
   html: /(<!--[\s\S]*?-->)|("(?:[^"\n])*"|'(?:[^'\n])*')|()(<\/?[A-Za-z][\w-]*|\/?>)/g,
 };
-const EXT = { js: "js", mjs: "js", cjs: "js", jsx: "js", ts: "js", tsx: "js", mts: "js", cts: "js", json: "json", map: "json", jsonc: "jsonc", toml: "toml", css: "css", html: "html", htm: "html", svg: "html", xml: "html" };
+const EXT = {
+  js: "js",
+  mjs: "js",
+  cjs: "js",
+  jsx: "js",
+  ts: "js",
+  tsx: "js",
+  mts: "js",
+  cts: "js",
+  json: "json",
+  map: "json",
+  jsonc: "jsonc",
+  toml: "toml",
+  css: "css",
+  html: "html",
+  htm: "html",
+  svg: "html",
+  xml: "html",
+};
 
 function highlight(text, path) {
   const lang = EXT[path.split(".").pop()?.toLowerCase()];
@@ -886,16 +1029,35 @@ async function viewObservability(main) {
   const page = h("div", { class: "page" });
   const body = h("div");
   const seg = (items, value, onPick) =>
-    h("div", { class: "segmented", role: "group" }, ...items.map(([v, label]) => h("button", { class: v === value ? "active" : "", "aria-pressed": String(v === value), text: label, onclick: () => onPick(v) })));
+    h(
+      "div",
+      { class: "segmented", role: "group" },
+      ...items.map(([v, label]) =>
+        h("button", { class: v === value ? "active" : "", "aria-pressed": String(v === value), text: label, onclick: () => onPick(v) }),
+      ),
+    );
   page.append(
-    pageHead("可観測性", [seg([["overview", "概要"], ["events", "イベント"]], o.view, (v) => {
-      o.view = v;
-      route();
-    })]),
-    h("div", { class: "filters" }, seg(RANGES, o.range, (v) => {
-      o.range = v;
-      route();
-    })),
+    pageHead("可観測性", [
+      seg(
+        [
+          ["overview", "概要"],
+          ["events", "イベント"],
+        ],
+        o.view,
+        (v) => {
+          o.view = v;
+          route();
+        },
+      ),
+    ]),
+    h(
+      "div",
+      { class: "filters" },
+      seg(RANGES, o.range, (v) => {
+        o.range = v;
+        route();
+      }),
+    ),
     body,
   );
   main.replaceChildren(page);
@@ -916,7 +1078,8 @@ async function renderMetrics(body) {
 function drawMetrics(body, m) {
   const t = m.totals;
   const errorRate = t.requests ? (t.errors / t.requests) * 100 : 0;
-  const tile = (label, value, note) => h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
+  const tile = (label, value, note) =>
+    h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
   const withDate = m.range !== "1h";
   const xLabel = (v) => fmtShort(v, withDate);
 
@@ -940,7 +1103,10 @@ function drawMetrics(body, m) {
         h("h2", { text: "リクエスト数" }),
         h("div", { class: "legend" }, h("span", {}, h("i", { class: "key s1" }), "成功"), h("span", {}, h("i", { class: "key err" }), "エラー")),
         requests,
-        tableView(["時刻", "成功", "エラー"], m.buckets.map((b) => [xLabel(b.t), b.ok, b.errors])),
+        tableView(
+          ["時刻", "成功", "エラー"],
+          m.buckets.map((b) => [xLabel(b.t), b.ok, b.errors]),
+        ),
       ),
       h(
         "section",
@@ -948,19 +1114,34 @@ function drawMetrics(body, m) {
         h("h2", { text: "実行時間" }),
         h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), "p50"), h("span", {}, h("i", { class: "key line s2" }), "p99")),
         latency,
-        tableView(["時刻", "p50", "p99"], m.buckets.map((b) => [xLabel(b.t), fmtMs(b.p50), fmtMs(b.p99)])),
+        tableView(
+          ["時刻", "p50", "p99"],
+          m.buckets.map((b) => [xLabel(b.t), fmtMs(b.p50), fmtMs(b.p99)]),
+        ),
       ),
     ),
   );
   const draw = () => {
-    stackedColumns(requests, m.buckets, [
-      { key: "ok", label: "成功", cls: "fill-1", keyCls: "s1" },
-      { key: "errors", label: "エラー", cls: "fill-err", keyCls: "err" },
-    ], xLabel, (v) => fmtCount(v));
-    lineChart(latency, m.buckets, [
-      { key: "p50", label: "p50", cls: "1" },
-      { key: "p99", label: "p99", cls: "2" },
-    ], xLabel, fmtMs);
+    stackedColumns(
+      requests,
+      m.buckets,
+      [
+        { key: "ok", label: "成功", cls: "fill-1", keyCls: "s1" },
+        { key: "errors", label: "エラー", cls: "fill-err", keyCls: "err" },
+      ],
+      xLabel,
+      (v) => fmtCount(v),
+    );
+    lineChart(
+      latency,
+      m.buckets,
+      [
+        { key: "p50", label: "p50", cls: "1" },
+        { key: "p99", label: "p99", cls: "2" },
+      ],
+      xLabel,
+      fmtMs,
+    );
   };
   draw();
   const ro = new ResizeObserver(() => draw());
@@ -1004,7 +1185,8 @@ function drawResources(body, r, prev) {
   const peakMem = Math.max(0, ...r.samples.map((s) => s.memory));
   const workers = r.workers ?? [];
   const workerRss = workers.reduce((sum, w) => sum + (w.rss ?? 0), 0);
-  const tile = (label, value, note) => h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
+  const tile = (label, value, note) =>
+    h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: value }), h("div", { class: "note", text: note }));
   const xLabel = (v) => fmtTime(v);
 
   if (!prev) {
@@ -1018,11 +1200,33 @@ function drawResources(body, r, prev) {
       h(
         "div",
         { class: "charts" },
-        h("section", { class: "chart-card" }, h("h2", { text: "CPU" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), cpuLimit ? "上限に対する使用率" : "使用率（1 コア = 100%）")), cpu, tables[0]),
-        h("section", { class: "chart-card" }, h("h2", { text: "メモリ" }), h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), "コンテナ"), h("span", {}, h("i", { class: "key line s2" }), "JS ヒープ")), memory, tables[1]),
+        h(
+          "section",
+          { class: "chart-card" },
+          h("h2", { text: "CPU" }),
+          h("div", { class: "legend" }, h("span", {}, h("i", { class: "key line s1" }), cpuLimit ? "上限に対する使用率" : "使用率（1 コア = 100%）")),
+          cpu,
+          tables[0],
+        ),
+        h(
+          "section",
+          { class: "chart-card" },
+          h("h2", { text: "メモリ" }),
+          h(
+            "div",
+            { class: "legend" },
+            h("span", {}, h("i", { class: "key line s1" }), "コンテナ"),
+            h("span", {}, h("i", { class: "key line s2" }), "JS ヒープ"),
+          ),
+          memory,
+          tables[1],
+        ),
       ),
       workers,
-      h("p", { class: "muted hint", text: `${SOURCE_NOTE[r.source]}${r.limits.cpuRaw ? `CPU の上限は ${r.limits.cpuRaw} から計算した、実際にかかっている上限です（ホスティングの公称値と違うことがあります）。` : ""}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。` }),
+      h("p", {
+        class: "muted hint",
+        text: `${SOURCE_NOTE[r.source]}${r.limits.cpuRaw ? `CPU の上限は ${r.limits.cpuRaw} から計算した、実際にかかっている上限です（ホスティングの公称値と違うことがあります）。` : ""}${Math.round(r.intervalMs / 1000)} 秒ごとに計測した直近 30 分ぶんを表示します（サーバーを再起動すると消えます）。`,
+      }),
     );
     prev = { cpu, memory, tiles, tables, workers, data: null };
     new ResizeObserver(() => prev.data && prev.render()).observe(cpu);
@@ -1032,13 +1236,31 @@ function drawResources(body, r, prev) {
     const { buckets, xLabel } = prev.data;
     if (!buckets.length) return;
     lineChart(prev.cpu, buckets, [{ key: "cpu", label: "CPU", cls: "1" }], xLabel, fmtPct, "CPU 使用率の推移");
-    lineChart(prev.memory, buckets, [{ key: "memory", label: "コンテナ", cls: "1" }, { key: "heap", label: "JS ヒープ", cls: "2" }], xLabel, (v) => `${Math.round(v)} MiB`, "メモリ使用量の推移");
+    lineChart(
+      prev.memory,
+      buckets,
+      [
+        { key: "memory", label: "コンテナ", cls: "1" },
+        { key: "heap", label: "JS ヒープ", cls: "2" },
+      ],
+      xLabel,
+      (v) => `${Math.round(v)} MiB`,
+      "メモリ使用量の推移",
+    );
   };
   fill(
     prev.tiles,
-    tile("CPU", fmtPct(cpuPct(latest?.cpu)), cpuLimit ? `${fmtCores(latest?.cpu)} / ${fmtCores(cpuLimit)} CPU` : `${fmtCores(latest?.cpu)} CPU（上限なし・1 コア = 100%）`),
+    tile(
+      "CPU",
+      fmtPct(cpuPct(latest?.cpu)),
+      cpuLimit ? `${fmtCores(latest?.cpu)} / ${fmtCores(cpuLimit)} CPU` : `${fmtCores(latest?.cpu)} CPU（上限なし・1 コア = 100%）`,
+    ),
     tile("CPU（30 分の最大）", fmtPct(peakCpu), `${fmtCores((peakCpu / 100) * (cpuLimit ?? 1))} CPU`),
-    tile("メモリ", fmtMiB(latest?.memory), `${memLimit ? `上限 ${fmtMiB(memLimit)}（${fmtPct((latest.memory / memLimit) * 100)}）` : "上限なし"} · 30 分の最大 ${fmtMiB(peakMem)}`),
+    tile(
+      "メモリ",
+      fmtMiB(latest?.memory),
+      `${memLimit ? `上限 ${fmtMiB(memLimit)}（${fmtPct((latest.memory / memLimit) * 100)}）` : "上限なし"} · 30 分の最大 ${fmtMiB(peakMem)}`,
+    ),
     tile("Node プロセス", fmtMiB(latest?.rss), `JS ヒープ ${fmtMiB(latest?.heap)}`),
   );
   fill(
@@ -1046,10 +1268,33 @@ function drawResources(body, r, prev) {
     h(
       "section",
       { class: "card workers-card" },
-      h("div", { class: "card-head" }, h("h2", { text: "Worker のプロセス" }), h("span", { class: "muted", text: workers.length ? `${workers.length} 個 · 合計 ${fmtMiB(workerRss)}` : "0 個" })),
-      h("p", { class: "muted hint", text: `動的サイト ${state.sites.sites.filter((x) => x.kind === "dynamic").length} 個・静的サイト ${state.sites.sites.filter((x) => x.kind === "static").length} 個。Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。` }),
+      h(
+        "div",
+        { class: "card-head" },
+        h("h2", { text: "Worker のプロセス" }),
+        h("span", { class: "muted", text: workers.length ? `${workers.length} 個 · 合計 ${fmtMiB(workerRss)}` : "0 個" }),
+      ),
+      h("p", {
+        class: "muted hint",
+        text: `動的サイト ${state.sites.sites.filter((x) => x.kind === "dynamic").length} 個・静的サイト ${state.sites.sites.filter((x) => x.kind === "static").length} 個。Worker 付きのサイトは、サイトごとに別のユーザーの子プロセスで動きます。しばらく使われないと止まり、次のアクセスで起動します。静的サイトはプロセスを使いません。`,
+      }),
       workers.length
-        ? h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, h("th", { text: "サイト" }), h("th", { class: "num", text: "PID" }), h("th", { class: "num", text: "メモリ" }))), h("tbody", {}, ...workers.map((w) => h("tr", {}, h("td", { text: w.site }), h("td", { class: "num", text: String(w.pid) }), h("td", { class: "num", text: fmtMiB(w.rss) }))))))
+        ? h(
+            "div",
+            { class: "scroll" },
+            h(
+              "table",
+              {},
+              h("thead", {}, h("tr", {}, h("th", { text: "サイト" }), h("th", { class: "num", text: "PID" }), h("th", { class: "num", text: "メモリ" }))),
+              h(
+                "tbody",
+                {},
+                ...workers.map((w) =>
+                  h("tr", {}, h("td", { text: w.site }), h("td", { class: "num", text: String(w.pid) }), h("td", { class: "num", text: fmtMiB(w.rss) })),
+                ),
+              ),
+            ),
+          )
         : null,
     ),
   );
@@ -1057,8 +1302,20 @@ function drawResources(body, r, prev) {
   const [t0, t1] = prev.tables;
   const o0 = keepOpen(t0);
   const o1 = keepOpen(t1);
-  fill(t0, tableView(["時刻", "CPU"], buckets.map((b) => [xLabel(b.t), fmtPct(b.cpu)])));
-  fill(t1, tableView(["時刻", "コンテナ", "JS ヒープ"], r.samples.map((s) => [xLabel(s.t), fmtMiB(s.memory), fmtMiB(s.heap)])));
+  fill(
+    t0,
+    tableView(
+      ["時刻", "CPU"],
+      buckets.map((b) => [xLabel(b.t), fmtPct(b.cpu)]),
+    ),
+  );
+  fill(
+    t1,
+    tableView(
+      ["時刻", "コンテナ", "JS ヒープ"],
+      r.samples.map((s) => [xLabel(s.t), fmtMiB(s.memory), fmtMiB(s.heap)]),
+    ),
+  );
   if (o0) t0.querySelector("details").open = true;
   if (o1) t1.querySelector("details").open = true;
   prev.render();
@@ -1070,7 +1327,22 @@ function tableView(headers, rows) {
     "details",
     { class: "table-view" },
     h("summary", { text: "表で見る" }),
-    h("div", { class: "scroll" }, h("table", {}, h("thead", {}, h("tr", {}, ...headers.map((x, i) => h("th", { class: i ? "num" : "", text: x })))), h("tbody", {}, ...rows.filter((r) => r.slice(1).some((v) => v && v !== "–")).map((r) => h("tr", {}, ...r.map((v, i) => h("td", { class: i ? "num" : "", text: v }))))))),
+    h(
+      "div",
+      { class: "scroll" },
+      h(
+        "table",
+        {},
+        h("thead", {}, h("tr", {}, ...headers.map((x, i) => h("th", { class: i ? "num" : "", text: x })))),
+        h(
+          "tbody",
+          {},
+          ...rows
+            .filter((r) => r.slice(1).some((v) => v && v !== "–"))
+            .map((r) => h("tr", {}, ...r.map((v, i) => h("td", { class: i ? "num" : "", text: v })))),
+        ),
+      ),
+    ),
   );
 }
 
@@ -1114,7 +1386,12 @@ function tooltip(el, x, title, rows) {
     tip = h("div", { class: "tooltip" });
     el.append(tip);
   }
-  tip.replaceChildren(h("div", { class: "t", text: title }), ...rows.map(([keyCls, label, value]) => h("div", { class: "r" }, h("i", { class: `key ${keyCls}` }), h("b", { text: value }), h("span", { class: "muted", text: label }))));
+  tip.replaceChildren(
+    h("div", { class: "t", text: title }),
+    ...rows.map(([keyCls, label, value]) =>
+      h("div", { class: "r" }, h("i", { class: `key ${keyCls}` }), h("b", { text: value }), h("span", { class: "muted", text: label })),
+    ),
+  );
   tip.hidden = false;
   const right = x + 12;
   const left = right + tip.offsetWidth > el.clientWidth ? x - tip.offsetWidth - 12 : right;
@@ -1148,7 +1425,10 @@ function stackedColumns(el, buckets, series, xLabel, fmtY) {
       const gap = j > 0 ? 2 : 0;
       const hgt = Math.max(1, y0 - y1 - gap);
       const top = y0 - gap - hgt;
-      marks += j === visible.length - 1 ? `<path class="bar ${s.cls}" data-i="${i}" d="${topRounded(x, top, bw, hgt, 4)}"/>` : `<rect class="bar ${s.cls}" data-i="${i}" x="${x}" y="${top}" width="${bw}" height="${hgt}"/>`;
+      marks +=
+        j === visible.length - 1
+          ? `<path class="bar ${s.cls}" data-i="${i}" d="${topRounded(x, top, bw, hgt, 4)}"/>`
+          : `<rect class="bar ${s.cls}" data-i="${i}" x="${x}" y="${top}" width="${bw}" height="${hgt}"/>`;
       base += v;
     });
     hits += `<rect class="hit" data-i="${i}" x="${PAD.l + f.band * i}" y="${PAD.t}" width="${f.band}" height="${f.ih}"/>`;
@@ -1160,7 +1440,12 @@ function stackedColumns(el, buckets, series, xLabel, fmtY) {
     if (Number.isNaN(i)) return hideTooltip(el);
     for (const m of svg.querySelectorAll(".bar")) m.classList.toggle("dim", Number(m.dataset.i) !== i);
     const b = buckets[i];
-    tooltip(el, PAD.l + f.band * i + f.band / 2, xLabel(b.t), series.map((s) => [s.keyCls, s.label, fmtCount(b[s.key])]));
+    tooltip(
+      el,
+      PAD.l + f.band * i + f.band / 2,
+      xLabel(b.t),
+      series.map((s) => [s.keyCls, s.label, fmtCount(b[s.key])]),
+    );
   });
   svg.addEventListener("pointerleave", () => {
     for (const m of svg.querySelectorAll(".bar")) m.classList.remove("dim");
@@ -1208,7 +1493,12 @@ function lineChart(el, buckets, series, xLabel, fmtY, label = "実行時間の�
       .filter((s) => buckets[i][s.key] !== null)
       .map((s) => `<circle class="dot-${s.cls}" cx="${x}" cy="${f.y(buckets[i][s.key])}" r="4"/>`)
       .join("");
-    tooltip(el, x, xLabel(buckets[i].t), series.map((s) => [`line s${s.cls}`, s.label, fmtY(buckets[i][s.key])]));
+    tooltip(
+      el,
+      x,
+      xLabel(buckets[i].t),
+      series.map((s) => [`line s${s.cls}`, s.label, fmtY(buckets[i][s.key])]),
+    );
   });
   svg.addEventListener("pointerleave", () => {
     cross.setAttribute("visibility", "hidden");
@@ -1228,8 +1518,20 @@ const OUTCOME = { ok: "OK", exception: "例外", exceededCpu: "時間超過", ca
 
 async function renderEvents(body, filters) {
   const o = state.obs;
-  const result = h("select", { "aria-label": "結果" }, h("option", { value: "", text: "すべての結果" }), h("option", { value: "ok", text: "成功のみ" }), h("option", { value: "error", text: "エラーのみ" }));
-  const kind = h("select", { "aria-label": "種類" }, h("option", { value: "", text: "すべての種類" }), h("option", { value: "worker", text: "Worker" }), h("option", { value: "asset", text: "アセット" }));
+  const result = h(
+    "select",
+    { "aria-label": "結果" },
+    h("option", { value: "", text: "すべての結果" }),
+    h("option", { value: "ok", text: "成功のみ" }),
+    h("option", { value: "error", text: "エラーのみ" }),
+  );
+  const kind = h(
+    "select",
+    { "aria-label": "種類" },
+    h("option", { value: "", text: "すべての種類" }),
+    h("option", { value: "worker", text: "Worker" }),
+    h("option", { value: "asset", text: "アセット" }),
+  );
   const q = h("input", { type: "search", placeholder: "パス・ログを検索", value: o.q });
   result.value = o.result;
   kind.value = o.kind;
@@ -1250,7 +1552,16 @@ async function renderEvents(body, filters) {
     return p;
   };
   const header = () =>
-    h("div", { class: "event-row head" }, h("span", { text: "時刻" }), h("span", { text: "ステータス" }), h("span", { text: "メソッド" }), h("span", { text: "パス" }), h("span", { class: "num", text: "実行時間" }), h("span", { class: "num", text: "ログ" }));
+    h(
+      "div",
+      { class: "event-row head" },
+      h("span", { text: "時刻" }),
+      h("span", { text: "ステータス" }),
+      h("span", { text: "メソッド" }),
+      h("span", { text: "パス" }),
+      h("span", { class: "num", text: "実行時間" }),
+      h("span", { class: "num", text: "ログ" }),
+    );
 
   const reload = async () => {
     const { events } = await api(siteApi(`/events?${params({})}`));
@@ -1343,7 +1654,8 @@ function eventRow(e) {
 
 function renderEventDetail(el, e) {
   const d = e.detail;
-  const kv = (obj) => h("dl", { class: "kv" }, ...Object.entries(obj).flatMap(([k, v]) => [h("dt", { class: "mono", text: k }), h("dd", { class: "mono", text: v })]));
+  const kv = (obj) =>
+    h("dl", { class: "kv" }, ...Object.entries(obj).flatMap(([k, v]) => [h("dt", { class: "mono", text: k }), h("dd", { class: "mono", text: v })]));
   fill(
     el,
     h("h3", { text: "概要" }),
@@ -1362,7 +1674,15 @@ function renderEventDetail(el, e) {
       ? h(
           "div",
           { class: "mono" },
-          ...d.logs.map((l) => h("div", { class: "logline" }, h("span", { class: "ts muted", text: fmtTime(l.ts) }), h("span", { class: `level lv-${l.level}`, text: l.level }), h("span", { class: "msg", text: l.message }))),
+          ...d.logs.map((l) =>
+            h(
+              "div",
+              { class: "logline" },
+              h("span", { class: "ts muted", text: fmtTime(l.ts) }),
+              h("span", { class: `level lv-${l.level}`, text: l.level }),
+              h("span", { class: "msg", text: l.message }),
+            ),
+          ),
           d.droppedLogs ? h("div", { class: "muted", text: `ほか ${d.droppedLogs} 件は省略しました` }) : null,
         )
       : h("p", { class: "muted", text: "console 出力はありません" }),
@@ -1371,7 +1691,20 @@ function renderEventDetail(el, e) {
       ? h(
           "table",
           { class: "mono" },
-          h("tbody", {}, ...d.subrequests.map((s) => h("tr", {}, h("td", { text: s.method }), h("td", { class: "path", text: s.url }), h("td", { text: s.status ?? s.error ?? "" }), h("td", { class: "num", text: fmtMs(s.durationMs) })))),
+          h(
+            "tbody",
+            {},
+            ...d.subrequests.map((s) =>
+              h(
+                "tr",
+                {},
+                h("td", { text: s.method }),
+                h("td", { class: "path", text: s.url }),
+                h("td", { text: s.status ?? s.error ?? "" }),
+                h("td", { class: "num", text: fmtMs(s.durationMs) }),
+              ),
+            ),
+          ),
         )
       : null,
     h("h3", { text: "リクエストヘッダ" }),
@@ -1478,7 +1811,12 @@ function passkeyItem(p, i, reload, removable) {
           }
         })
       : null;
-    fill(item, h("div", { class: "grow" }, h("div", { class: "passkey-name", text: label }), h("div", { class: "muted passkey-meta", text: meta.join(" · ") }), error), rename, remove);
+    fill(
+      item,
+      h("div", { class: "grow" }, h("div", { class: "passkey-name", text: label }), h("div", { class: "muted passkey-meta", text: meta.join(" · ") }), error),
+      rename,
+      remove,
+    );
   };
   function edit() {
     const input = h("input", { value: p.name, maxlength: "40", placeholder: label, "aria-label": "パスキーの名前" });
@@ -1495,7 +1833,15 @@ function passkeyItem(p, i, reload, removable) {
       if (e.key === "Enter" && !e.isComposing) save();
       if (e.key === "Escape") show();
     });
-    fill(item, h("div", { class: "grow" }, h("div", { class: "row" }, input, h("button", { class: "primary", text: "保存", onclick: save }), h("button", { text: "キャンセル", onclick: show })), error));
+    fill(
+      item,
+      h(
+        "div",
+        { class: "grow" },
+        h("div", { class: "row" }, input, h("button", { class: "primary", text: "保存", onclick: save }), h("button", { text: "キャンセル", onclick: show })),
+        error,
+      ),
+    );
     input.focus();
     input.select();
   }
@@ -1505,7 +1851,14 @@ function passkeyItem(p, i, reload, removable) {
 
 function domainCard() {
   const d = state.overview.domain;
-  const input = h("input", { value: d.value ?? "", placeholder: "example.com", spellcheck: "false", autocomplete: "off", "aria-label": "ルートドメイン", disabled: d.fromEnv || undefined });
+  const input = h("input", {
+    value: d.value ?? "",
+    placeholder: "example.com",
+    spellcheck: "false",
+    autocomplete: "off",
+    "aria-label": "ルートドメイン",
+    disabled: d.fromEnv || undefined,
+  });
   const error = h("div", { class: "error" });
   const save = h("button", { class: "primary", text: "保存", disabled: d.fromEnv || undefined });
   const run = async () => {
@@ -1534,9 +1887,13 @@ function domainCard() {
       text: "サイトは <サイト名>.<ドメイン>、ルートのサイトは <ドメイン> で配信します。DNS はドメイン本体とワイルドカード（*.<ドメイン>）を Kanzume に向けてください。空にすると、管理画面を開いたホストをドメインとして使います。",
     }),
     h("div", { class: "field" }, h("label", { text: "ルートドメイン" }), h("div", { class: "row" }, h("div", { class: "grow" }, input), save)),
-    d.fromEnv ? h("p", { class: "muted hint", text: `環境変数 KANZUME_ORIGIN で ${d.effective} に決まっています。変えるには環境変数を変更してください。` }) : null,
+    d.fromEnv
+      ? h("p", { class: "muted hint", text: `環境変数 KANZUME_ORIGIN で ${d.effective} に決まっています。変えるには環境変数を変更してください。` })
+      : null,
     !d.fromEnv && !d.value ? h("p", { class: "muted hint", text: `今は自動です（この画面を開いている ${d.current} をドメインとして使っています）。` }) : null,
-    now && now !== d.current ? h("p", { class: "muted hint", text: `この管理画面は ${d.current} で開いています。サイトは ${now} とそのサブドメインで配信されます。` }) : null,
+    now && now !== d.current
+      ? h("p", { class: "muted hint", text: `この管理画面は ${d.current} で開いています。サイトは ${now} とそのサブドメインで配信されます。` })
+      : null,
     error,
   );
 }
@@ -1555,7 +1912,11 @@ function backupCard() {
           ? last.skipped
           : `世代 ${last.snapshot} を保存（${last.files} ファイル、送信 ${last.uploadedFiles} 件・${fmtBytes(last.uploadedBytes ?? 0)}）`;
     const restore = b.lastRestore;
-    const restoreText = !restore ? "起動時に復元していません（/data にデータがあったか、バックアップがありませんでした）" : restore.ok ? `世代 ${restore.snapshot} を復元しました（${restore.files} ファイル）` : `失敗: ${restore.error}`;
+    const restoreText = !restore
+      ? "起動時に復元していません（/data にデータがあったか、バックアップがありませんでした）"
+      : restore.ok
+        ? `世代 ${restore.snapshot} を復元しました（${restore.files} ファイル）`
+        : `失敗: ${restore.error}`;
     const button = h("button", { class: "primary", text: "今すぐバックアップ" });
     button.addEventListener("click", async () => {
       error.textContent = "";
@@ -1592,7 +1953,10 @@ function backupCard() {
       if (b.enabled) return run(b);
       fill(
         body,
-        h("p", { class: "muted", text: "バックアップは無効です。環境変数 KANZUME_BACKUP_URL に S3 互換ストレージ（Cloudflare R2 など）を指定すると、データを外部に保存し、/data が空の状態で起動したときに自動で復元します。" }),
+        h("p", {
+          class: "muted",
+          text: "バックアップは無効です。環境変数 KANZUME_BACKUP_URL に S3 互換ストレージ（Cloudflare R2 など）を指定すると、データを外部に保存し、/data が空の状態で起動したときに自動で復元します。",
+        }),
         h("code", { class: "value", text: "s3://<ACCESS_KEY_ID>:<SECRET_ACCESS_KEY>@<ACCOUNT_ID>.r2.cloudflarestorage.com/<BUCKET>" }),
       );
     } catch (err) {
@@ -1643,7 +2007,18 @@ async function viewSettings(main) {
   const mySites = isAdmin()
     ? h("p", { class: "muted", text: "管理者なので、すべてのサイトを扱えます。" })
     : me.sites.length
-      ? h("ul", { class: "secrets" }, ...me.sites.map((name) => h("li", { class: "secret" }, h("a", { class: "grow", href: siteHash("deployments", name), text: name }), h("span", { class: "muted", text: "メンバー" }))))
+      ? h(
+          "ul",
+          { class: "secrets" },
+          ...me.sites.map((name) =>
+            h(
+              "li",
+              { class: "secret" },
+              h("a", { class: "grow", href: siteHash("deployments", name), text: name }),
+              h("span", { class: "muted", text: "メンバー" }),
+            ),
+          ),
+        )
       : h("p", { class: "muted", text: "参加しているサイトはありません。管理者から招待リンクをもらって開いてください。" });
 
   main.replaceChildren(
@@ -1661,7 +2036,15 @@ async function viewSettings(main) {
       ),
       h("section", { class: "card" }, h("h2", { text: "参加しているサイト" }), mySites),
       personalTokensCard(),
-      h("section", { class: "card" }, h("h2", { text: "パスキー" }), h("p", { class: "muted", text: "別のデバイスからもサインインできるように、パスキーを追加できます。" }), list, h("div", { class: "actions" }, addPasskey), addError),
+      h(
+        "section",
+        { class: "card" },
+        h("h2", { text: "パスキー" }),
+        h("p", { class: "muted", text: "別のデバイスからもサインインできるように、パスキーを追加できます。" }),
+        list,
+        h("div", { class: "actions" }, addPasskey),
+        addError,
+      ),
     ),
   );
 }
@@ -1720,7 +2103,12 @@ function personalTokensCard() {
             "div",
             { class: "list-row static" },
             h("span", { class: "status neutral", text: t.expiresAt ? "期限付き" : "無期限" }),
-            h("div", { class: "grow" }, h("div", { class: "title", text: t.name }), h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` })),
+            h(
+              "div",
+              { class: "grow" },
+              h("div", { class: "title", text: t.name }),
+              h("div", { class: "sub", text: `発行 ${fmtDate(t.createdAt)} · ${t.expiresAt ? `期限 ${fmtDate(t.expiresAt)}` : "無期限"}` }),
+            ),
             armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
               try {
                 await api(`/tokens/${t.id}`, { method: "DELETE" });
@@ -1755,7 +2143,12 @@ function personalTokensCard() {
           "div",
           { class: "notice good-notice" },
           h("b", { text: "トークンを発行しました。この画面を離れると二度と表示できません。" }),
-          h("div", { class: "row" }, h("code", { class: "value grow", text: t.token }), copyButton(() => t.token)),
+          h(
+            "div",
+            { class: "row" },
+            h("code", { class: "value grow", text: t.token }),
+            copyButton(() => t.token),
+          ),
         ),
       );
       load();
@@ -1811,8 +2204,16 @@ function usersCard() {
           "ul",
           { class: "users" },
           ...users.map((u) => {
-            const role = h("select", { "aria-label": `${u.name} のロール` }, h("option", { value: "admin", text: "管理者", selected: u.role === "admin" }), h("option", { value: "member", text: "メンバー", selected: u.role === "member" }));
-            role.addEventListener("change", act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ role: role.value }) })));
+            const role = h(
+              "select",
+              { "aria-label": `${u.name} のロール` },
+              h("option", { value: "admin", text: "管理者", selected: u.role === "admin" }),
+              h("option", { value: "member", text: "メンバー", selected: u.role === "member" }),
+            );
+            role.addEventListener(
+              "change",
+              act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ role: role.value }) })),
+            );
             const sitesView =
               u.role === "admin"
                 ? h("span", { class: "muted", text: "すべてのサイト" })
@@ -1825,7 +2226,13 @@ function usersCard() {
                           "span",
                           { class: "tag" },
                           name,
-                          h("button", { class: "tag-remove", title: `${name} から外す`, "aria-label": `${u.name} を ${name} から外す`, text: "×", onclick: act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ removeSite: name }) })) }),
+                          h("button", {
+                            class: "tag-remove",
+                            title: `${name} から外す`,
+                            "aria-label": `${u.name} を ${name} から外す`,
+                            text: "×",
+                            onclick: act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ removeSite: name }) })),
+                          }),
                         ),
                       ),
                     )
@@ -1835,8 +2242,17 @@ function usersCard() {
             const attach =
               u.role === "member" && addable.length
                 ? (() => {
-                    const pick = h("select", { "aria-label": `${u.name} に足すサイト` }, h("option", { value: "", text: "サイトを足す…" }), ...addable.map((n) => h("option", { value: n, text: n })));
-                    pick.addEventListener("change", () => pick.value && act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ addSite: pick.value }) }))());
+                    const pick = h(
+                      "select",
+                      { "aria-label": `${u.name} に足すサイト` },
+                      h("option", { value: "", text: "サイトを足す…" }),
+                      ...addable.map((n) => h("option", { value: n, text: n })),
+                    );
+                    pick.addEventListener(
+                      "change",
+                      () =>
+                        pick.value && act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "PUT", body: JSON.stringify({ addSite: pick.value }) }))(),
+                    );
                     return pick;
                   })()
                 : null;
@@ -1851,7 +2267,14 @@ function usersCard() {
                 h("div", { class: "user-sites" }, sitesView, attach),
               ),
               u.me ? null : role,
-              u.me ? null : armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "DELETE" }))),
+              u.me
+                ? null
+                : armed(
+                    h("button", { class: "danger" }),
+                    "削除",
+                    "もう一度押すと削除",
+                    act(() => api(`/users/${encodeURIComponent(u.id)}`, { method: "DELETE" })),
+                  ),
             );
           }),
         ),
@@ -1865,7 +2288,10 @@ function usersCard() {
     "section",
     { class: "card" },
     h("h2", { text: "メンバー" }),
-    h("p", { class: "muted", text: "メンバーは参加しているサイトだけを扱えます。扱えるサイトは「サイトを足す…」と × で変えられます。新しい人は、各サイトの「サイト設定 > メンバー」で作る招待リンクから参加します。ロールを管理者にすると、全体の設定とすべてのサイトを扱えるようになります。削除するとそのユーザーのパスキーも消えます。" }),
+    h("p", {
+      class: "muted",
+      text: "メンバーは参加しているサイトだけを扱えます。扱えるサイトは「サイトを足す…」と × で変えられます。新しい人は、各サイトの「サイト設定 > メンバー」で作る招待リンクから参加します。ロールを管理者にすると、全体の設定とすべてのサイトを扱えるようになります。削除するとそのユーザーのパスキーも消えます。",
+    }),
     body,
     error,
   );
@@ -1890,37 +2316,44 @@ async function viewSite(main) {
         ["URL", h("span", {}, detail.subdomainUrl, h("span", { class: "muted", text: "（まだデプロイしていないので配信していません）" }))],
       ]
     : [
-    ["名前", r.name],
-    ["URL", siteUrlCell(detail)],
-    ["種類", h("span", {}, kindBadge(releaseKind(r)), " ", KIND[releaseKind(r)].title)],
-    ["Worker", r.main ? `worker/${r.main}` : "なし"],
-    ["compatibility_date", r.compatibilityDate ?? "–"],
-    ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],
-    ["KV", r.kv.length ? r.kv.join(", ") : "–"],
-    ["R2", r.r2.length ? r.r2.map((b) => `${b.binding}（${b.bucket}）`).join(", ") : "–"],
-    ["Assets", r.assets ? [`binding: ${r.assets.binding ?? "–"}`, `html_handling: ${r.assets.htmlHandling}`, `not_found_handling: ${r.assets.notFoundHandling}`, `run_worker_first: ${JSON.stringify(r.assets.runWorkerFirst)}`].join(" / ") : "–"],
-  ];
+        ["名前", r.name],
+        ["URL", siteUrlCell(detail)],
+        ["種類", h("span", {}, kindBadge(releaseKind(r)), " ", KIND[releaseKind(r)].title)],
+        ["Worker", r.main ? `worker/${r.main}` : "なし"],
+        ["compatibility_date", r.compatibilityDate ?? "–"],
+        ["compatibility_flags", r.compatibilityFlags.length ? r.compatibilityFlags.join(", ") : "–"],
+        ["KV", r.kv.length ? r.kv.join(", ") : "–"],
+        ["R2", r.r2.length ? r.r2.map((b) => `${b.binding}（${b.bucket}）`).join(", ") : "–"],
+        [
+          "Assets",
+          r.assets
+            ? [
+                `binding: ${r.assets.binding ?? "–"}`,
+                `html_handling: ${r.assets.htmlHandling}`,
+                `not_found_handling: ${r.assets.notFoundHandling}`,
+                `run_worker_first: ${JSON.stringify(r.assets.runWorkerFirst)}`,
+              ].join(" / ")
+            : "–",
+        ],
+      ];
   const settings = await api(siteApi("/settings"));
-
 
   const delError = h("div", { class: "error" });
   // 権限や未デプロイで出さないカードは null になるので、DOM の append（null を文字として足す）ではなく fill を使う
   fill(
     page,
     ...page.childNodes,
-    h(
-      "section",
-      { class: "card" },
-      h("h2", { text: "サイト" }),
-      h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)])),
-    ),
+    h("section", { class: "card" }, h("h2", { text: "サイト" }), h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)]))),
     ...siteSettingsCards(settings),
     isAdmin() ? siteMembersCard() : null,
     h(
       "section",
       { class: "card" },
       h("h2", { text: "サイトの削除" }),
-      h("p", { class: "muted", text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。ほかのサイトとメンバーのパスキーは残ります。" }),
+      h("p", {
+        class: "muted",
+        text: "公開を止め、このサイトの KV / R2 のデータ・デプロイ履歴・ログと、同じ名前のリポジトリをすべて削除します。ほかのサイトとメンバーのパスキーは残ります。",
+      }),
       armed(h("button", { class: "danger" }), "サイトを削除", "もう一度押すと削除", async () => {
         try {
           await api(siteApi(), { method: "DELETE" });
@@ -1981,7 +2414,10 @@ function siteMembersCard() {
                 h(
                   "li",
                   { class: "secret" },
-                  h("span", { class: "grow muted", text: `${fmtDate(i.createdAt)} に${i.createdBy ? ` ${i.createdBy} が` : ""}作成 · ${fmtDate(i.expiresAt).slice(0, 10)} まで` }),
+                  h("span", {
+                    class: "grow muted",
+                    text: `${fmtDate(i.createdAt)} に${i.createdBy ? ` ${i.createdBy} が` : ""}作成 · ${fmtDate(i.expiresAt).slice(0, 10)} まで`,
+                  }),
                   armed(h("button", { class: "danger" }), "取り消す", "もう一度押すと取り消す", async () => {
                     try {
                       await api(siteApi(`/invites/${i.id}`), { method: "DELETE" });
@@ -2011,7 +2447,12 @@ function siteMembersCard() {
           "div",
           { class: "notice good-notice" },
           h("b", { text: `招待リンクを作りました。1 人が 1 回だけ使え、${invite.ttlDays} 日で無効になります。この画面を離れると二度と表示できません。` }),
-          h("div", { class: "row" }, h("code", { class: "value grow", text: invite.url }), copyButton(() => invite.url)),
+          h(
+            "div",
+            { class: "row" },
+            h("code", { class: "value grow", text: invite.url }),
+            copyButton(() => invite.url),
+          ),
         ),
       );
       load();
@@ -2026,7 +2467,10 @@ function siteMembersCard() {
     "section",
     { class: "card" },
     h("h2", { text: "メンバー" }),
-    h("p", { class: "muted", text: `招待リンクを開いた人がパスキーを登録すると、${site} のメンバーになります。メンバーはこのサイトのデプロイ・設定・削除と、同じ名前のリポジトリを扱えます。ほかのサイトや管理者設定は見えません。` }),
+    h("p", {
+      class: "muted",
+      text: `招待リンクを開いた人がパスキーを登録すると、${site} のメンバーになります。メンバーはこのサイトのデプロイ・設定・削除と、同じ名前のリポジトリを扱えます。ほかのサイトや管理者設定は見えません。`,
+    }),
     h("div", { class: "actions" }, create),
     issued,
     body,
@@ -2080,7 +2524,10 @@ function siteSettingsCards(settings) {
     try {
       current = vars.values();
     } catch {}
-    fill(varsBox, wranglerVarsView(wrangler, (k) => Object.hasOwn(current, k)));
+    fill(
+      varsBox,
+      wranglerVarsView(wrangler, (k) => Object.hasOwn(current, k)),
+    );
   };
   renderWrangler();
   vars.el.addEventListener("input", renderWrangler);
@@ -2088,7 +2535,10 @@ function siteSettingsCards(settings) {
   const varsError = h("div", { class: "error" });
   const varsDone = h("p", { class: "muted hint" });
   const varsSave = h("button", { class: "primary", text: "保存" });
-  varsSave.addEventListener("click", saveWith(varsSave, varsError, varsDone, () => ({ vars: vars.values() })));
+  varsSave.addEventListener(
+    "click",
+    saveWith(varsSave, varsError, varsDone, () => ({ vars: vars.values() })),
+  );
 
   // シークレット
   const secretError = h("div", { class: "error" });
@@ -2112,7 +2562,13 @@ function siteSettingsCards(settings) {
         h("button", {
           text: "値を変更",
           onclick: () => {
-            const input = h("input", { class: "mono", type: "password", placeholder: "新しい値", autocomplete: "new-password", "aria-label": `${key} の新しい値` });
+            const input = h("input", {
+              class: "mono",
+              type: "password",
+              placeholder: "新しい値",
+              autocomplete: "new-password",
+              "aria-label": `${key} の新しい値`,
+            });
             const ok = h("button", { class: "primary", text: "保存", onclick: () => putSecrets({ [key]: input.value }) });
             input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && ok.click());
             fill(item, h("code", { text: key }), h("div", { class: "grow" }, input), ok, h("button", { text: "キャンセル", onclick: show }));
@@ -2150,7 +2606,10 @@ function siteSettingsCards(settings) {
       "section",
       { class: "card" },
       h("h2", { text: "サブドメイン" }),
-      h("p", { class: "muted", text: `変えると前のサブドメインでは配信しなくなります。サイトの ID（${state.siteName}）と、git push・GitHub Actions で使う name は変わりません。` }),
+      h("p", {
+        class: "muted",
+        text: `変えると前のサブドメインでは配信しなくなります。サイトの ID（${state.siteName}）と、git push・GitHub Actions で使う name は変わりません。`,
+      }),
       h("div", { class: "row narrow" }, h("div", { class: "grow" }, sub.el), subSave),
       subError,
       subDone,
@@ -2159,7 +2618,10 @@ function siteSettingsCards(settings) {
       "section",
       { class: "card" },
       h("h2", { text: "環境変数" }),
-      h("p", { class: "muted", text: "Worker の env（nodejs_compat なら process.env も）に入ります。wrangler の設定の vars と同じ名前なら、こちらが優先されます。再デプロイしなくても、保存した次のリクエストから反映されます。" }),
+      h("p", {
+        class: "muted",
+        text: "Worker の env（nodejs_compat なら process.env も）に入ります。wrangler の設定の vars と同じ名前なら、こちらが優先されます。再デプロイしなくても、保存した次のリクエストから反映されます。",
+      }),
       vars.el,
       varsBox,
       h("div", { class: "actions" }, varsSave),
@@ -2184,7 +2646,8 @@ function siteSettingsCards(settings) {
 // ---------- データベース（KV）・ストレージ（R2） ----------
 
 const ICONS = {
-  database: '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
+  database:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v14c0 1.7 3.6 3 8 3s8-1.3 8-3V5M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/></svg>',
   storage: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 12l9 4 9-4M3 17l9 4 9-4"/></svg>',
   folder: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 6a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>',
   file: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6"/></svg>',
@@ -2259,7 +2722,10 @@ async function viewDatabase(main) {
     );
     const open = async () => {
       const value = await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`));
-      const edit = h("button", { text: "編集", onclick: () => fill(detail, editor({ key: k.key, value: value.text ?? "", metadata: value.metadata, expiration: value.expiration })) });
+      const edit = h("button", {
+        text: "編集",
+        onclick: () => fill(detail, editor({ key: k.key, value: value.text ?? "", metadata: value.metadata, expiration: value.expiration })),
+      });
       const del = armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", async () => {
         try {
           await api(nsApi(`/value?key=${encodeURIComponent(k.key)}`), { method: "DELETE" });
@@ -2301,9 +2767,11 @@ async function viewDatabase(main) {
   const load = async (reset) => {
     const mine = ++seq;
     more.disabled = true;
-    const { keys, cursor } = await api(nsApi(`/keys?prefix=${encodeURIComponent(state.db.prefix)}&after=${encodeURIComponent(reset ? "" : after)}`)).finally(() => {
-      if (mine === seq) more.disabled = false;
-    });
+    const { keys, cursor } = await api(nsApi(`/keys?prefix=${encodeURIComponent(state.db.prefix)}&after=${encodeURIComponent(reset ? "" : after)}`)).finally(
+      () => {
+        if (mine === seq) more.disabled = false;
+      },
+    );
     if (mine !== seq) return;
     if (reset) fill(list);
     for (const k of keys) list.append(row(k));
@@ -2335,7 +2803,10 @@ async function viewDatabase(main) {
       formError.textContent = "";
       save.disabled = true;
       try {
-        await api(nsApi("/value"), { method: "PUT", body: JSON.stringify({ key: key.value, value: value.value, expirationTtl: ttl.value || null, metadata: initial?.metadata ?? null }) });
+        await api(nsApi("/value"), {
+          method: "PUT",
+          body: JSON.stringify({ key: key.value, value: value.value, expirationTtl: ttl.value || null, metadata: initial?.metadata ?? null }),
+        });
         addBox.hidden = true;
         await load(true);
       } catch (err) {
@@ -2379,7 +2850,10 @@ async function viewDatabase(main) {
       search,
       add,
     ),
-    h("p", { class: "muted data-summary", text: `名前空間（binding）${ns.name}・${ns.count} 件${ns.bound ? "" : "（今の wrangler の設定にはない名前空間です。データだけが残っています）"}` }),
+    h("p", {
+      class: "muted data-summary",
+      text: `名前空間（binding）${ns.name}・${ns.count} 件${ns.bound ? "" : "（今の wrangler の設定にはない名前空間です。データだけが残っています）"}`,
+    }),
     addBox,
     list,
     more,
@@ -2424,7 +2898,10 @@ async function viewStorage(main) {
     "nav",
     { class: "crumbs", "aria-label": "フォルダ" },
     h("button", { class: "ghost", text: bucket.name, onclick: () => go2("") }),
-    ...parts.flatMap((p, i) => [h("span", { class: "muted", text: "/" }), h("button", { class: "ghost", text: p, onclick: () => go2(`${parts.slice(0, i + 1).join("/")}/`) })]),
+    ...parts.flatMap((p, i) => [
+      h("span", { class: "muted", text: "/" }),
+      h("button", { class: "ghost", text: p, onclick: () => go2(`${parts.slice(0, i + 1).join("/")}/`) }),
+    ]),
   );
 
   const objectRow = (o) => {
@@ -2443,7 +2920,12 @@ async function viewStorage(main) {
       detail.hidden = !show;
       head.setAttribute("aria-expanded", String(show));
       if (!show) return;
-      const download = h("a", { class: "button", href: `${BASE}/api${bApi(`/object?key=${encodeURIComponent(o.key)}`)}`, download: name, text: "ダウンロード" });
+      const download = h("a", {
+        class: "button",
+        href: `${BASE}/api${bApi(`/object?key=${encodeURIComponent(o.key)}`)}`,
+        download: name,
+        text: "ダウンロード",
+      });
       const del = armed(h("button", { class: "danger" }), "削除", "もう一度押すと削除", async () => {
         try {
           await api(bApi(`/object?key=${encodeURIComponent(o.key)}`), { method: "DELETE" });
@@ -2494,21 +2976,29 @@ async function viewStorage(main) {
   const load = async (reset) => {
     const mine = ++seq;
     more.disabled = true;
-    const r = await api(bApi(`/objects?prefix=${encodeURIComponent(state.storage.prefix)}${!reset && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`)).finally(() => {
+    const r = await api(
+      bApi(`/objects?prefix=${encodeURIComponent(state.storage.prefix)}${!reset && cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`),
+    ).finally(() => {
       if (mine === seq) more.disabled = false;
     });
     if (mine !== seq) return;
     if (reset) fill(list);
-      // フォルダは 2 ページ目以降にも出てくる（キーの順に、オブジェクトと混ざって返る）
-      for (const p of r.prefixes) {
-        list.append(
+    // フォルダは 2 ページ目以降にも出てくる（キーの順に、オブジェクトと混ざって返る）
+    for (const p of r.prefixes) {
+      list.append(
+        h(
+          "div",
+          { class: "list-item" },
           h(
-            "div",
-            { class: "list-item" },
-            h("button", { class: "list-row data-row", onclick: () => go2(p) }, h("span", { class: "data-key" }, icon("folder"), h("span", { class: "mono", text: p.slice(state.storage.prefix.length) })), h("span"), h("span")),
+            "button",
+            { class: "list-row data-row", onclick: () => go2(p) },
+            h("span", { class: "data-key" }, icon("folder"), h("span", { class: "mono", text: p.slice(state.storage.prefix.length) })),
+            h("span"),
+            h("span"),
           ),
-        );
-      }
+        ),
+      );
+    }
     for (const o of r.objects) list.append(objectRow(o));
     if (reset && !r.objects.length && !r.prefixes.length) list.append(h("div", { class: "empty", text: "このフォルダにはまだ何もありません" }));
     cursor = r.cursor;
@@ -2569,7 +3059,10 @@ async function viewStorage(main) {
       upload,
       fileInput,
     ),
-    h("p", { class: "muted data-summary", text: `バケット ${bucket.name}${bucket.binding ? `（binding: ${bucket.binding}）` : "（今の wrangler の設定にはないバケットです。データだけが残っています）"}・${bucket.count} 件・${fmtBytes(bucket.size)}` }),
+    h("p", {
+      class: "muted data-summary",
+      text: `バケット ${bucket.name}${bucket.binding ? `（binding: ${bucket.binding}）` : "（今の wrangler の設定にはないバケットです。データだけが残っています）"}・${bucket.count} 件・${fmtBytes(bucket.size)}`,
+    }),
     list,
     more,
     error,
@@ -2591,13 +3084,7 @@ async function viewRepo(main, name) {
   const repo = await api(`/repos/${encodeURIComponent(name)}`);
   const repoApi = (path) => `/repos/${encodeURIComponent(name)}${path}`;
   const page = h("div", { class: "page" });
-  page.append(
-    h(
-      "div",
-      { class: "page-head" },
-      h("h1", { text: "リポジトリ" }),
-    ),
-  );
+  page.append(h("div", { class: "page-head" }, h("h1", { text: "リポジトリ" })));
 
   const commands = `git remote add origin ${repo.cloneUrl}\ngit push -u origin ${repo.defaultBranch}`;
   page.append(
@@ -2605,11 +3092,42 @@ async function viewRepo(main, name) {
       "section",
       { class: "card" },
       h("h2", { text: "push してデプロイ" }),
-      h("div", { class: "field" }, h("label", { text: "URL" }), h("div", { class: "row" }, h("code", { class: "value grow", text: repo.cloneUrl }), copyButton(() => repo.cloneUrl))),
-      h("div", { class: "card-head" }, h("span", { class: "muted", text: "手元のリポジトリで" }), copyButton(() => commands)),
+      h(
+        "div",
+        { class: "field" },
+        h("label", { text: "URL" }),
+        h(
+          "div",
+          { class: "row" },
+          h("code", { class: "value grow", text: repo.cloneUrl }),
+          copyButton(() => repo.cloneUrl),
+        ),
+      ),
+      h(
+        "div",
+        { class: "card-head" },
+        h("span", { class: "muted", text: "手元のリポジトリで" }),
+        copyButton(() => commands),
+      ),
       h("pre", { class: "log", text: commands }),
-      h("p", { class: "muted hint" }, "すでに origin がある（GitHub から clone した）リポジトリでは、1 行目の代わりに ", h("code", { text: `git remote set-url origin ${repo.cloneUrl}` }), " で付け替えるか、", h("code", { text: "origin" }), " を別の名前（例: ", h("code", { text: "kanzume" }), "）にしてください。"),
-      h("p", { class: "muted hint" }, "ユーザー名は何でもよく、パスワードには「", h("a", { href: "#/settings", text: "設定 > トークン" }), `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`),
+      h(
+        "p",
+        { class: "muted hint" },
+        "すでに origin がある（GitHub から clone した）リポジトリでは、1 行目の代わりに ",
+        h("code", { text: `git remote set-url origin ${repo.cloneUrl}` }),
+        " で付け替えるか、",
+        h("code", { text: "origin" }),
+        " を別の名前（例: ",
+        h("code", { text: "kanzume" }),
+        "）にしてください。",
+      ),
+      h(
+        "p",
+        { class: "muted hint" },
+        "ユーザー名は何でもよく、パスワードには「",
+        h("a", { href: "#/settings", text: "設定 > トークン" }),
+        `」で発行した個人トークンを入力します。${repo.defaultBranch} 以外のブランチへの push は保存だけしてデプロイしません。ブランチは削除できません。npm パッケージの import やビルドが必要なものは GitHub Actions を使ってください。`,
+      ),
     ),
   );
 
@@ -2628,7 +3146,10 @@ async function viewRepo(main, name) {
       selected = path;
       for (const b of buttons) b.classList.toggle("current", b.dataset.path === path);
       mobile.value = path;
-      viewer.replaceChildren(h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })), h("div", { class: "placeholder", text: "読み込み中…" }));
+      viewer.replaceChildren(
+        h("div", { class: "viewer-head" }, h("span", { class: "path", text: path })),
+        h("div", { class: "placeholder", text: "読み込み中…" }),
+      );
       const ref = branch.value;
       const file = await api(repoApi(`/blob?ref=${encodeURIComponent(ref)}&path=${encodeURIComponent(path)}`)).catch((err) => ({ error: err.message }));
       // 待っている間に別のファイルやブランチに切り替わっていたら捨てる
@@ -2648,7 +3169,12 @@ async function viewRepo(main, name) {
           h(
             "div",
             { class: "list-item" },
-            h("div", { class: "list-row static" }, h("span", { class: "mono sha", text: c.sha.slice(0, 7) }), h("div", { class: "grow" }, h("div", { class: "title", text: c.subject }), h("div", { class: "sub", text: `${c.author} · ${fmtDate(c.date)}` }))),
+            h(
+              "div",
+              { class: "list-row static" },
+              h("span", { class: "mono sha", text: c.sha.slice(0, 7) }),
+              h("div", { class: "grow" }, h("div", { class: "title", text: c.subject }), h("div", { class: "sub", text: `${c.author} · ${fmtDate(c.date)}` })),
+            ),
           ),
         ),
       );
@@ -2687,7 +3213,9 @@ async function viewRepo(main, name) {
     );
     await load();
   } else {
-    page.append(h("section", { class: "card empty" }, h("p", { text: "まだ push されていません。上のコマンドで push すると、ここにファイルとコミットが出ます。" })));
+    page.append(
+      h("section", { class: "card empty" }, h("p", { text: "まだ push されていません。上のコマンドで push すると、ここにファイルとコミットが出ます。" })),
+    );
   }
 
   const delError = h("div", { class: "error" });
@@ -2733,9 +3261,31 @@ function subdomainInput(value, label) {
 function envEditor(entries, { masked = false, placeholder = "値", note } = {}) {
   const rows = h("div", { class: "env-rows" });
   const add = (key = "", value = "") => {
-    const k = h("input", { class: "mono", value: key, placeholder: "KEY", spellcheck: "false", autocomplete: "off", autocapitalize: "off", "aria-label": "名前" });
-    const v = h("input", { class: "mono", value, placeholder, type: masked ? "password" : "text", spellcheck: "false", autocomplete: masked ? "new-password" : "off", "aria-label": "値" });
-    const row = h("div", { class: "env-row" }, k, v, h("button", { class: "ghost icon", title: "この行を削除", "aria-label": "この行を削除", text: "×", onclick: () => row.remove() }));
+    const k = h("input", {
+      class: "mono",
+      value: key,
+      placeholder: "KEY",
+      spellcheck: "false",
+      autocomplete: "off",
+      autocapitalize: "off",
+      "aria-label": "名前",
+    });
+    const v = h("input", {
+      class: "mono",
+      value,
+      placeholder,
+      type: masked ? "password" : "text",
+      spellcheck: "false",
+      autocomplete: masked ? "new-password" : "off",
+      "aria-label": "値",
+    });
+    const row = h(
+      "div",
+      { class: "env-row" },
+      k,
+      v,
+      h("button", { class: "ghost icon", title: "この行を削除", "aria-label": "この行を削除", text: "×", onclick: () => row.remove() }),
+    );
     if (note) row.append(note(k, v));
     rows.append(row);
     return k;
@@ -2772,7 +3322,13 @@ function wranglerVarsView(vars, overridden) {
         "tbody",
         {},
         ...entries.map(([k, v]) =>
-          h("tr", { class: overridden(k) ? "overridden" : "" }, h("td", { text: k }), h("td", { text: typeof v === "string" ? v : JSON.stringify(v) }), h("td", { class: "muted", text: overridden(k) ? "上書き中" : "" })),
+          h(
+            "tr",
+            { class: overridden(k) ? "overridden" : "" },
+            h("td", { text: k }),
+            h("td", { text: typeof v === "string" ? v : JSON.stringify(v) }),
+            h("td", { class: "muted", text: overridden(k) ? "上書き中" : "" }),
+          ),
         ),
       ),
     ),
@@ -2816,12 +3372,21 @@ function deployConfigCard(cfg, site, onBack) {
   });
 
   return [
-    h("section", { class: "card" }, h("h2", { text: "リポジトリ" }), h("code", { class: "value", text: cfg.repoUrl }), h("p", { class: "muted hint", text: `サイト ${site} にデプロイします。` })),
+    h(
+      "section",
+      { class: "card" },
+      h("h2", { text: "リポジトリ" }),
+      h("code", { class: "value", text: cfg.repoUrl }),
+      h("p", { class: "muted hint", text: `サイト ${site} にデプロイします。` }),
+    ),
     h(
       "section",
       { class: "card" },
       h("h2", { text: "環境変数" }),
-      h("p", { class: "muted", text: "Worker の env（nodejs_compat なら process.env も）に入ります。wrangler の設定の vars を初期値にしています。デプロイしたあとも「サイト設定」で変えられます。" }),
+      h("p", {
+        class: "muted",
+        text: "Worker の env（nodejs_compat なら process.env も）に入ります。wrangler の設定の vars を初期値にしています。デプロイしたあとも「サイト設定」で変えられます。",
+      }),
       vars.el,
     ),
     h(
@@ -2884,7 +3449,10 @@ async function viewNewSite(main) {
       "section",
       { class: "card" },
       h("h2", { text: "サイト名（配信ドメイン）" }),
-      h("p", { class: "muted", text: "サイトを作ると、次にデプロイの方法（サンプル・GitHub の公開リポジトリ・GitHub Actions・Kanzume のリポジトリ）を選べます。" }),
+      h("p", {
+        class: "muted",
+        text: "サイトを作ると、次にデプロイの方法（サンプル・GitHub の公開リポジトリ・GitHub Actions・Kanzume のリポジトリ）を選べます。",
+      }),
       h("div", { class: "row narrow" }, h("div", { class: "grow" }, sub.el), create),
       status,
       error,
@@ -2892,7 +3460,9 @@ async function viewNewSite(main) {
   );
   const pending = state.sites.pending;
   if (pending.length) {
-    page.append(h("div", { class: "section-head" }, h("h2", { text: "公開に至らなかったデプロイ" }), h("span", { class: "muted", text: `${pending.length} 件` })));
+    page.append(
+      h("div", { class: "section-head" }, h("h2", { text: "公開に至らなかったデプロイ" }), h("span", { class: "muted", text: `${pending.length} 件` })),
+    );
     const list = h("div", { class: "list" });
     for (const d of pending) list.append(deploymentItem(d, false));
     page.append(list);
@@ -2927,7 +3497,12 @@ function deployOptions(detail) {
     "div",
     { class: "deploy-methods" },
     ...DEPLOY_METHODS.map((m) => {
-      const b = h("button", { class: "deploy-method", "data-key": m.key, onclick: () => choose(m.key) }, h("b", { text: m.title }), h("span", { class: "muted", text: m.description }));
+      const b = h(
+        "button",
+        { class: "deploy-method", "data-key": m.key, onclick: () => choose(m.key) },
+        h("b", { text: m.title }),
+        h("span", { class: "muted", text: m.description }),
+      );
       buttons.push(b);
       return b;
     }),
@@ -3086,22 +3661,35 @@ const METHOD_VIEWS = {
     const zone = h(
       "div",
       { class: "dropzone", tabindex: "0", role: "button", "aria-label": "フォルダ・ファイル・zip を選ぶ" },
-      h("span", { class: "dropzone-icon", html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>' }),
+      h("span", {
+        class: "dropzone-icon",
+        html: '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 16V4M7 9l5-5 5 5"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>',
+      }),
       // タッチの端末ではドラッグできないので、選ぶ案内にする
       h("b", { text: matchMedia("(hover: none)").matches ? "タップしてファイル・zip を選ぶ" : "ここにフォルダ・ファイル・zip をドロップ" }),
       h(
         "span",
         { class: "muted" },
         "または ",
-        h("button", { type: "button", class: "link", text: "ファイルを選ぶ", onclick: (e) => {
-          e.stopPropagation();
-          fileInput.click();
-        } }),
+        h("button", {
+          type: "button",
+          class: "link",
+          text: "ファイルを選ぶ",
+          onclick: (e) => {
+            e.stopPropagation();
+            fileInput.click();
+          },
+        }),
         "・",
-        h("button", { type: "button", class: "link", text: "フォルダを選ぶ", onclick: (e) => {
-          e.stopPropagation();
-          dirInput.click();
-        } }),
+        h("button", {
+          type: "button",
+          class: "link",
+          text: "フォルダを選ぶ",
+          onclick: (e) => {
+            e.stopPropagation();
+            dirInput.click();
+          },
+        }),
       ),
     );
     zone.addEventListener("click", () => fileInput.click());
@@ -3164,10 +3752,13 @@ const METHOD_VIEWS = {
       const size = files.reduce((n, f) => n + f.file.size, 0);
       const kind = plan.worker ? "dynamic" : "static";
       const deploy = h("button", { class: "primary", text: "このサイトにデプロイ" });
-      const again = h("button", { text: "選び直す", onclick: () => {
+      const again = h("button", {
+        text: "選び直す",
+        onclick: () => {
           fill(summary);
           error.textContent = "";
-        } });
+        },
+      });
       deploy.addEventListener("click", async () => {
         error.textContent = "";
         busy(deploy, "デプロイ中…");
@@ -3196,11 +3787,20 @@ const METHOD_VIEWS = {
             "div",
             { class: "upload-head" },
             kindBadge(kind),
-            h("b", { text: plan.config ? `${plan.config} の設定でデプロイします${plan.worker ? "（Worker あり）" : ""}` : "設定ファイルがないので、静的サイトとしてデプロイします" }),
+            h("b", {
+              text: plan.config
+                ? `${plan.config} の設定でデプロイします${plan.worker ? "（Worker あり）" : ""}`
+                : "設定ファイルがないので、静的サイトとしてデプロイします",
+            }),
           ),
           h("p", { class: "muted", text: `${files.length} ファイル・${fmtBytes(size)}` }),
           !plan.config && !plan.index ? h("p", { class: "warn", text: "トップに index.html がありません。/ を開くと 404 になります。" }) : null,
-          h("ul", { class: "upload-files mono" }, ...shown.map((f) => h("li", {}, h("span", { text: f.path }), h("span", { class: "muted", text: fmtBytes(f.file.size) }))), files.length > shown.length ? h("li", { class: "muted", text: `ほか ${files.length - shown.length} ファイル` }) : null),
+          h(
+            "ul",
+            { class: "upload-files mono" },
+            ...shown.map((f) => h("li", {}, h("span", { text: f.path }), h("span", { class: "muted", text: fmtBytes(f.file.size) }))),
+            files.length > shown.length ? h("li", { class: "muted", text: `ほか ${files.length - shown.length} ファイル` }) : null,
+          ),
           h("div", { class: "actions" }, deploy, again),
         ),
       );
@@ -3211,8 +3811,14 @@ const METHOD_VIEWS = {
         "section",
         { class: "card" },
         h("h2", { text: "ファイルから" }),
-        h("p", { class: "muted", text: `ビルドしたフォルダやファイルを ${detail.name} にデプロイします。wrangler.jsonc / wrangler.toml があればその設定に従い（Worker はここでバンドルします）、なければ全体を静的サイトとして配信します。` }),
-        h("p", { class: "muted", text: `デプロイしたファイルは、このサイトのリポジトリ（リポジトリタブ）にコミットとして保存します。手元にファイルがなくなっても git clone で取り出せます。` }),
+        h("p", {
+          class: "muted",
+          text: `ビルドしたフォルダやファイルを ${detail.name} にデプロイします。wrangler.jsonc / wrangler.toml があればその設定に従い（Worker はここでバンドルします）、なければ全体を静的サイトとして配信します。`,
+        }),
+        h("p", {
+          class: "muted",
+          text: `デプロイしたファイルは、このサイトのリポジトリ（リポジトリタブ）にコミットとして保存します。手元にファイルがなくなっても git clone で取り出せます。`,
+        }),
         zone,
         fileInput,
         dirInput,
@@ -3225,7 +3831,12 @@ const METHOD_VIEWS = {
   async github(detail, reset) {
     // サンプル（KANZUME_SAMPLES_REPO で fork 先に変えられる）。取れなくてもデプロイはできるので、リンクを出さないだけにする
     const sample = (await api("/samples").catch(() => null))?.worker ?? null;
-    const input = h("input", { type: "url", placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>", spellcheck: "false", "aria-label": "GitHub の URL" });
+    const input = h("input", {
+      type: "url",
+      placeholder: "https://github.com/<owner>/<repo>/tree/<branch>/<dir>",
+      spellcheck: "false",
+      "aria-label": "GitHub の URL",
+    });
     const error = h("div", { class: "error" });
     const next = h("button", { class: "primary", text: "次へ" });
     const box = h("div");
@@ -3238,7 +3849,10 @@ const METHOD_VIEWS = {
       error.textContent = "";
       busy(next, "読み込み中…");
       try {
-        const [info, settings] = await Promise.all([api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) }), api(`/sites/${encodeURIComponent(detail.name)}/settings`)]);
+        const [info, settings] = await Promise.all([
+          api("/deploy-github/inspect", { method: "POST", body: JSON.stringify({ url }) }),
+          api(`/sites/${encodeURIComponent(detail.name)}/settings`),
+        ]);
         fill(box, ...deployConfigCard({ ...info, repoUrl: url, current: { vars: settings.vars, secretKeys: settings.secretKeys } }, detail.name, reset));
         form.hidden = true;
       } catch (err) {
@@ -3253,7 +3867,10 @@ const METHOD_VIEWS = {
       "section",
       { class: "card" },
       h("h2", { text: "GitHub の公開リポジトリから" }),
-      h("p", { class: "muted", text: "wrangler の設定があるディレクトリの URL を入力してください。次の画面で環境変数とシークレットを確かめてからデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions を使ってください。" }),
+      h("p", {
+        class: "muted",
+        text: "wrangler の設定があるディレクトリの URL を入力してください。次の画面で環境変数とシークレットを確かめてからデプロイします。npm パッケージに依存するコードや、ビルドが必要なアセットは GitHub Actions を使ってください。",
+      }),
       h("div", { class: "row" }, h("div", { class: "grow" }, input), next),
       sample ? h("p", { class: "field-hint" }, h("a", { href: sample, target: "_blank", rel: "noopener", text: "サンプルリポジトリはこちら ↗" })) : null,
       error,
@@ -3271,10 +3888,21 @@ const METHOD_VIEWS = {
         h(
           "ol",
           { class: "steps muted" },
-          h("li", {}, "「", h("a", { href: "#/settings", text: "設定 > トークン" }), "」で個人トークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN として登録します。"),
+          h(
+            "li",
+            {},
+            "「",
+            h("a", { href: "#/settings", text: "設定 > トークン" }),
+            "」で個人トークンを発行し、GitHub のリポジトリの Secrets に KANZUME_TOKEN として登録します。",
+          ),
           h("li", { text: `次のワークフローを置いて push します。デプロイ先は site のサイト（${detail.name}）で、wrangler の name は使いません。` }),
         ),
-        h("div", { class: "card-head" }, h("span", { class: "mono", text: ".github/workflows/deploy.yml" }), copyButton(() => workflow(state.overview.url, detail.name))),
+        h(
+          "div",
+          { class: "card-head" },
+          h("span", { class: "mono", text: ".github/workflows/deploy.yml" }),
+          copyButton(() => workflow(state.overview.url, detail.name)),
+        ),
         h("pre", { class: "log", text: workflow(state.overview.url, detail.name) }),
       ),
     ];
@@ -3301,7 +3929,10 @@ const METHOD_VIEWS = {
           "section",
           { class: "card" },
           h("h2", { text: "サイトのリポジトリから" }),
-          h("p", { class: "muted", text: `Kanzume に Git リポジトリ ${site} を作ります。main に push すると、wrangler の設定どおりにこのサイトへデプロイします。` }),
+          h("p", {
+            class: "muted",
+            text: `Kanzume に Git リポジトリ ${site} を作ります。main に push すると、wrangler の設定どおりにこのサイトへデプロイします。`,
+          }),
           create,
           error,
         ),

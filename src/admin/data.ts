@@ -51,7 +51,10 @@ export function kvNamespaces(siteDir: string, release: Release | undefined) {
   const db = openDb(siteDir);
   const counts = new Map<string, number>();
   if (db) {
-    for (const row of db.prepare("SELECT namespace, COUNT(*) AS n FROM kv WHERE expiration IS NULL OR expiration > ? GROUP BY namespace").all(now()) as { namespace: string; n: number }[]) {
+    for (const row of db.prepare("SELECT namespace, COUNT(*) AS n FROM kv WHERE expiration IS NULL OR expiration > ? GROUP BY namespace").all(now()) as {
+      namespace: string;
+      n: number;
+    }[]) {
       counts.set(row.namespace, row.n);
     }
   }
@@ -76,9 +79,9 @@ export function kvKeys(siteDir: string, namespace: string, prefix: string, after
 
 export function kvValue(siteDir: string, namespace: string, key: string) {
   const db = openDb(siteDir);
-  const row = db?.prepare("SELECT value, metadata, expiration FROM kv WHERE namespace = ? AND key = ? AND (expiration IS NULL OR expiration > ?)").get(namespace, key, now()) as
-    | { value: Uint8Array; metadata: string | null; expiration: number | null }
-    | undefined;
+  const row = db
+    ?.prepare("SELECT value, metadata, expiration FROM kv WHERE namespace = ? AND key = ? AND (expiration IS NULL OR expiration > ?)")
+    .get(namespace, key, now()) as { value: Uint8Array; metadata: string | null; expiration: number | null } | undefined;
   if (!row) return null;
   const head = row.value.subarray(0, PREVIEW_BYTES);
   return {
@@ -106,7 +109,11 @@ export function r2Buckets(siteDir: string, release: Release | undefined) {
   const db = openDb(siteDir);
   const stats = new Map<string, { count: number; size: number }>();
   if (db) {
-    for (const row of db.prepare("SELECT bucket, COUNT(*) AS n, COALESCE(SUM(size), 0) AS s FROM r2 GROUP BY bucket").all() as { bucket: string; n: number; s: number }[]) {
+    for (const row of db.prepare("SELECT bucket, COUNT(*) AS n, COALESCE(SUM(size), 0) AS s FROM r2 GROUP BY bucket").all() as {
+      bucket: string;
+      n: number;
+      s: number;
+    }[]) {
       stats.set(row.bucket, { count: row.n, size: row.s });
     }
   }
@@ -116,7 +123,13 @@ export function r2Buckets(siteDir: string, release: Release | undefined) {
 
 export async function r2List(siteDir: string, bucket: string, prefix: string, cursor: string | undefined) {
   if (!openDb(siteDir)) return { objects: [], prefixes: [], cursor: null };
-  const result = (await new R2Bucket(siteDb(siteDir), siteDir, bucket).list({ prefix, delimiter: "/", limit: PAGE, cursor, include: ["httpMetadata", "customMetadata"] })) as {
+  const result = (await new R2Bucket(siteDb(siteDir), siteDir, bucket).list({
+    prefix,
+    delimiter: "/",
+    limit: PAGE,
+    cursor,
+    include: ["httpMetadata", "customMetadata"],
+  })) as {
     objects: { key: string; size: number; uploaded: Date; etag: string; httpMetadata: { contentType?: string }; customMetadata: Record<string, string> }[];
     delimitedPrefixes: string[];
     truncated: boolean;

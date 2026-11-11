@@ -143,7 +143,10 @@ export class Deployer {
       const raw = parseWranglerConfig(configFile.path, configFile.data.toString("utf8"));
       // wrangler の name は見ない（デプロイ先は指定されたサイト）
       raw.name = name;
-      manifest = toManifest(raw, files.some((f) => f.path.startsWith("worker/")));
+      manifest = toManifest(
+        raw,
+        files.some((f) => f.path.startsWith("worker/")),
+      );
       if (manifest.main && !files.some((f) => f.path === `worker/${manifest.main}`)) {
         throw new ConfigError(`バンドルに worker/${manifest.main} がありません（Kanzume の Action でデプロイしてください）`);
       }
