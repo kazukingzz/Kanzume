@@ -14,8 +14,8 @@ import type { BackupConfig } from "./url.ts";
 const gzip = promisify(gzipCb);
 const gunzip = promisify(gunzipCb);
 
-/** バックアップしないもの（トップレベル） */
-const SKIP_TOP = new Set(["git-hooks", ".restoring", ".backup-tmp"]);
+/** バックアップしないもの（トップレベル）。events.sqlite はリクエストのログ（数日で消え、リクエストのたびに変わる） */
+const SKIP_TOP = new Set(["git-hooks", ".restoring", ".backup-tmp", "events.sqlite", "events.sqlite-wal", "events.sqlite-shm"]);
 /** Kanzume が管理する SQLite（VACUUM INTO で取る）。ほかの .sqlite（サイトのアセットなど）は普通のファイルとして扱う */
 const MANAGED_DB = /^(meta\.sqlite|sites\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\/data\/data\.sqlite)$/;
 /** 秘密を含むので、復元したときも本人だけが読めるようにするファイル */
@@ -472,10 +472,7 @@ export class Backup {
       const latest = names.at(-1);
       if (latest) {
         const prev = await this.#readManifest(latest).catch(() => null);
-        // ログ（meta.sqlite）はリクエストのたびに変わるので、定期実行のときだけ変更として数える。
-        // ほかのきっかけ（デプロイ・設定の変更）では、ログだけの違いで世代を増やさない
-        const key = (fs: FileEntry[]) => JSON.stringify(reason === "定期" ? fs : fs.filter((f) => f.path !== "meta.sqlite"));
-        if (prev && JSON.stringify(prev.dirs) === JSON.stringify(dirs) && key(prev.files) === key(files)) {
+        if (prev && JSON.stringify(prev.dirs) === JSON.stringify(dirs) && JSON.stringify(prev.files) === JSON.stringify(files)) {
           this.snapshotCount = names.length;
           this.latestSnapshot = latest;
           return done({ ok: true, skipped: "前回から変更がありません", snapshot: latest, files: files.length, uploadedFiles, uploadedBytes });

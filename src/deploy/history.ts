@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, StatementSync } from "node:sqlite";
 
 export interface DeploySource {
   repository?: string;
@@ -75,11 +75,22 @@ function summary(r: Row) {
   };
 }
 
+/** 一覧に要る列だけ（ログは大きいので、1 件を開いたときだけ読む） */
+const SUMMARY = "id, site, name, release, status, created_at, duration_ms, size, files, error, meta";
+
 export class DeployHistory {
   #db: DatabaseSync;
+  #listAll: StatementSync;
+  #listSite: StatementSync;
+  #latest: StatementSync;
+  #forRelease: StatementSync;
 
   constructor(db: DatabaseSync) {
     this.#db = db;
+    this.#listAll = db.prepare(`SELECT ${SUMMARY} FROM deployments ORDER BY created_at DESC, id DESC LIMIT ?`);
+    this.#listSite = db.prepare(`SELECT ${SUMMARY} FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC`);
+    this.#latest = db.prepare(`SELECT ${SUMMARY} FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC LIMIT 1`);
+    this.#forRelease = db.prepare(`SELECT ${SUMMARY} FROM deployments WHERE release = ?`);
   }
 
   add(input: DeploymentInput): string {
@@ -110,11 +121,9 @@ export class DeployHistory {
     return id;
   }
 
-  /** site を省略するとすべてのサイト */
-  list(site?: string) {
-    const rows = (site === undefined
-      ? this.#db.prepare("SELECT * FROM deployments ORDER BY created_at DESC, id DESC").all()
-      : this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC").all(site)) as unknown as Row[];
+  /** site を省略するとすべてのサイト（新しいものから limit 件） */
+  list(site?: string, limit = 500) {
+    const rows = (site === undefined ? this.#listAll.all(limit) : this.#listSite.all(site)) as unknown as Row[];
     return rows.map(summary);
   }
 
@@ -125,12 +134,12 @@ export class DeployHistory {
   }
 
   latest(site: string) {
-    const row = this.#db.prepare("SELECT * FROM deployments WHERE site = ? ORDER BY created_at DESC, id DESC LIMIT 1").get(site) as Row | undefined;
+    const row = this.#latest.get(site) as Row | undefined;
     return row ? summary(row) : null;
   }
 
   forRelease(release: string) {
-    const row = this.#db.prepare("SELECT * FROM deployments WHERE release = ?").get(release) as Row | undefined;
+    const row = this.#forRelease.get(release) as Row | undefined;
     return row ? summary(row) : null;
   }
 

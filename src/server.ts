@@ -6,7 +6,7 @@ import { Deployer } from "./deploy/deployer.ts";
 import type { GitHubOptions } from "./deploy/github.ts";
 import { createDeployHandler } from "./deploy/handler.ts";
 import { DeployHistory } from "./deploy/history.ts";
-import { openMetaDb } from "./observability/db.ts";
+import { openEventsDb, openMetaDb } from "./observability/db.ts";
 import { Observability } from "./observability/events.ts";
 import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
@@ -43,7 +43,17 @@ async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
   await fs.mkdir(path.join(dataDir, "sites"), { recursive: true });
   await fs.chmod(dataDir, 0o711);
   await fs.chmod(path.join(dataDir, "sites"), 0o711);
-  for (const name of ["admin.json", "meta.sqlite", "meta.sqlite-wal", "meta.sqlite-shm", "sites/_root", "sites/_uids.json"]) {
+  for (const name of [
+    "admin.json",
+    "meta.sqlite",
+    "meta.sqlite-wal",
+    "meta.sqlite-shm",
+    "events.sqlite",
+    "events.sqlite-wal",
+    "events.sqlite-shm",
+    "sites/_root",
+    "sites/_uids.json",
+  ]) {
     await fs.chmod(path.join(dataDir, name), 0o600).catch(() => {});
   }
   for (const name of ["repos", "git-hooks"]) await fs.chmod(path.join(dataDir, name), 0o700).catch(() => {});
@@ -91,7 +101,8 @@ export async function createServer(config: Config, options: { github?: Partial<G
 
   const metaDb = openMetaDb(config.dataDir);
   const history = new DeployHistory(metaDb);
-  const observability = new Observability(metaDb, config.logRetentionHours);
+  const eventsDb = openEventsDb(config.dataDir, metaDb);
+  const observability = new Observability(eventsDb, config.logRetentionHours);
   const resources = new ResourceMonitor();
 
   const deployer = new Deployer(sites, runtime, history);
@@ -150,6 +161,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
     observability.close();
     resources.close();
     metaDb.close();
+    eventsDb.close();
     closeAllSiteDbs();
   });
   return { server, sites, repos, state, runtime, history, observability, resources, deployer, backup };

@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { tarGz, toCjs, until } from "./helpers.ts";
+import { tarGz, tmpDir, toCjs, until } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
+import { DatabaseSync } from "node:sqlite";
+import { openEventsDb, openMetaDb } from "../src/observability/db.ts";
+import { Invocation, Observability } from "../src/observability/events.ts";
 
 async function start(t: TestContext) {
   const app = await startApp(t);
@@ -218,4 +221,40 @@ test("管理 API でデプロイ中のコード（ソース・設定・変換後
   assert.equal(readFile(release, "assets", "../_manifest.json"), null);
   assert.equal(readFile(release, "worker", "../../current"), null);
   assert.equal(readFile(release, "config", "_manifest.json"), null);
+});
+
+test("after を指定したら、その次から古い順に limit 件（返すのは新しい順）。間のイベントを飛ばさない", (t) => {
+  const meta = new DatabaseSync(":memory:");
+  const dir = tmpDir(t);
+  const db = openEventsDb(dir, meta);
+  const o = new Observability(db, 72);
+  t.after(() => {
+    o.close();
+    db.close();
+  });
+  for (let i = 0; i < 10; i++) o.record(new Invocation("app", "r1", new Request(`http://x/${i}`), ""), 200, 1);
+  o.flush();
+  const all = o.events("app", { limit: 200 }).map((e) => e.id);
+  const after = o.events("app", { after: all.at(-1), limit: 3 }).map((e) => e.id);
+  assert.deepEqual(after, all.slice(-4, -1), "最初の次から 3 件");
+});
+
+test("以前の meta.sqlite に入っていたログは events.sqlite に移し、meta.sqlite からは消す", (t) => {
+  const dir = tmpDir(t);
+  const meta = openMetaDb(dir);
+  meta.exec(`CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, site TEXT NOT NULL, ts INTEGER NOT NULL, kind TEXT NOT NULL, release TEXT,
+    method TEXT NOT NULL, path TEXT NOT NULL, status INTEGER NOT NULL, outcome TEXT NOT NULL, duration_ms REAL NOT NULL, log_count INTEGER NOT NULL,
+    error TEXT, detail TEXT NOT NULL)`);
+  meta
+    .prepare(
+      "INSERT INTO events (site, ts, kind, method, path, status, outcome, duration_ms, log_count, detail) VALUES ('app', ?, 'asset', 'GET', '/', 200, 'ok', 1, 0, '{}')",
+    )
+    .run(Date.now());
+  const db = openEventsDb(dir, meta);
+  t.after(() => {
+    db.close();
+    meta.close();
+  });
+  assert.equal((db.prepare("SELECT count(*) AS n FROM events").get() as { n: number }).n, 1);
+  assert.equal(meta.prepare("SELECT name FROM sqlite_master WHERE name = 'events'").get(), undefined);
 });

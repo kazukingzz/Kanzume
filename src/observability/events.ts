@@ -305,12 +305,15 @@ export class Observability {
       params.push(query.q.toLowerCase(), query.q.toLowerCase());
     }
     const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
+    // after（ライブ表示の続き）は古い方から取る（新しい方から取ると、間に来た分を飛ばしてしまう）。返すのはどちらも新しい順
+    const order = query.after && !query.before ? "ASC" : "DESC";
     const rows = this.#db
       .prepare(
         `SELECT id, ts, kind, release, method, path, status, outcome, duration_ms, log_count, error FROM events
-         WHERE ${where.join(" AND ")} ORDER BY id DESC LIMIT ?`,
+         WHERE ${where.join(" AND ")} ORDER BY id ${order} LIMIT ?`,
       )
       .all(...params, limit) as unknown as EventRow[];
+    if (order === "ASC") rows.reverse();
     return rows.map((r) => ({
       id: r.id,
       ts: r.ts,

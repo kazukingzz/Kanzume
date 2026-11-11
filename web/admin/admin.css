@@ -29,6 +29,7 @@
   --tk-number: #a14d00;
   --tk-keyword: #5a74a8;
   --tk-tag: #1f5fa8;
+  /* 外部のフォントは読み込まない（管理画面の CSP は自分のオリジンだけ）。入っていれば Inter・Geist Mono を使う */
   --font-sans: "Inter", system-ui, -apple-system, "Hiragino Sans", "Noto Sans JP", sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
   --radius: 6px;
