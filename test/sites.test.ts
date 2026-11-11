@@ -1,14 +1,12 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
-import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { loadConfig } from "../src/config.ts";
 import { DeployLog } from "../src/deploy/deployer.ts";
 import { deployFromFiles } from "../src/deploy/github.ts";
-import { createServer } from "../src/server.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
-import { nameInTarGz, tarGz, tmpDir, toCjs, until } from "./helpers.ts";
+import { tarGz, toCjs, until } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 const ids = (has: (n: string) => boolean) => (n: string) => (has(n) ? n : undefined);
 
@@ -45,27 +43,7 @@ test("Host のサブドメインが既存のサイト名ならそのサイト、
 });
 
 async function start(t: TestContext, env: Record<string, string> = {}) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", ...env }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => app.server.close(resolve));
-    await app.state.flush();
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  // デプロイ先のサイトは先に作っておく（Actions からのデプロイではサイトを作らない）
-  const deploy = async (body: Buffer) => {
-    const name = nameInTarGz(body);
-    await app.sites.ensure(name);
-    return fetch(`${base}/_api/deploy`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": name },
-      body: new Uint8Array(body),
-    });
-  };
-  // テストでは *.localhost を名前解決できないので、Host の代わりに X-Forwarded-Host でサブドメインを指定する
-  const site = (host: string, path = "/", init: RequestInit = {}) =>
-    fetch(`${base}${path}`, { redirect: "manual", ...init, headers: { "x-forwarded-host": host, ...(init.headers ?? {}) } });
-  return { ...app, base, deploy, site };
+  return startApp(t, env);
 }
 
 const counter = (t: TestContext, name: string) =>

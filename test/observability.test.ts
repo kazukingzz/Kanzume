@@ -2,25 +2,13 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { loadConfig } from "../src/config.ts";
-import { createServer } from "../src/server.ts";
-import { nameInTarGz, tarGz, tmpDir, toCjs, until } from "./helpers.ts";
+import { tarGz, toCjs, until } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 async function start(t: TestContext) {
-  const config = loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" });
-  const app = await createServer(config);
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => app.server.close(resolve));
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const auth = { authorization: `Bearer ${app.state.deployToken}` };
-  const deploy = async (body: Buffer) => {
-    const name = nameInTarGz(body);
-    await app.sites.ensure(name);
-    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { ...auth, "x-kanzume-site": name }, body: new Uint8Array(body) });
-  };
-  return { ...app, base, auth, deploy };
+  const app = await startApp(t);
+  const auth = { authorization: `Bearer ${app.token}` };
+  return { ...app, auth };
 }
 
 function bundle(t: TestContext, source: string, extra: Record<string, string> = {}) {
@@ -148,15 +136,12 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
 });
 
 test("同期処理の時間超過は exceededCpu として記録される", async (t) => {
-  const config = loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_CPU_TIMEOUT_MS: "100" });
-  const app = await createServer(config);
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => app.server.close(resolve)));
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  const app = await startApp(t, { KANZUME_CPU_TIMEOUT_MS: "100" });
+  const base = app.base;
   await app.sites.ensure("app");
   await fetch(`${base}/_api/deploy`, {
     method: "POST",
-    headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": "app" },
+    headers: { authorization: `Bearer ${app.token}`, "x-kanzume-site": "app" },
     body: new Uint8Array(bundle(t, `export default { fetch() { while (true) {} } }`)),
   });
   assert.equal((await fetch(`${base}/x`)).status, 500);

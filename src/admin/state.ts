@@ -73,15 +73,17 @@ export interface UserToken {
 
 interface StateFile {
   userId: string;
-  teamId: string;
-  // ハッシュにしないのは、管理画面でいつでも再表示してコピーできるようにするため
-  deployToken: string;
   credentials: StoredCredential[];
   userTokens?: UserToken[];
   /** ルートドメイン（例: example.com）。サイトは <name>.<domain> で配信する。未設定なら管理画面を開いたホストを使う */
   domain?: string;
   users?: User[];
   invites?: Invite[];
+  /**
+   * 管理画面にログイン・登録したホスト名（パスキーはこのホストに紐づく）。
+   * サイトのサブドメインがこれと重なると管理画面に入れなくなるので、サイトの名前に使わせない
+   */
+  adminHosts?: string[];
 }
 
 interface Session {
@@ -97,25 +99,6 @@ interface StoredFile extends StateFile {
 const hashSession = (id: string) => createHash("sha256").update(id).digest("hex");
 const SESSION_IDLE_MS = SESSION_COOKIE_MAX_AGE * 1000;
 const TOUCH_SAVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
-
-function newToken(): string {
-  return `kz_${randomBytes(24).toString("base64url")}`;
-}
-
-const TEAM_ALPHABET = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
-export const TEAM_ID_LENGTH = 16;
-
-function newTeamId(): string {
-  return Array.from(randomBytes(TEAM_ID_LENGTH), (b) => TEAM_ALPHABET[b & 31]).join("");
-}
-
-export function normalizeTeamId(input: string): string {
-  return input.toUpperCase().replace(/[\s-]/g, "").replace(/O/g, "0").replace(/[IL]/g, "1");
-}
-
-export function formatTeamId(id: string): string {
-  return id.match(/.{1,4}/g)!.join("-");
-}
 
 export class DomainError extends Error {}
 
@@ -149,7 +132,7 @@ export function safeEqual(a: string, b: string): boolean {
 
 export class AdminState {
   #file: string;
-  #state: StateFile = { userId: "", teamId: "", deployToken: "", credentials: [] };
+  #state: StateFile = { userId: "", credentials: [] };
   #sessions = new Map<string, Session>();
   #saving: Promise<void> = Promise.resolve();
   /** 保存したあとに呼ぶ（バックアップのきっかけ） */
@@ -168,7 +151,7 @@ export class AdminState {
     }
     if (!stored) {
       const userId = randomBytes(16).toString("base64url");
-      this.#state = { userId, teamId: newTeamId(), deployToken: newToken(), credentials: [], users: [this.#newAdmin(userId)], invites: [] };
+      this.#state = { userId, credentials: [], users: [this.#newAdmin(userId)], invites: [] };
       await this.#save();
       return;
     }
@@ -188,10 +171,12 @@ export class AdminState {
     }
     this.#state.invites ??= [];
     this.#state.userTokens ??= [];
-    // サイト・リポジトリごとのトークンはやめた（個人トークンに置き換え）
-    if ("repoTokens" in this.#state) {
-      delete (this.#state as { repoTokens?: unknown }).repoTokens;
-      migrated = true;
+    // サイト・リポジトリごとのトークンと、全体の Token（とチーム ID）はやめた（個人トークンに置き換え）
+    for (const key of ["repoTokens", "deployToken", "teamId"]) {
+      if (key in this.#state) {
+        delete (this.#state as unknown as Record<string, unknown>)[key];
+        migrated = true;
+      }
     }
     const firstAdmin = this.#state.users.find((u) => u.role === "admin")!.id;
     for (const c of this.#state.credentials) {
@@ -207,10 +192,7 @@ export class AdminState {
       }
     }
     const pruned = this.#prune(Date.now());
-    if (!this.#state.teamId || pruned || migrated) {
-      this.#state.teamId ||= newTeamId();
-      await this.#save();
-    }
+    if (pruned || migrated) await this.#save();
   }
 
   flush(): Promise<void> {
@@ -250,14 +232,6 @@ export class AdminState {
     return this.#state.userId;
   }
 
-  get teamId(): string {
-    return formatTeamId(this.#state.teamId);
-  }
-
-  checkTeamId(input: string): boolean {
-    return safeEqual(normalizeTeamId(input), this.#state.teamId);
-  }
-
   get domain(): string | null {
     return this.#state.domain ?? null;
   }
@@ -276,22 +250,20 @@ export class AdminState {
     return domain;
   }
 
-  get deployToken(): string {
-    return this.#state.deployToken;
-  }
-
   get credentials(): readonly StoredCredential[] {
     return this.#state.credentials;
   }
 
-  checkDeployToken(token: string): boolean {
-    return safeEqual(token, this.#state.deployToken);
+  get adminHosts(): readonly string[] {
+    return this.#state.adminHosts ?? [];
   }
 
-  async rotateDeployToken(): Promise<string> {
-    this.#state.deployToken = newToken();
-    await this.#save();
-    return this.#state.deployToken;
+  /** 管理画面にログイン・登録したホストを覚える（サイトの名前に使わせないため） */
+  async addAdminHost(host: string): Promise<void> {
+    const name = host.toLowerCase().replace(/:\d+$/, "");
+    if (this.adminHosts.includes(name)) return;
+    this.#state.adminHosts = [...this.adminHosts, name];
+    await this.#save({ backup: false });
   }
 
   // ---------- 個人トークン ----------
@@ -338,18 +310,17 @@ export class AdminState {
   }
 
   /**
-   * /_api/deploy（GitHub Actions）に使えるトークンか。sites が null ならすべてのサイト（全体の Token か管理者の個人トークン）、
+   * /_api/deploy（GitHub Actions）に使えるトークンか。sites が null ならすべてのサイト（管理者の個人トークン）、
    * 配列ならそのサイトだけ（メンバーの個人トークン）。autoRoot は最初のサイトをルートにしてよいか
    */
   deployAccess(token: string): { sites: string[] | null; autoRoot: boolean } | null {
     if (!token) return null;
-    if (this.checkDeployToken(token)) return { sites: null, autoRoot: true };
     const user = this.tokenUser(token);
     if (!user) return null;
     return user.role === "admin" ? { sites: null, autoRoot: true } : { sites: [...user.sites], autoRoot: false };
   }
 
-  /** git の push / clone。全体の Token か、そのリポジトリ（＝同じ名前のサイト）を扱えるユーザーの個人トークン */
+  /** git の push / clone。そのリポジトリ（＝同じ名前のサイト）を扱えるユーザーの個人トークン */
   repoAccess(repo: string, token: string): RepoScope | null {
     const access = this.deployAccess(token);
     if (!access) return null;
@@ -508,6 +479,14 @@ export class AdminState {
     for (const u of this.users) u.sites = u.sites.filter((s) => s !== site);
     this.#state.invites = (this.#state.invites ?? []).filter((i) => i.site !== site);
     await this.#save();
+  }
+
+  /**
+   * メンバー（と、まだ使われていない招待）がいるサイトか。ルートドメインのサイトは管理画面と同じオリジンで動くので、
+   * メンバーのいるサイトはルートにしない（ルートのサイトにもメンバーを入れない）
+   */
+  siteHasMembers(site: string): boolean {
+    return this.users.some((u) => u.role === "member" && u.sites.includes(site)) || this.invites(site).length > 0;
   }
 
   invites(site: string): Invite[] {

@@ -4,7 +4,7 @@ import { test, type TestContext } from "node:test";
 import fs from "node:fs";
 import path from "node:path";
 import { Challenges } from "../src/admin/session.ts";
-import { AdminState, normalizeTeamId } from "../src/admin/state.ts";
+import { AdminState } from "../src/admin/state.ts";
 import { loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
@@ -25,29 +25,6 @@ async function start(t: TestContext, dataDir = tmpDir(t)) {
 
 const fakeCredential = { id: "cred-1", publicKey: "AAAA", counter: 0, createdAt: new Date().toISOString() };
 
-test("チーム ID は紛らわしい文字を含まない 16 文字で、再起動しても変わらない", async (t) => {
-  const dir = tmpDir(t);
-  const state = new AdminState(dir);
-  await state.init();
-  assert.match(state.teamId, /^[0-9A-HJKMNP-TV-Z]{4}(-[0-9A-HJKMNP-TV-Z]{4}){3}$/);
-  const again = new AdminState(dir);
-  await again.init();
-  assert.equal(again.teamId, state.teamId);
-});
-
-test("チーム ID は大文字小文字・ハイフン・空白・O と 0・I/L と 1 の違いを吸収して照合する", async (t) => {
-  const state = new AdminState(tmpDir(t));
-  await state.init();
-  const id = state.teamId;
-  assert.equal(state.checkTeamId(id), true);
-  assert.equal(state.checkTeamId(id.replace(/-/g, "").toLowerCase()), true);
-  assert.equal(state.checkTeamId(` ${id.replace(/-/g, " ")} `), true);
-  assert.equal(state.checkTeamId(id.replace(/0/g, "O")), true);
-  assert.equal(state.checkTeamId(id.slice(0, -1)), false);
-  assert.equal(state.checkTeamId(""), false);
-  assert.equal(normalizeTeamId("abcd-efgh-ijkl-mnop"), "ABCDEFGH1JK1MN0P");
-});
-
 test("最初のパスキー登録はセットアップトークンでだけ始められる", async (t) => {
   const { post } = await start(t);
   assert.equal((await post("/register/options", { setupToken: "wrong" })).status, 403);
@@ -61,7 +38,7 @@ test("パスキー登録後は、新しいパスキーの登録には招待が�
 
   assert.equal((await post("/register/options", { setupToken: "setup" })).status, 403);
   assert.equal((await post("/register/options", {})).status, 403);
-  assert.equal((await post("/register/options", { teamId: state.teamId })).status, 403);
+  assert.equal((await post("/register/options", { teamId: "ABCDABCDABCDABCD" })).status, 403);
   const { token } = await state.createInvite("blog", state.setupUserId);
   const register = await post("/register/options", { inviteToken: token });
   assert.equal(register.status, 200);
@@ -148,13 +125,13 @@ test("同時にログインしても admin.json の保存が失敗しない", as
   const state = new AdminState(dataDir);
   await state.init();
   const ids = await Promise.all(Array.from({ length: 20 }, () => state.createSession()));
-  await Promise.all([state.rotateDeployToken(), state.removeSession(ids[0]), state.createSession()]);
+  await Promise.all([state.setDomain("example.com"), state.removeSession(ids[0]), state.createSession()]);
   const reloaded = new AdminState(dataDir);
   await reloaded.init();
   assert.equal(reloaded.sessionCount, 20);
   assert.equal(reloaded.hasSession(ids[0]), false);
   assert.ok(ids.slice(1).every((id) => reloaded.hasSession(id)));
-  assert.equal(reloaded.deployToken, state.deployToken);
+  assert.equal(reloaded.domain, "example.com");
 });
 
 test("400 日使われていないセッションは消え、使われているセッションは残る", async (t) => {

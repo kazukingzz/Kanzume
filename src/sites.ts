@@ -30,6 +30,9 @@ export interface SettingsPatch {
 
 export class SettingsError extends Error {}
 
+/** 管理画面のハッシュのルート（#/invite・#/repos）と重なる名前。サイトの名前・サブドメインに使わせない */
+export const RESERVED_SITE_NAMES: readonly string[] = ["invite", "repos"];
+
 const emptySettings = (): SiteSettings => ({ vars: {}, secrets: {} });
 
 /** Worker を読み込むときに使うので同期で読む（小さいファイル） */
@@ -72,6 +75,17 @@ export class Sites {
   onCreate: ((name: string, siteDir: string) => void) | null = null;
   /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
+  /**
+   * サイトの名前・サブドメインに使えないラベル。管理画面を開くホスト（fa.example.com の fa）をサイトに取られると、
+   * そのホストの管理画面に入れなくなる（パスキーはホストに紐づく）ため。server.ts が管理画面の状態から決める
+   */
+  reservedLabels: () => Iterable<string> = () => RESERVED_SITE_NAMES;
+
+  /** サイトの名前・サブドメインに使えないラベルか */
+  isReserved(label: string): boolean {
+    for (const reserved of this.reservedLabels()) if (reserved === label) return true;
+    return false;
+  }
 
   constructor(dataDir: string) {
     this.dir = path.join(dataDir, "sites");
@@ -89,7 +103,7 @@ export class Sites {
     // 変更のときと同じく、サブドメインの形と重なりを確かめる（ファイルを直接書き換えられても、ほかのサイトのサブドメインを取らせない）。
     // サイトの ID と同じサブドメイン（既定）を先に確保し、それと重なる別名や不正な別名は無視する
     for (const [id, settings] of this.#settings) {
-      if (settings.subdomain !== undefined && !PROJECT_NAME.test(settings.subdomain)) {
+      if (settings.subdomain !== undefined && (!PROJECT_NAME.test(settings.subdomain) || this.isReserved(settings.subdomain))) {
         console.warn(`[kanzume] サイト ${id} のサブドメイン（${settings.subdomain}）は使えないので、${id} で配信します`);
         this.#settings.set(id, { ...settings, subdomain: undefined });
       }
@@ -146,6 +160,7 @@ export class Sites {
     if (!PROJECT_NAME.test(name)) throw new Error(`サイト名が不正です: ${name}`);
     let store = this.#stores.get(name);
     if (!store) {
+      if (this.isReserved(name)) throw new SettingsError(`${name} は管理画面で使っている名前なので、サイト名にできません`);
       // 新しいサイトのサブドメインは ID と同じ。ほかのサイトがそのサブドメインを使っていたら作らない
       const owner = this.resolve(name);
       if (owner && owner !== name) throw new SettingsError(`サブドメイン ${name} はサイト ${owner} が使っています。別の名前にしてください`);
@@ -195,6 +210,7 @@ export class Sites {
     if (patch.subdomain !== undefined) {
       const sub = patch.subdomain === null || patch.subdomain === "" ? id : patch.subdomain.trim().toLowerCase();
       if (!PROJECT_NAME.test(sub)) throw new SettingsError("サブドメインは英小文字・数字・ハイフンで 63 文字以内にしてください");
+      if (sub !== this.subdomain(id) && this.isReserved(sub)) throw new SettingsError(`${sub} は管理画面で使っている名前なので、サブドメインにできません`);
       const owner = this.resolve(sub);
       if (owner && owner !== id) throw new SettingsError(`サブドメイン ${sub} はサイト ${owner} が使っています`);
       if (sub === id) delete next.subdomain;
@@ -276,26 +292,32 @@ export type HostMatch = { kind: "root" } | { kind: "site"; name: string } | { ki
  */
 export function matchHost(host: string, resolve: (label: string) => string | undefined, rootHost?: string): HostMatch {
   const h = hostname(host);
+  const label = siteLabel(h, rootHost);
+  const id = label === undefined ? undefined : resolve(label);
+  if (id) return { kind: "site", name: id };
+  // ルートドメインが決まっているときの fa.example.com や xxx.onrender.com など。管理画面はここでも開けるが、サイトは配信しない
+  if (rootHost && h !== hostname(rootHost)) return { kind: "other" };
+  return { kind: "root" };
+}
+
+/**
+ * そのホストがサイトのサブドメインとして読まれるときのラベル（matchHost と同じ規則）。サイトとして読まれないホストなら undefined。
+ * `blog.example.com` → `blog`（ルートドメインが example.com のとき、または未設定のとき）
+ */
+export function siteLabel(host: string, rootHost?: string): string | undefined {
+  const h = hostname(host);
   // IP アドレス（192.0.2.1 や [::1]）はサブドメインを持たないので、先頭の数字をサイト名として扱わない
-  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) return { kind: "root" };
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(h) || h.startsWith("[")) return undefined;
   if (rootHost) {
     const root = hostname(rootHost);
-    if (h === root) return { kind: "root" };
-    if (h.endsWith(`.${root}`)) {
-      const label = h.slice(0, -root.length - 1);
-      const id = label.includes(".") ? undefined : resolve(label);
-      if (id) return { kind: "site", name: id };
-    }
-    // fa.example.com や xxx.onrender.com など。管理画面はここでも開けるが、サイトは配信しない
-    return { kind: "other" };
+    if (!h.endsWith(`.${root}`)) return undefined;
+    const label = h.slice(0, -root.length - 1);
+    return label.includes(".") ? undefined : label;
   }
   const dot = h.indexOf(".");
-  if (dot === -1) return { kind: "root" };
-  const label = h.slice(0, dot);
+  if (dot === -1) return undefined;
   const rest = h.slice(dot + 1);
-  const id = rest.includes(".") || rest === "localhost" ? resolve(label) : undefined;
-  if (id) return { kind: "site", name: id };
-  return { kind: "root" };
+  return rest.includes(".") || rest === "localhost" ? h.slice(0, dot) : undefined;
 }
 
 /** サブドメインを外したホスト（ポートは残す）。`blog.example.com:8080` → `example.com:8080` */

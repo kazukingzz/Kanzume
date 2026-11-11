@@ -10,25 +10,13 @@ import { DeployLog } from "../src/deploy/deployer.ts";
 import { deployFromFiles } from "../src/deploy/github.ts";
 import { createServer } from "../src/server.ts";
 import { rawTar, rawTarEntry, tmpDir } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 const cred = (id: string, userId?: string) => ({ id, publicKey: "AAAA", counter: 0, createdAt: new Date().toISOString(), userId });
 
 async function start(t: TestContext) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => app.server.close(resolve));
-    await app.state.flush();
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const as =
-    (cookie: string | null) =>
-    (p: string, method = "GET", body?: unknown) =>
-      fetch(`${base}/_admin/kanzume/api${p}`, {
-        method,
-        headers: { ...(cookie ? { cookie } : {}), origin: base, "content-type": "application/json" },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
+  const app = await startApp(t);
+  const as = app.api;
   const deploy = async (name: string) => {
     await app.sites.ensure(name);
     const result = await deployFromFiles(
@@ -37,14 +25,13 @@ async function start(t: TestContext) {
         { path: "index.js", data: Buffer.from(`export default { fetch() { return new Response(${JSON.stringify(name)}); } };`) },
       ],
       app.deployer,
-      { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true, siteName: name },
+      { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: false, siteName: name },
     );
     assert.equal(result.ok, true, result.ok ? "" : result.error);
   };
-  await app.state.addCredential(cred("admin-cred"));
-  const adminSession = `kanzume_session=${await app.state.createSession()}`;
+  const adminSession = await app.adminCookie();
   const admin = as(adminSession);
-  return { ...app, base, as, admin, deploy, adminCookie: async () => adminSession };
+  return { ...app, as, admin, deploy, adminCookie: async () => adminSession };
 }
 
 async function member(app: Awaited<ReturnType<typeof start>>, sites: string[]) {
@@ -70,6 +57,9 @@ test("ユーザーのない admin.json は、既存のパスキーとセッシ�
   await state.flush();
   const saved = JSON.parse(fs.readFileSync(path.join(dir, "admin.json"), "utf8"));
   assert.equal(saved.credentials[0].userId, "legacy");
+  assert.equal(saved.deployToken, undefined, "全体の Token は消す");
+  assert.equal(saved.teamId, undefined);
+  assert.equal(state.deployAccess("kz_x"), null, "古い全体の Token では、もうデプロイできない");
   assert.deepEqual(Object.values(saved.sessions)[0], { lastSeen: (Object.values(saved.sessions)[0] as { lastSeen: number }).lastSeen, userId: "legacy" });
 });
 
@@ -429,18 +419,70 @@ test("メンバーは R2 のバケット名でサイトの外に出られず、�
   assert.equal("current" in info, false, "管理者にも設定の中身は返さない");
   assert.equal((await app.admin("/sites", "POST", { name: "invite" })).status, 400);
 
-  // ルートドメインを決めて fa.example.test から管理画面を開いているとき、fa はサブドメインにできない
+  // ルートドメインを決めて、管理者が fa.example.test から管理画面を開いているとき、fa はサブドメインにできない。
+  // メンバーがどのホストから（ルートドメインや、x-forwarded-host を偽って）頼んでも同じ
   await app.state.setDomain("example.test");
+  await app.state.addAdminHost("fa.example.test");
   const cookie = `kanzume_session=${await app.state.createSession(app.state.users.find((u) => u.role === "member")!.id)}`;
-  const viaAdminHost = (p: string, method: string, body: unknown) =>
+  const via = (host: string) => (p: string, method: string, body: unknown) =>
     fetch(`${app.base}/_admin/kanzume/api${p}`, {
       method,
-      headers: { cookie, origin: "http://fa.example.test", "x-forwarded-host": "fa.example.test", "content-type": "application/json" },
+      headers: { cookie, origin: `http://${host}`, "x-forwarded-host": host, "content-type": "application/json" },
       body: JSON.stringify(body),
     });
-  const taken = await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "fa" });
-  assert.equal(taken.status, 400);
-  assert.equal((await viaAdminHost("/sites/blog/settings", "PUT", { subdomain: "news" })).status, 200);
+  for (const host of ["fa.example.test", "example.test", "other.example.test"]) {
+    const taken = await via(host)("/sites/blog/settings", "PUT", { subdomain: "fa" });
+    assert.equal(taken.status, 400, host);
+  }
+  assert.equal((await app.admin("/sites", "POST", { name: "fa" })).status, 400, "サイトの名前にもできない");
+  assert.equal((await via("example.test")("/sites/blog/settings", "PUT", { subdomain: "news" })).status, 200);
+});
+
+test("管理者が管理画面を開いたホストは覚えておき、ドメインを決めていなくてもそのラベルをサイトに取らせない", async (t) => {
+  const app = await start(t);
+  await app.deploy("blog");
+  const cookie = await app.adminCookie();
+  const res = await fetch(`${app.base}/_admin/kanzume/api/overview`, { headers: { cookie, "x-forwarded-host": "kanri.example.test" } });
+  assert.equal(res.status, 200);
+  assert.ok(app.state.adminHosts.includes("kanri.example.test"));
+  assert.equal((await app.admin("/sites/blog/settings", "PUT", { subdomain: "kanri" })).status, 400);
+  assert.equal((await app.admin("/sites", "POST", { name: "kanri" })).status, 400);
+});
+
+test("ルートドメインのサイトにはメンバーを入れない（管理画面と同じオリジンで動くため）", async (t) => {
+  const app = await start(t);
+  await app.deploy("home");
+  await app.deploy("blog");
+  await app.sites.setRoot("home");
+  const { user } = await member(app, ["blog"]);
+
+  assert.equal((await app.admin("/sites/home/invites", "POST", {})).status, 400, "ルートのサイトには招待を作れない");
+  assert.equal((await app.admin(`/users/${user.id}`, "PUT", { addSite: "home" })).status, 400, "ルートのサイトにメンバーを足せない");
+  assert.equal(app.state.user(user.id)!.sites.includes("home"), false);
+
+  // メンバー（や未使用の招待）がいるサイトは、ルートにできない
+  assert.equal((await app.admin("/root-site", "POST", { name: "blog" })).status, 400);
+  await app.admin("/sites/shop", "DELETE");
+  await app.deploy("shop");
+  await app.admin("/sites/shop/invites", "POST", {});
+  assert.equal((await app.admin("/root-site", "POST", { name: "shop" })).status, 400, "未使用の招待があるサイトもルートにできない");
+  assert.equal(app.sites.root, "home");
+
+  // ルートにしたあとに、その前に作った招待を使っても、ルートのサイトのメンバーにはならない
+  await app.deploy("docs");
+  const invite = (await (await app.admin("/sites/docs/invites", "POST", {})).json()) as { url: string };
+  await app.sites.setRoot("docs");
+  const token = invite.url.split("#/invite/")[1];
+  assert.equal((await member(app, []).then((m) => m.api("/invite/accept", "POST", { token }))).status, 400);
+});
+
+test("最初のデプロイでも、メンバーのいるサイトは自動でルートにしない", async (t) => {
+  const app = await start(t);
+  await app.sites.ensure("blog");
+  await member(app, ["blog"]);
+  await app.deploy("blog");
+  assert.equal(app.sites.root, null);
+  assert.equal(app.sites.rootDecided, true);
 });
 
 test("URL にできないドメインは保存しない。管理画面で追加していないサイトへの Actions のデプロイは 404", async (t) => {
@@ -452,7 +494,7 @@ test("URL にできないドメインは保存しない。管理画面で追加�
   await app.sites.updateSettings("blog", { subdomain: "news" });
   const res = await fetch(`${app.base}/_api/deploy`, {
     method: "POST",
-    headers: { authorization: `Bearer ${app.state.deployToken}`, "x-kanzume-site": "news" },
+    headers: { authorization: `Bearer ${app.token}`, "x-kanzume-site": "news" },
     body: gzipSync(
       rawTar([
         rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "news", compatibility_date: "2026-10-01", assets: { directory: "public" } }))),

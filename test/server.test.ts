@@ -1,26 +1,13 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import type { AddressInfo } from "node:net";
 import { test, type TestContext } from "node:test";
-import { loadConfig } from "../src/config.ts";
-import { createServer } from "../src/server.ts";
-import { rawTarEntry, rawTarGz, tarGz, tmpDir, toCjs, nameInTarGz } from "./helpers.ts";
+import { rawTarEntry, rawTarGz, tarGz, toCjs } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 async function start(t: TestContext, env: Record<string, string> = {}) {
-  const dataDir = tmpDir(t);
-  const config = loadConfig({ KANZUME_DATA_DIR: dataDir, KANZUME_SETUP_TOKEN: "setup", ...env });
-  const { server, state, sites } = await createServer(config);
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => server.close(resolve));
-  });
-  const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
-  const deploy = async (body: Buffer, token = state.deployToken) => {
-    const name = nameInTarGz(body);
-    await sites.ensure(name);
-    return fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${token}`, "x-kanzume-site": name }, body: new Uint8Array(body) });
-  };
-  return { base, deploy, state, sites, store: { get: () => sites.get(sites.root ?? "")?.get() } };
+  const app = await startApp(t, env);
+  const deploy = (body: Buffer, token = app.token) => app.deploy(body, { token });
+  return { ...app, deploy, store: { get: () => app.sites.get(app.sites.root ?? "")?.get() } };
 }
 
 function workerBundle(t: TestContext, source: string, extra: Record<string, unknown> = {}, assets: Record<string, string> = {}) {
@@ -183,10 +170,10 @@ test("予約パスはサイトに渡さない", async (t) => {
 });
 
 test("Actions からのデプロイは、管理画面で追加したサイトを指定したときだけ受け付ける（wrangler の name は使わない）", async (t) => {
-  const { base, state, sites } = await start(t);
+  const { base, token, sites } = await start(t);
   const body = new Uint8Array(tarGz(t, { "wrangler.json": JSON.stringify({ name: "other", assets: { directory: "public" } }), "public/index.html": "x" }));
   const post = (headers: Record<string, string>) =>
-    fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${state.deployToken}`, ...headers }, body });
+    fetch(`${base}/_api/deploy`, { method: "POST", headers: { authorization: `Bearer ${token}`, ...headers }, body });
   assert.equal((await post({})).status, 400, "サイトの指定がない");
   assert.equal((await post({ "x-kanzume-site": "blog" })).status, 404, "まだ追加していないサイト");
   assert.equal(sites.has("blog") || sites.has("other"), false, "デプロイでサイトを作らない");

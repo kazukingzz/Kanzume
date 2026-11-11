@@ -87,6 +87,12 @@ export class Deployer {
   /** デプロイが成功したあとに呼ぶ（バックアップのきっかけ） */
   onChange: (() => void) | null = null;
 
+  /**
+   * そのサイトをルートドメインにしてよいか。ルートは管理画面と同じオリジンで動くので、メンバーのいるサイトはルートにしない。
+   * server.ts が管理画面の状態から決める
+   */
+  canBeRoot: (site: string) => boolean = () => true;
+
   constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
     this.#sites = sites;
     this.#runtime = runtime;
@@ -190,7 +196,7 @@ export class Deployer {
       }
       // ルートドメインのサイトは、Kanzume で最初のデプロイのときにだけ自動で決める。
       // 管理者のデプロイならそのサイト、メンバーのデプロイなら「ルートなし」で確定させる（後からメンバーのサイトがルートにならないように）
-      if (!this.#sites.rootDecided) await this.#sites.setRoot(input.autoRoot ? manifest.name : null);
+      if (!this.#sites.rootDecided) await this.#sites.setRoot(input.autoRoot && this.canBeRoot(manifest.name) ? manifest.name : null);
       log.add("新しいリリースに切り替えました");
       this.onChange?.();
       return { ok: true, release };

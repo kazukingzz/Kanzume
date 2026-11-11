@@ -42,9 +42,9 @@ const STATIC: Record<string, { file: string; type: string }> = {
 /** 展開後の大きさの上限（アップロードの上限の何倍か。src/deploy/handler.ts と同じ） */
 const EXTRACT_RATIO = 4;
 const FILE_GROUPS: FileGroup[] = ["source", "config", "worker", "assets"];
+const ROOT_SITE_MEMBERS = "ルートドメインで配信しているサイトには、メンバーを追加できません（管理画面と同じオリジンで動くため）";
+const isAdminUser = (user: User) => user.role === "admin";
 /** 管理者だけが呼べる API（全体の設定） */
-/** サイト名にできない名前（管理画面の URL の #/invite・#/repos と重なるもの） */
-const RESERVED_SITE_NAMES = ["invite", "repos"];
 const ADMIN_ROUTES = new Set(["POST /api/domain", "GET /api/backup", "POST /api/backup/run", "GET /api/resources", "POST /api/root-site", "GET /api/users"]);
 
 interface Deps {
@@ -80,6 +80,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
 
   const login = async (res: ServerResponse, origin: string, userId: string) => {
+    if (state.user(userId)?.role === "admin") await state.addAdminHost(new URL(origin).hostname);
     sendJson(res, 200, { ok: true }, { "set-cookie": sessionCookie(origin, await state.createSession(userId), SESSION_COOKIE_MAX_AGE) });
   };
 
@@ -97,9 +98,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       return safeEqual(String(body?.setupToken ?? ""), config.setupToken) ? { kind: "setup" } : "セットアップトークンが違います";
     }
     if (typeof body?.inviteToken === "string" && body.inviteToken) {
-      return state.checkInvite(body.inviteToken)
-        ? { kind: "invite", token: body.inviteToken }
-        : "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
+      const invite = state.checkInvite(body.inviteToken);
+      if (!invite) return "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
+      if (invite.site === sites.root) return ROOT_SITE_MEMBERS;
+      return { kind: "invite", token: body.inviteToken };
     }
     return "パスキーを登録するには、管理者から届いた招待リンクを開いてください";
   };
@@ -286,6 +288,8 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     if (adminOnly && !isAdmin) return forbidden();
 
     if (route === "GET /api/overview") {
+      // パスキーを使っている管理画面のホストを覚える（このホストのラベルをサイトに取らせない）
+      if (isAdmin) await state.addAdminHost(rpID);
       return sendJson(res, 200, {
         url: origin,
         me: { id: user.id, name: user.name, role: user.role, sites: user.sites },
@@ -389,7 +393,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     // ログイン中に招待リンクを開いたとき: 自分をそのサイトのメンバーにする
     if (route === "POST /api/invite/accept") {
       const body = await readJson(req);
-      const invite = await state.consumeInvite(String(body?.token ?? ""), user.id);
+      const token = String(body?.token ?? "");
+      if (state.checkInvite(token)?.site === sites.root && !isAdminUser(user)) return sendJson(res, 400, { error: ROOT_SITE_MEMBERS });
+      const invite = await state.consumeInvite(token, user.id);
       if (!invite) return sendJson(res, 400, { error: "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）" });
       return sendJson(res, 200, { site: invite.site });
     }
@@ -430,6 +436,10 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         }
         const body = await readJson(req);
         const role = body?.role === "admin" || body?.role === "member" ? body.role : undefined;
+        const target = state.user(id);
+        // ルートのサイトに参加しているメンバーは作らない（メンバーにするときも、サイトを足すときも）
+        const sitesAfter = [...(target?.sites ?? []), ...(typeof body?.addSite === "string" ? [body.addSite] : [])];
+        if ((role ?? target?.role) === "member" && sites.root && sitesAfter.includes(sites.root)) return sendJson(res, 400, { error: ROOT_SITE_MEMBERS });
         const updated = await state.updateUser(id, {
           role,
           name: typeof body?.name === "string" ? body.name : undefined,
@@ -521,18 +531,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
 
     const siteUrls = (name: string) => sites.urls(siteRoot, name);
 
-    /**
-     * サイトの名前・サブドメインに使えないラベル。管理画面を開いているホスト（fa.example.com の fa）を
-     * サイトに取られると、そのホストの管理画面・/_api・/_git がサイトのものになってしまうため
-     */
-    const reservedLabels = (() => {
-      const labels = new Set(RESERVED_SITE_NAMES);
-      const adminHost = new URL(origin).hostname;
-      const rootHost = new URL(siteRoot).hostname;
-      if (adminHost !== rootHost && adminHost.endsWith(`.${rootHost}`)) labels.add(adminHost.slice(0, -rootHost.length - 1));
-      return labels;
-    })();
-
     /** デプロイ前の設定画面で使う: その名前のサイトがあるか、サブドメインがほかのサイトに使われていないか、今の設定 */
     const siteInfo = (name: string) => {
       const valid = PROJECT_NAME.test(name);
@@ -580,7 +578,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
         .trim()
         .toLowerCase();
       if (!PROJECT_NAME.test(name)) return sendJson(res, 400, { error: "サイト名は英小文字・数字・ハイフンで 63 文字以内にしてください" });
-      if (reservedLabels.has(name)) return sendJson(res, 400, { error: `${name} は管理画面で使っている名前なので、サイト名にできません` });
       if (sites.has(name)) return sendJson(res, 409, { error: `サイト ${name} は既にあります` });
       try {
         await sites.ensure(name);
@@ -595,6 +592,9 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const name = body?.name === null ? null : String(body?.name ?? "");
       if (name !== null && !sites.get(name)?.get()) return sendJson(res, 404, { error: "サイトが見つかりません" });
+      if (name !== null && state.siteHasMembers(name)) {
+        return sendJson(res, 400, { error: "メンバー（または未使用の招待）がいるサイトは、ルートドメインにできません（管理画面と同じオリジンで動くため）" });
+      }
       await sites.setRoot(name);
       return sendJson(res, 200, { root: sites.root });
     }
@@ -833,10 +833,6 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
       const body = await readJson(req);
       const patch: SettingsPatch = envPatch(body);
       if (body && "subdomain" in body) patch.subdomain = body.subdomain === null ? null : String(body.subdomain ?? "");
-      const wanted = typeof patch.subdomain === "string" ? patch.subdomain.trim().toLowerCase() : "";
-      if (wanted && wanted !== sites.subdomain(name) && reservedLabels.has(wanted)) {
-        return sendJson(res, 400, { error: `${wanted} は管理画面で使っているので、サブドメインにできません` });
-      }
       try {
         await sites.updateSettings(name, patch);
       } catch (err) {
@@ -859,6 +855,7 @@ export function createAdminHandler({ config, state, sites, repos, runtime, histo
     }
 
     if (siteRouteKey === "POST /invites") {
+      if (sites.root === name) return sendJson(res, 400, { error: ROOT_SITE_MEMBERS });
       const { token, invite } = await state.createInvite(name, user.id);
       return sendJson(res, 200, {
         id: invite.id,

@@ -11,7 +11,8 @@ import { Observability } from "./observability/events.ts";
 import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
 import { Runtime } from "./runtime/runtime.ts";
-import { Sites } from "./sites.ts";
+import { RESERVED_SITE_NAMES, Sites, siteLabel } from "./sites.ts";
+import { configuredRootHost } from "./http.ts";
 import { Repos } from "./git/repos.ts";
 import { createGitHandler, installHooks } from "./git/server.ts";
 import { closeAllSiteDbs } from "./bindings/db.ts";
@@ -60,12 +61,25 @@ async function protectDataDir(dataDir: string, sites: Sites): Promise<void> {
   sites.onCreate = prepare;
 }
 
+/** サイトの名前・サブドメインに使えないラベル: 管理画面のルートと、管理者が管理画面を開いたホストのラベル */
+function reservedLabels(config: Config, state: AdminState): Set<string> {
+  const labels = new Set(RESERVED_SITE_NAMES);
+  const rootHost = configuredRootHost(config.origin, state.domain);
+  const hosts = [...state.adminHosts, ...(config.origin ? [new URL(config.origin).host] : [])];
+  for (const host of hosts) {
+    const label = siteLabel(host, rootHost);
+    if (label) labels.add(label);
+  }
+  return labels;
+}
+
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions>; backup?: Backup | null } = {}) {
   applyUmask(config);
-  const sites = new Sites(config.dataDir);
-  await sites.init();
   const state = new AdminState(config.dataDir);
   await state.init();
+  const sites = new Sites(config.dataDir);
+  sites.reservedLabels = () => reservedLabels(config, state);
+  await sites.init();
   if (config.isolation === "process") await protectDataDir(config.dataDir, sites);
   const runtime = new Runtime({
     idleMs: config.workerIdleMs,
@@ -81,6 +95,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const resources = new ResourceMonitor();
 
   const deployer = new Deployer(sites, runtime, history);
+  deployer.canBeRoot = (site) => !state.siteHasMembers(site);
   const repos = new Repos(config.dataDir, config.maxUploadBytes, config.repoQuotaBytes);
   await repos.init();
   // リポジトリはサイトに属する。サイトのないリポジトリ（サイトに紐づける前に作ったもの）には、同じ名前の空のサイトを作る

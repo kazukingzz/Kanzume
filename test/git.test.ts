@@ -1,29 +1,21 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import type { AddressInfo } from "node:net";
 import { existsSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { loadConfig } from "../src/config.ts";
-import { createServer } from "../src/server.ts";
 import { tmpDir, writeTree } from "./helpers.ts";
+import { startApp } from "./fixtures.ts";
 
 async function start(t: TestContext) {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup" }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(async () => {
-    await new Promise((resolve) => app.server.close(resolve));
-    await app.state.flush();
-  });
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
-  const remote = (repo: string, token = app.state.deployToken) => `${base.replace("://", `://x:${token}@`)}/_git/${repo}.git`;
+  const app = await startApp(t);
+  const remote = (repo: string, token = app.token) => `${app.base.replace("://", `://x:${token}@`)}/_git/${repo}.git`;
   // 管理画面と同じく、リポジトリはサイトを追加してから作る（デプロイはサイトがないとできない）
   const create = app.repos.create.bind(app.repos);
   app.repos.create = async (name: string) => {
     await app.sites.ensure(name);
     return create(name);
   };
-  return { ...app, base, remote };
+  return { ...app, remote };
 }
 
 const GIT_ENV = {
@@ -140,7 +132,6 @@ test("トークンがないと clone も push もできず、個人トークン�
   await new Promise((r) => setTimeout(r, 1100));
   assert.equal(state.repoAccess("blog", expired), null);
   assert.equal(state.repoAccess("blog", mine), "write");
-  assert.equal(state.repoAccess("blog", state.deployToken), "write");
   const admin = (await state.createUserToken(state.setupUserId, "admin", null)).token;
   assert.equal(state.repoAccess("anything", admin), "write", "管理者の個人トークンはすべてのリポジトリ");
 });
@@ -205,7 +196,7 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   assert.match(issued.token, /^kzu_/);
   assert.equal(state.repoAccess("blog", issued.token), "write");
   assert.deepEqual(
-    (await api("/tokens")).body.tokens.map((t: { name: string }) => t.name),
+    (await api("/tokens")).body.tokens.map((t: { name: string }) => t.name).filter((n: string) => n !== "test"),
     ["ノート PC"],
   );
   assert.equal((await api(`/tokens/${issued.id}`, { method: "DELETE" })).status, 200);
@@ -271,13 +262,13 @@ test("main の削除は拒否し（ほかのブランチは消せる）、続け
 });
 
 test("git を起動できなくてもサーバーは落ちず、500 を返す", { skip: NO_GIT }, async (t) => {
-  const { base, repos, state } = await start(t);
+  const { base, repos, token } = await start(t);
   await repos.create("blog");
   const path0 = process.env.PATH;
   process.env.PATH = "/nonexistent";
   t.after(() => (process.env.PATH = path0));
   const res = await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, {
-    headers: { authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}` },
+    headers: { authorization: `Basic ${Buffer.from(`x:${token}`).toString("base64")}` },
   });
   process.env.PATH = path0;
   assert.equal(res.status, 500);
@@ -286,7 +277,7 @@ test("git を起動できなくてもサーバーは落ちず、500 を返す", 
 });
 
 test("途中で切れた push の git プロセスは残らない", { skip: NO_GIT }, async (t) => {
-  const { base, repos, state } = await start(t);
+  const { base, repos, token } = await start(t);
   await repos.create("blog");
   const children = () =>
     execFileSync("ps", ["-o", "pid=,ppid=,args=", "-e"], { encoding: "utf8" })
@@ -302,7 +293,7 @@ test("途中で切れた push の git プロセスは残らない", { skip: NO_G
     headers: {
       "content-type": "application/x-git-receive-pack-request",
       "transfer-encoding": "chunked",
-      authorization: `Basic ${Buffer.from(`x:${state.deployToken}`).toString("base64")}`,
+      authorization: `Basic ${Buffer.from(`x:${token}`).toString("base64")}`,
     },
   });
   req.on("error", () => {});
@@ -344,14 +335,13 @@ test("main という名前のタグがあっても、main への push はデプ�
 });
 
 test("リポジトリの容量の上限を超える push は受け付けない", { skip: NO_GIT }, async (t) => {
-  const app = await createServer(loadConfig({ KANZUME_DATA_DIR: tmpDir(t), KANZUME_SETUP_TOKEN: "setup", KANZUME_REPO_QUOTA_MB: "0.05" }));
-  await new Promise<void>((resolve) => app.server.listen(0, "127.0.0.1", resolve));
-  t.after(() => new Promise((resolve) => app.server.close(resolve)));
-  const base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+  const app = await startApp(t, { KANZUME_REPO_QUOTA_MB: "0.05" });
+  const base = app.base;
+  await app.sites.ensure("blog");
   await app.repos.create("blog");
   const { randomBytes } = await import("node:crypto");
   const dir = workTree(t, { ...WORKER, "public/big.bin": randomBytes(200 * 1024).toString("base64") });
-  const push = await git(dir, ["push", `${base.replace("://", `://x:${app.state.deployToken}@`)}/_git/blog.git`, "main"]);
+  const push = await git(dir, ["push", `${base.replace("://", `://x:${app.token}@`)}/_git/blog.git`, "main"]);
   assert.notEqual(push.status, 0);
   assert.match(push.output, /容量の上限/);
   assert.deepEqual(await app.repos.refs("blog"), []);
