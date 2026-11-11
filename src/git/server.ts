@@ -6,12 +6,14 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
-import { safeEqual, type AdminState, type RepoScope } from "../admin/state.ts";
+import { safeEqual, type AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
+import { BuildError, deployFromDirectory } from "../deploy/build.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
-import { deployFromDirectory, GitHubError } from "../deploy/github.ts";
-import { CONFIG_FILES, ConfigError } from "../deploy/wrangler.ts";
-import { readBody, rootOrigin, sendText } from "../http.ts";
+import { EXTRACT_RATIO } from "../deploy/tar.ts";
+import { findConfigFile } from "../deploy/wrangler.ts";
+import { mib, UserFacingError } from "../errors.ts";
+import { readJson, requestToken, rootOrigin, sendText } from "../http.ts";
 import type { Sites } from "../sites.ts";
 import type { Repos } from "./repos.ts";
 
@@ -19,7 +21,8 @@ export const GIT_PATH = "/_git";
 export const HOOK_PATH = "/_api/git/hook";
 
 const HOOKS = { "post-receive": "hook.ts", "pre-receive": "pre-receive.ts" };
-const SERVICES: Record<string, RepoScope> = { "git-upload-pack": "read", "git-receive-pack": "write" };
+/** clone / fetch と push。どちらも、そのサイトを扱えるユーザーの個人トークンで使える */
+const SERVICES = new Set(["git-upload-pack", "git-receive-pack"]);
 
 interface Deps {
   config: Config;
@@ -27,16 +30,6 @@ interface Deps {
   repos: Repos;
   sites: Sites;
   deployer: Deployer;
-}
-
-function basicToken(req: IncomingMessage): string {
-  const auth = req.headers.authorization ?? "";
-  if (auth.startsWith("Bearer ")) return auth.slice(7).trim();
-  if (!auth.startsWith("Basic ")) return "";
-  const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
-  // ユーザー名は何でもよく、パスワードにトークンを入れる（ユーザー名だけにトークンを入れても通す）
-  const i = decoded.indexOf(":");
-  return i === -1 ? decoded : decoded.slice(i + 1) || decoded.slice(0, i);
 }
 
 /** sh の単一引用符で囲む（パスに " $ ` \ があっても展開させない） */
@@ -85,17 +78,15 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       service = rest.slice(1);
     }
     // Smart HTTP だけを受ける（dumb HTTP でリポジトリの中身をそのまま見せない）
-    if (!m || !service || !(service in SERVICES)) return sendText(res, 404, "Not Found");
+    if (!m || !service || !SERVICES.has(service)) return sendText(res, 404, "Not Found");
     const name = m[1];
 
-    const token = basicToken(req);
-    const access = state.repoAccess(name, token);
-    if (!access) {
+    const token = requestToken(req);
+    if (!state.repoAccess(name, token)) {
       res.writeHead(401, { "www-authenticate": 'Basic realm="Kanzume"', "content-type": "text/plain; charset=utf-8" });
       res.end("トークンが必要です（パスワードに、管理画面の「設定 > トークン」で発行した個人トークンを入力してください）\n");
       return;
     }
-    if (SERVICES[service] === "write" && access !== "write") return sendText(res, 403, "このトークンでは push できません（read 専用）\n");
     if (!(await repos.exists(name))) return sendText(res, 404, "リポジトリが見つかりません\n");
 
     const env: NodeJS.ProcessEnv = {
@@ -122,7 +113,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
       KANZUME_ORIGIN_URL: rootOrigin(req, config.origin, state.domain),
-      // 全体の Token か管理者の個人トークンでの push かどうか（メンバーのトークンでは、最初のサイトをルートにしない）
+      // 管理者の個人トークンでの push かどうか（メンバーのトークンでは、最初のサイトをルートにしない）
       KANZUME_PUSH_SCOPE: state.deployAccess(token)?.autoRoot ? "global" : "repo",
       KANZUME_REPO_QUOTA_BYTES: String(repos.quotaBytes),
     };
@@ -204,7 +195,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       });
       child.on("close", (code) => {
         if (res.headersSent) res.end();
-        else if (tooLarge) fail(413, `push は ${Math.round(repos.maxInputBytes / 1024 / 1024)} MB までです\n`);
+        else if (tooLarge) fail(413, `push は ${mib(repos.maxInputBytes)} までです\n`);
         else if (spawnError) fail(500, "サーバーで git を起動できませんでした\n");
         else fail(500, `git http-backend が失敗しました（終了コード ${code}）\n`);
         resolve();
@@ -215,13 +206,13 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
   /** post-receive フックから呼ばれる。デフォルトブランチへの push ならデプロイし、ログを 1 行ずつ返す */
   async function handleHook(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST" || !safeEqual(String(req.headers["x-kanzume-hook"] ?? ""), hookSecret)) return sendText(res, 403, "Forbidden");
-    const raw = await readBody(req, 1024 * 1024);
-    let body: { repo?: string; origin?: string; scope?: string; updates?: { old: string; new: string; ref: string }[] };
-    try {
-      body = JSON.parse(raw?.toString("utf8") ?? "");
-    } catch {
-      return sendText(res, 400, "Bad Request");
-    }
+    const body = (await readJson(req, 1024 * 1024)) as {
+      repo?: string;
+      origin?: string;
+      scope?: string;
+      updates?: { old: string; new: string; ref: string }[];
+    } | null;
+    if (!body) return sendText(res, 400, "Bad Request");
     const name = String(body.repo ?? "");
     if (!(await repos.exists(name))) return sendText(res, 404, "Not Found");
 
@@ -251,18 +242,10 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
 
           // 取り出す前に、設定があるかと大きさだけを確かめる（デプロイできない push で全体を書き出さない）。
           // リポジトリはサイトのものなので、wrangler の name にかかわらずこのサイトにデプロイする
-          let configFile: string | undefined;
-          for (const c of CONFIG_FILES) {
-            if ((await repos.readFile(name, head.sha, c)) !== null) {
-              configFile = c;
-              break;
-            }
-          }
-          if (!configFile) throw new GitHubError(`リポジトリのトップに ${CONFIG_FILES.join(" / ")} がありません`);
+          await findConfigFile(async (c) => (await repos.readFile(name, head.sha, c)) !== null, "リポジトリのトップ");
           const size = await repos.treeSize(name, head.sha);
-          const limit = config.maxUploadBytes * 4;
-          if (size > limit)
-            throw new GitHubError(`ファイルの合計（${Math.round(size / 1024 / 1024)} MB）が上限（${Math.round(limit / 1024 / 1024)} MB）を超えています`);
+          const limit = config.maxUploadBytes * EXTRACT_RATIO;
+          if (size > limit) throw new BuildError(`ファイルの合計（${mib(size)}）が上限（${mib(limit)}）を超えています`);
 
           const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-push-")));
           try {
@@ -291,7 +274,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
             await fs.rm(work, { recursive: true, force: true });
           }
         } catch (err) {
-          const known = err instanceof GitHubError || err instanceof ConfigError;
+          const known = err instanceof UserFacingError;
           if (!known) console.error("[git] push 後のデプロイで例外:", err);
           const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error).message}`;
           // 取り出しの前に失敗しても、リポジトリ名の履歴に残す

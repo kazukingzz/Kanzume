@@ -54,12 +54,3 @@ export function describeDevice(userAgent: string | undefined): string | undefine
   const parts = [os, browser].filter(Boolean);
   return parts.length ? parts.join("・") : undefined;
 }
-
-export const MAX_PASSKEY_NAME = 40;
-
-export function normalizePasskeyName(input: unknown): string {
-  return String(input ?? "")
-    .replace(/[\u0000-\u001f\u007f]/g, "")
-    .trim()
-    .slice(0, MAX_PASSKEY_NAME);
-}

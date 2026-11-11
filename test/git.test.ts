@@ -9,13 +9,12 @@ import { startApp } from "./fixtures.ts";
 async function start(t: TestContext) {
   const app = await startApp(t);
   const remote = (repo: string, token = app.token) => `${app.base.replace("://", `://x:${token}@`)}/_git/${repo}.git`;
-  // 管理画面と同じく、リポジトリはサイトを追加してから作る（デプロイはサイトがないとできない）
-  const create = app.repos.create.bind(app.repos);
-  app.repos.create = async (name: string) => {
+  // 管理画面と同じく、サイトを追加してからリポジトリを作る（リポジトリはサイトに属する）
+  const createRepo = async (name: string) => {
     await app.sites.ensure(name);
-    return create(name);
+    await app.repos.create(name);
   };
-  return { ...app, remote };
+  return { ...app, remote, createRepo };
 }
 
 const GIT_ENV = {
@@ -63,8 +62,8 @@ const NO_GIT = (() => {
 })();
 
 test("Kanzume のリポジトリに main を push すると、wrangler の設定どおりにデプロイされる", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, sites, history } = await start(t);
-  await repos.create("blog");
+  const { base, remote, repos, sites, history, createRepo } = await start(t);
+  await createRepo("blog");
   const dir = workTree(t, WORKER);
 
   const push = await git(dir, ["push", remote("blog"), "main"]);
@@ -112,8 +111,8 @@ async function memberToken(state: Awaited<ReturnType<typeof start>>["state"], si
 }
 
 test("トークンがないと clone も push もできず、個人トークンは参加しているサイトのリポジトリだけ、期限切れは使えない", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, state } = await start(t);
-  await repos.create("blog");
+  const { remote, state, createRepo } = await start(t);
+  await createRepo("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
 
@@ -130,15 +129,15 @@ test("トークンがないと clone も push もできず、個人トークン�
 
   const expired = await memberToken(state, ["blog"], 1);
   await new Promise((r) => setTimeout(r, 1100));
-  assert.equal(state.repoAccess("blog", expired), null);
-  assert.equal(state.repoAccess("blog", mine), "write");
+  assert.equal(state.repoAccess("blog", expired), false);
+  assert.equal(state.repoAccess("blog", mine), true);
   const admin = (await state.createUserToken(state.setupUserId, "admin", null)).token;
-  assert.equal(state.repoAccess("anything", admin), "write", "管理者の個人トークンはすべてのリポジトリ");
+  assert.equal(state.repoAccess("anything", admin), true, "管理者の個人トークンはすべてのリポジトリ");
 });
 
 test("npm パッケージを import したリポジトリは、push は受け付けてデプロイの失敗理由を返す", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, history } = await start(t);
-  await repos.create("app");
+  const { remote, repos, history, createRepo } = await start(t);
+  await createRepo("app");
   const dir = workTree(t, {
     "wrangler.json": JSON.stringify({ name: "app", main: "index.js" }),
     "index.js": `import { Hono } from "hono";\nexport default new Hono();`,
@@ -194,22 +193,22 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
   // 個人トークンは「設定」で発行・取り消しする（リポジトリごとのトークンはない）
   const issued = (await api("/tokens", { method: "POST", body: JSON.stringify({ name: "ノート PC", ttl: 3600 }) })).body;
   assert.match(issued.token, /^kzu_/);
-  assert.equal(state.repoAccess("blog", issued.token), "write");
+  assert.equal(state.repoAccess("blog", issued.token), true);
   assert.deepEqual(
     (await api("/tokens")).body.tokens.map((t: { name: string }) => t.name).filter((n: string) => n !== "test"),
     ["ノート PC"],
   );
   assert.equal((await api(`/tokens/${issued.id}`, { method: "DELETE" })).status, 200);
-  assert.equal(state.repoAccess("blog", issued.token), null);
+  assert.equal(state.repoAccess("blog", issued.token), false);
 
   assert.equal((await api("/repos/blog", { method: "DELETE" })).status, 200);
   assert.deepEqual((await api("/repos")).body.repos, []);
 });
 
 test("name がほかのサイトのコミットも、リポジトリのサイトにデプロイし、ほかのサイトは上書きできない", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, sites, state, history } = await start(t);
-  await repos.create("blog");
-  await repos.create("sample");
+  const { base, remote, sites, state, history, createRepo } = await start(t);
+  await createRepo("blog");
+  await createRepo("sample");
   assert.equal((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).status, 0);
 
   const token = await memberToken(state, ["sample"]);
@@ -228,8 +227,8 @@ test("name がほかのサイトのコミットも、リポジトリのサイト
 });
 
 test("main の削除は拒否し（ほかのブランチは消せる）、続けて push したときは新しいコミットが残る", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, state } = await start(t);
-  await repos.create("blog");
+  const { base, remote, repos, state, createRepo } = await start(t);
+  await createRepo("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
   const del = await git(dir, ["push", remote("blog"), ":main"]);
@@ -262,8 +261,8 @@ test("main の削除は拒否し（ほかのブランチは消せる）、続け
 });
 
 test("git を起動できなくてもサーバーは落ちず、500 を返す", { skip: NO_GIT }, async (t) => {
-  const { base, repos, token } = await start(t);
-  await repos.create("blog");
+  const { base, token, createRepo } = await start(t);
+  await createRepo("blog");
   const path0 = process.env.PATH;
   process.env.PATH = "/nonexistent";
   t.after(() => (process.env.PATH = path0));
@@ -277,8 +276,8 @@ test("git を起動できなくてもサーバーは落ちず、500 を返す", 
 });
 
 test("途中で切れた push の git プロセスは残らない", { skip: NO_GIT }, async (t) => {
-  const { base, repos, token } = await start(t);
-  await repos.create("blog");
+  const { base, token, createRepo } = await start(t);
+  await createRepo("blog");
   const children = () =>
     execFileSync("ps", ["-o", "pid=,ppid=,args=", "-e"], { encoding: "utf8" })
       .split("\n")
@@ -307,8 +306,8 @@ test("途中で切れた push の git プロセスは残らない", { skip: NO_G
 });
 
 test("IP アドレスの先頭の数字と同じ名前のサイトがあっても、フックは Kanzume に届く", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, sites } = await start(t);
-  for (const name of ["127", "blog"]) await repos.create(name);
+  const { remote, sites, createRepo } = await start(t);
+  for (const name of ["127", "blog"]) await createRepo(name);
   const evil = workTree(t, {
     "wrangler.json": JSON.stringify({ name: "127", main: "i.js" }),
     "i.js": `export default { fetch() { return new Response("site 127 でフックを横取り"); } };`,
@@ -321,8 +320,8 @@ test("IP アドレスの先頭の数字と同じ名前のサイトがあって�
 });
 
 test("main という名前のタグがあっても、main への push はデプロイされる", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos } = await start(t);
-  await repos.create("blog");
+  const { base, remote, repos, createRepo } = await start(t);
+  await createRepo("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
   assert.equal((await git(dir, ["push", remote("blog"), "main:refs/tags/main"])).status, 0);
@@ -348,8 +347,8 @@ test("リポジトリの容量の上限を超える push は受け付けない",
 });
 
 test("メンバーの最初の push はルートにならず、その後の全体の Token での push でもルートにならない", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, sites, state } = await start(t);
-  for (const name of ["blog", "shop", "docs"]) await repos.create(name);
+  const { remote, sites, state, createRepo } = await start(t);
+  for (const name of ["blog", "shop", "docs"]) await createRepo(name);
   const token = await memberToken(state, ["shop"]);
   const shop = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "shop", main: "src/index.js" }) });
   assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
@@ -361,15 +360,15 @@ test("メンバーの最初の push はルートにならず、その後の全�
 });
 
 test("全体の Token での最初の push はルートになる", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, sites } = await start(t);
-  await repos.create("blog");
+  const { remote, sites, createRepo } = await start(t);
+  await createRepo("blog");
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
   assert.equal(sites.root, "blog");
 });
 
 test("設定のない push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {
-  const { remote, repos, history } = await start(t);
-  await repos.create("sample");
+  const { remote, history, createRepo } = await start(t);
+  await createRepo("sample");
   const tmp = (await import("node:os")).tmpdir();
   const { readdirSync } = await import("node:fs");
   const before = readdirSync(tmp).filter((f) => f.startsWith("kanzume-push-")).length;
@@ -386,8 +385,8 @@ test("設定のない push は、ファイルを取り出す前に止まり、�
 test("壊れた .git があっても一覧は返り、service を 2 つ付けた info/refs は受けない、デプロイ済みのサイトにも確認なしでリポジトリを作れる", {
   skip: NO_GIT,
 }, async (t) => {
-  const { base, remote, repos, state } = await start(t);
-  await repos.create("blog");
+  const { base, remote, repos, state, createRepo } = await start(t);
+  await createRepo("blog");
   mkdirSync(path.join(repos.dir, "broken.git"));
   const cookie = `kanzume_session=${await state.createSession()}`;
   const api = async (p: string, init: RequestInit = {}) => {
@@ -408,7 +407,7 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   assert.equal((await fetch(`${base}/_git/blog.git/info/refs?service=git-upload-pack`, { headers: auth })).status, 200);
 
   // サイト shop を（GitHub からなどで）先に作っておく
-  await repos.create("shop");
+  await createRepo("shop");
   const shop = workTree(t, { "wrangler.json": JSON.stringify({ name: "shop", assets: { directory: "p" } }), "p/index.html": "shop" });
   assert.equal((await git(shop, ["push", remote("shop"), "main"])).status, 0);
   await repos.remove("shop");

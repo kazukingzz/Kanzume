@@ -9,7 +9,7 @@ import { LocalStore, S3Store, signV4 } from "../src/backup/store.ts";
 import { BackupUrlError, parseBackupUrl } from "../src/backup/url.ts";
 import { loadConfig, type Config } from "../src/config.ts";
 import { DeployLog } from "../src/deploy/deployer.ts";
-import { deployFromFiles } from "../src/deploy/github.ts";
+import { deployFromFiles } from "../src/deploy/build.ts";
 import { createServer, prepareBackup } from "../src/server.ts";
 import { tmpDir } from "./helpers.ts";
 
@@ -383,6 +383,7 @@ test("S3 互換の保存先でもバックアップと復元ができる", async
   const app = await createServer(c1, { backup: b1 });
   t.after(() => app.server.close());
   await app.state.addCredential(fakeCredential);
+  await app.sites.ensure("r");
   await app.repos.create("r");
   assert.equal((await b1.backupNow("test")).ok, true);
 

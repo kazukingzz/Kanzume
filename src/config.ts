@@ -27,14 +27,14 @@ export interface Config {
 }
 
 /** 環境変数の値が使えないとき（起動を止める） */
-export class ConfigError extends Error {}
+export class EnvError extends Error {}
 
 /** 数値の環境変数。未設定なら既定値、数値でない・範囲外ならエラー（NaN のまま使うと上限が効かなくなる） */
 function num(env: NodeJS.ProcessEnv, name: string, fallback: number, min: number, max = Number.MAX_SAFE_INTEGER): number {
   const raw = env[name];
   if (raw === undefined || raw.trim() === "") return fallback;
   const n = Number(raw);
-  if (!Number.isFinite(n) || n < min || n > max) throw new ConfigError(`${name} は ${min} 以上 ${max} 以下の数にしてください（${raw}）`);
+  if (!Number.isFinite(n) || n < min || n > max) throw new EnvError(`${name} は ${min} 以上 ${max} 以下の数にしてください（${raw}）`);
   return n;
 }
 

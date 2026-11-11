@@ -108,6 +108,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const deployer = new Deployer(sites, runtime, history);
   deployer.canBeRoot = (site) => !state.siteHasMembers(site);
   const repos = new Repos(config.dataDir, config.maxUploadBytes, config.repoQuotaBytes);
+  repos.hasSite = (name) => sites.has(name);
   await repos.init();
   // リポジトリはサイトに属する。サイトのないリポジトリ（サイトに紐づける前に作ったもの）には、同じ名前の空のサイトを作る
   for (const name of await repos.names()) {

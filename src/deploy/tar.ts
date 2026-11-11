@@ -1,7 +1,9 @@
 import path from "node:path";
+import { gunzipSync } from "node:zlib";
 import type { UploadedFile } from "../store.ts";
+import { UserFacingError } from "../errors.ts";
 
-export class TarError extends Error {}
+export class TarError extends UserFacingError {}
 
 const BLOCK = 512;
 const MAX_FILES = 20_000;
@@ -89,4 +91,22 @@ export function readTar(buf: Buffer, options: { skipLinks?: boolean } = {}): Upl
     files.push({ path: filePath, data });
   }
   return files;
+}
+
+/** 展開後の大きさの上限（アップロードの上限の何倍か） */
+export const EXTRACT_RATIO = 4;
+
+/**
+ * tar.gz を展開する。展開後が maxBytes × EXTRACT_RATIO を超えたら 413、壊れていたら 400（どちらも UserFacingError）。
+ * skipLinks: シンボリックリンクとハードリンクは飛ばす（アップロードと GitHub のリポジトリ。Actions の tar はリンクを含めない）
+ */
+export function extractTarGz(buf: Buffer, maxBytes: number, options: { skipLinks?: boolean } = {}): UploadedFile[] {
+  let tar: Buffer;
+  try {
+    tar = gunzipSync(buf, { maxOutputLength: maxBytes * EXTRACT_RATIO });
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException)?.code === "ERR_BUFFER_TOO_LARGE") throw new UserFacingError("展開後のファイルが大きすぎます", 413);
+    throw new TarError("tar.gz を展開できません");
+  }
+  return readTar(tar, options);
 }

@@ -10,8 +10,9 @@ import { R2Bucket } from "../bindings/r2.ts";
 import { currentInvocation } from "../observability/events.ts";
 import type { Release } from "../store.ts";
 import { createGlobals, hasNodejsCompat } from "./globals.ts";
+import { UserFacingError } from "../errors.ts";
 
-export class WorkerError extends Error {}
+export class WorkerError extends UserFacingError {}
 
 const NODE_MODULES = new Set([
   "assert",

@@ -84,6 +84,18 @@ export async function sendWebResponse(res: ServerResponse, response: Response, m
   });
 }
 
+/**
+ * リクエストのトークン。Bearer か、git の Basic 認証のパスワード（ユーザー名は何でもよい。ユーザー名だけに入れても通す）
+ */
+export function requestToken(req: IncomingMessage): string {
+  const auth = req.headers.authorization ?? "";
+  if (auth.startsWith("Bearer ")) return auth.slice(7).trim();
+  if (!auth.startsWith("Basic ")) return "";
+  const decoded = Buffer.from(auth.slice(6), "base64").toString("utf8");
+  const i = decoded.indexOf(":");
+  return i === -1 ? decoded : decoded.slice(i + 1) || decoded.slice(0, i);
+}
+
 export function sendText(res: ServerResponse, status: number, text: string, headers: Record<string, string> = {}): void {
   res.writeHead(status, { "content-type": "text/plain; charset=utf-8", ...headers });
   res.end(text);

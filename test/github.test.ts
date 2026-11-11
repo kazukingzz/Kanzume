@@ -243,8 +243,8 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
   const info = (await inspect.json()) as Record<string, unknown>;
   assert.deepEqual(
     info,
-    { name: "hello", vars: { GREETING: "wrangler", LEVEL: "1" } },
-    "name がなければディレクトリ名。文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない",
+    { vars: { GREETING: "wrangler", LEVEL: "1" } },
+    "文字列でない vars は初期値に入れず、ほかのサイトの情報は返さない（name は使わないので返さない）",
   );
 
   // サイトがなければデプロイできない（先に管理画面でサイトを追加する）

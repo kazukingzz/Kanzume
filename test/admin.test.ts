@@ -5,7 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { Challenges } from "../src/admin/session.ts";
 import { AdminState } from "../src/admin/state.ts";
-import { ConfigError, loadConfig } from "../src/config.ts";
+import { EnvError, loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
 import { tmpDir } from "./helpers.ts";
@@ -57,12 +57,13 @@ test("パスキー登録後は、新しいパスキーの登録には招待が�
   );
 });
 
-test("チーム ID や管理 API はログインしないと見えない", async (t) => {
+test("管理 API はログインしないと見えない", async (t) => {
   const { base, post } = await start(t);
   assert.equal((await fetch(`${base}/_admin/kanzume/api/overview`)).status, 401);
-  assert.equal((await fetch(`${base}/_admin/kanzume/api/site`)).status, 401);
-  assert.equal((await post("/site/deploy-github", { url: "https://github.com/a/b" })).status, 401);
-  const noOrigin = await fetch(`${base}/_admin/kanzume/api/token/rotate`, { method: "POST" });
+  assert.equal((await fetch(`${base}/_admin/kanzume/api/sites/blog`)).status, 401);
+  assert.equal((await post("/deploy-github", { url: "https://github.com/a/b" })).status, 401);
+  assert.equal((await fetch(`${base}/_admin/kanzume/api/nothing`)).status, 404);
+  const noOrigin = await fetch(`${base}/_admin/kanzume/api/tokens`, { method: "POST" });
   assert.equal(noOrigin.status, 403);
   assert.deepEqual(await (await fetch(`${base}/_admin/kanzume/api/state`)).json(), { registered: false, authenticated: false, domainFromEnv: false });
 });
@@ -260,7 +261,7 @@ test("KANZUME_ORIGIN を設定したときはその Origin だけを受け付け
 
 test("数値の環境変数が数でない・範囲外なら、起動時に止める（上限が効かないまま動かさない）", () => {
   for (const env of [{ KANZUME_MAX_UPLOAD_MB: "50MB" }, { KANZUME_MAX_WORKERS: "0" }, { PORT: "abc" }, { KANZUME_CPU_TIMEOUT_MS: "-1" }]) {
-    assert.throws(() => loadConfig(env), ConfigError, JSON.stringify(env));
+    assert.throws(() => loadConfig(env), EnvError, JSON.stringify(env));
   }
   assert.equal(loadConfig({ KANZUME_MAX_UPLOAD_MB: "0.5" }).maxUploadBytes, 512 * 1024);
   assert.equal(loadConfig({ KANZUME_MAX_WORKERS: "" }).maxWorkers, 5);

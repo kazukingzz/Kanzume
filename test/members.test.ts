@@ -7,7 +7,7 @@ import { test, type TestContext } from "node:test";
 import { AdminState } from "../src/admin/state.ts";
 import { loadConfig } from "../src/config.ts";
 import { DeployLog } from "../src/deploy/deployer.ts";
-import { deployFromFiles } from "../src/deploy/github.ts";
+import { deployFromFiles } from "../src/deploy/build.ts";
 import { createServer } from "../src/server.ts";
 import { rawTar, rawTarEntry, tmpDir } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
@@ -283,6 +283,8 @@ test("サイトを消すと同じ名前のリポジトリも消え、サイト�
   const first = await createServer(config);
   await first.sites.ensure("blog");
   await first.repos.create("blog");
+  // 以前のバージョンで作った、サイトのないリポジトリ（今はサイトがないと作れない）
+  first.repos.hasSite = () => true;
   await first.repos.create("orphan");
   first.server.close();
 

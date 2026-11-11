@@ -5,6 +5,7 @@ import { closeSiteDb } from "./bindings/db.ts";
 import { siteOrigin } from "./http.ts";
 import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
+import { UserFacingError } from "./errors.ts";
 
 const ROOT_FILE = "_root";
 export const SETTINGS_FILE = "settings.json";
@@ -28,7 +29,15 @@ export interface SettingsPatch {
   secrets?: Record<string, string | null>;
 }
 
-export class SettingsError extends Error {}
+export class SettingsError extends UserFacingError {}
+
+/** 入力されたサイトの名前（ID）をそろえる（前後の空白を外し、小文字にする） */
+export function normalizeSiteName(input: unknown): string {
+  return typeof input === "string" ? input.trim().toLowerCase() : "";
+}
+
+/** デプロイ先のサイトがないとき（デプロイは、管理画面で追加したサイトにだけできる） */
+export const siteNotFound = (name: string) => new SettingsError(`サイト ${name} がありません。先に管理画面でサイトを追加してください`, 404);
 
 /** 管理画面のハッシュのルート（#/invite・#/repos）と重なる名前。サイトの名前・サブドメインに使わせない */
 export const RESERVED_SITE_NAMES: readonly string[] = ["invite", "repos"];

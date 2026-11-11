@@ -2,10 +2,23 @@ import path from "node:path";
 import { R2_BUCKET_NAME } from "../bindings/r2.ts";
 import { parse as parseToml } from "smol-toml";
 import { PROJECT_NAME, type HtmlHandling, type Manifest, type NotFoundHandling } from "../store.ts";
+import { UserFacingError } from "../errors.ts";
 
 export const CONFIG_FILES = ["wrangler.jsonc", "wrangler.json", "wrangler.toml"] as const;
 
-export class ConfigError extends Error {}
+export class ConfigError extends UserFacingError {}
+
+/**
+ * CONFIG_FILES の順に、あるものを 1 つ選ぶ（どのデプロイ方法でも同じ順）。なければ ConfigError。
+ * where はメッセージに使う場所の説明（「リポジトリのトップ」など）
+ */
+export async function findConfigFile(
+  exists: (name: (typeof CONFIG_FILES)[number]) => boolean | Promise<boolean>,
+  where: string,
+): Promise<(typeof CONFIG_FILES)[number]> {
+  for (const c of CONFIG_FILES) if (await exists(c)) return c;
+  throw new ConfigError(`${where}に ${CONFIG_FILES.join(" / ")} がありません`);
+}
 
 export function stripJsonc(text: string): string {
   // コメントを外し、閉じかっこの直前のカンマ（末尾のカンマ）を外す。文字列の中はそのまま

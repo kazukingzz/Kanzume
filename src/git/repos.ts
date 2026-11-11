@@ -4,11 +4,12 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { PROJECT_NAME, type UploadedFile } from "../store.ts";
+import { UserFacingError } from "../errors.ts";
 
 const run = promisify(execFile);
 const MAX_BLOB = 1024 * 1024;
 
-export class RepoError extends Error {}
+export class RepoError extends UserFacingError {}
 
 export interface RepoSummary {
   name: string;
@@ -58,6 +59,8 @@ export class Repos {
   readonly quotaBytes: number;
   /** 作成・削除のあとに呼ぶ（バックアップのきっかけ。push はデプロイか定期バックアップで拾う） */
   onChange: (() => void) | null = null;
+  /** リポジトリはサイトに属する（push するとそのサイトにデプロイする）。そのサイトがあるか（server.ts が設定する） */
+  hasSite: (name: string) => boolean = () => true;
 
   constructor(dataDir: string, maxInputBytes: number, quotaBytes = maxInputBytes * 4) {
     this.dir = path.join(dataDir, "repos");
@@ -102,6 +105,7 @@ export class Repos {
 
   async create(name: string): Promise<void> {
     if (!PROJECT_NAME.test(name)) throw new RepoError("名前は英小文字・数字・ハイフンで 63 文字以内にしてください");
+    if (!this.hasSite(name)) throw new RepoError(`サイト ${name} がありません。先にサイトを作ってください`);
     if (await this.exists(name)) throw new RepoError("同じ名前のリポジトリがあります");
     await run("git", ["init", "--quiet", "--bare", "--initial-branch=main", this.path(name)]);
     this.onChange?.();

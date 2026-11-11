@@ -1,14 +1,10 @@
-import fs from "node:fs/promises";
-import os from "node:os";
-import path from "node:path";
-import { gunzipSync } from "node:zlib";
-import type { Plugin } from "esbuild";
-import { PROJECT_NAME, type UploadedFile } from "../store.ts";
+import { UserFacingError } from "../errors.ts";
+import type { UploadedFile } from "../store.ts";
+import { deployFromFiles, recordBuildFailure } from "./build.ts";
 import { DeployLog, type Deployer, type DeployResult } from "./deployer.ts";
 import type { DeploySource } from "./history.ts";
-import { parseAssetsIgnore } from "./assetsignore.ts";
-import { readTar, TarError } from "./tar.ts";
-import { CONFIG_FILES, ConfigError, parseWranglerConfig } from "./wrangler.ts";
+import { extractTarGz } from "./tar.ts";
+import { CONFIG_FILES, parseWranglerConfig } from "./wrangler.ts";
 
 export interface GitHubOptions {
   fetch?: typeof fetch;
@@ -17,7 +13,8 @@ export interface GitHubOptions {
   maxBytes: number;
 }
 
-export class GitHubError extends Error {}
+/** GitHub からの取得の失敗（URL の誤り・見つからない・大きすぎるなど） */
+export class GitHubError extends UserFacingError {}
 
 interface RepoRef {
   owner: string;
@@ -107,48 +104,6 @@ async function resolveRef(fetcher: typeof fetch, api: string, { owner, repo, res
   throw new GitHubError(`ブランチ ${rest.join("/")} が見つかりません`);
 }
 
-async function collect(root: string, rel = ""): Promise<string[]> {
-  const out: string[] = [];
-  for (const entry of await fs.readdir(path.join(root, rel), { withFileTypes: true })) {
-    const p = rel ? `${rel}/${entry.name}` : entry.name;
-    if (entry.isDirectory()) out.push(...(await collect(root, p)));
-    else if (entry.isFile()) out.push(p);
-  }
-  return out;
-}
-
-function inside(root: string, p: string): boolean {
-  return p === root || p.startsWith(root + path.sep);
-}
-
-// esbuild の既定の解決に任せないのは、信頼できないリポジトリが /data などサーバー上のファイルを
-// import してバンドルに埋め込めてしまうため
-function confine(root: string): Plugin {
-  return {
-    name: "kanzume-confine",
-    setup(build) {
-      build.onResolve({ filter: /.*/ }, async (args) => {
-        if (args.pluginData === "confined") return undefined;
-        const result = await build.resolve(args.path, {
-          kind: args.kind,
-          importer: args.importer,
-          resolveDir: args.resolveDir,
-          pluginData: "confined",
-        });
-        if (result.errors.length || result.external || result.namespace !== "file") return result;
-        const real = await fs.realpath(result.path).catch(() => result.path);
-        if (!inside(root, real)) return { errors: [{ text: `リポジトリの外のファイルは import できません: ${args.path}` }] };
-        return result;
-      });
-    },
-  };
-}
-
-function hint(message: string): string {
-  if (/Could not resolve "(?!\.)/.test(message)) return `${message}\nnpm パッケージを使うリポジトリは GitHub Actions でデプロイしてください`;
-  return message;
-}
-
 export interface Fetched {
   source: DeploySource;
   /** リポジトリの中のディレクトリ（トップなら ""） */
@@ -180,7 +135,7 @@ export async function fetchFromGitHub(input: string, options: GitHubOptions, log
     options.maxBytes,
   );
   if (!archive) throw new GitHubError("リポジトリをダウンロードできません（public リポジトリのみ対応しています）");
-  const entries = readTar(gunzipSync(archive, { maxOutputLength: options.maxBytes * 4 }), { skipLinks: true });
+  const entries = extractTarGz(archive, options.maxBytes, { skipLinks: true });
   const prefix = dir ? `${dir}/` : "";
   const files = entries
     .map((f) => ({ path: f.path.split("/").slice(1).join("/"), data: f.data }))
@@ -191,23 +146,11 @@ export async function fetchFromGitHub(input: string, options: GitHubOptions, log
   return { source, dir, files };
 }
 
-/** サイト名に使える形にする（英小文字・数字・ハイフン、63 文字まで） */
-export function toSiteName(text: string): string {
-  return text
-    .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 63)
-    .replace(/-+$/, "");
-}
-
 export interface Inspection {
-  /** wrangler の name。なければリポジトリかディレクトリの名前から作る */
-  name: string;
   vars: Record<string, string>;
 }
 
-/** デプロイ前の設定画面のために、wrangler の設定から name と vars を読む */
+/** デプロイ前の設定画面のために、wrangler の設定から vars を読む（name は使わない。デプロイ先は選んだサイト） */
 export function inspectFiles(fetched: Fetched): Inspection {
   let config: Record<string, unknown> | null = null;
   for (const c of CONFIG_FILES) {
@@ -218,14 +161,12 @@ export function inspectFiles(fetched: Fetched): Inspection {
     }
   }
   if (!config) throw new GitHubError(`${fetched.dir ? `${fetched.dir}/ ` : "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
-  const fallback = toSiteName(fetched.dir.split("/").pop() || fetched.source.repository?.split("/")[1] || "") || "my-site";
-  const name = typeof config.name === "string" && PROJECT_NAME.test(config.name) ? config.name : fallback;
   const vars: Record<string, string> = {};
   if (config.vars && typeof config.vars === "object") {
     // 文字列でない値（JSON）は wrangler の設定のまま使うので、編集できる初期値には入れない
     for (const [k, v] of Object.entries(config.vars as Record<string, unknown>)) if (typeof v === "string") vars[k] = v;
   }
-  return { name, vars };
+  return { vars };
 }
 
 /** autoRoot: ルートのサイトがまだないとき、このサイトをルートにしてよいか（管理者のときだけ。ルートは管理画面と同じオリジンになるため） */
@@ -239,7 +180,7 @@ export async function deployFromGitHub(
   try {
     fetched = await fetchFromGitHub(input, options, log);
   } catch (err) {
-    return fail(deployer, options.siteName, err, { source: {}, buildLog: [], log, siteName: options.siteName }, "GitHub からのデプロイ");
+    return recordBuildFailure(deployer, err, { source: {}, buildLog: [], log, siteName: options.siteName }, "GitHub からのデプロイ");
   }
   const { source, dir, files } = fetched;
   return deployFromFiles(files, deployer, {
@@ -250,155 +191,4 @@ export async function deployFromGitHub(
     autoRoot: options.autoRoot ?? false,
     siteName: options.siteName,
   });
-}
-
-export interface BuildContext {
-  source: DeploySource;
-  log: DeployLog;
-  buildLog: string[];
-  /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
-  where?: string;
-  /** Deployer の autoRoot（全体の Token によるデプロイのときだけ true） */
-  autoRoot?: boolean;
-  /** デプロイ先のサイト（管理画面で追加済みのもの。wrangler の name は使わない） */
-  siteName: string;
-}
-
-function fail(deployer: Deployer, name: string | null, err: unknown, ctx: BuildContext, label: string): DeployResult {
-  const known = err instanceof GitHubError || err instanceof ConfigError || err instanceof TarError;
-  if (!known) console.error(`[deploy] ${label}で例外:`, err);
-  const message = known ? (err as Error).message : `デプロイに失敗しました: ${(err as Error)?.message ?? err}`;
-  deployer.recordFailure(name, message, { source: ctx.source, buildLog: ctx.buildLog.join("\n"), log: ctx.log });
-  return { ok: false, error: message };
-}
-
-/**
- * リポジトリのファイル（wrangler の設定があるディレクトリからの相対パス）を、wrangler と同じ解釈でバンドルしてデプロイする。
- * GitHub の URL からのデプロイで使う。
- */
-export async function deployFromFiles(files: UploadedFile[], deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
-  const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-build-")));
-  try {
-    for (const f of files) {
-      const dest = path.join(work, f.path);
-      if (!inside(work, dest)) continue;
-      await fs.mkdir(path.dirname(dest), { recursive: true });
-      await fs.writeFile(dest, f.data);
-    }
-    return await deployFromDirectory(work, deployer, ctx);
-  } catch (err) {
-    return fail(deployer, ctx.siteName, err, ctx, "デプロイ");
-  } finally {
-    await fs.rm(work, { recursive: true, force: true });
-  }
-}
-
-/** 取り出し済みのディレクトリ（git push では git が直接書き出す）からビルドしてデプロイする。ディレクトリの後片付けは呼び出し側 */
-export async function deployFromDirectory(work: string, deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
-  const { log, buildLog } = ctx;
-  // 名前が分かる前に失敗しても、git push ならリポジトリ名の履歴に残す
-  const name = ctx.siteName;
-
-  try {
-    let configFile: (typeof CONFIG_FILES)[number] | undefined;
-    for (const c of CONFIG_FILES) {
-      if (
-        await fs
-          .stat(path.join(work, c))
-          .then((st) => st.isFile())
-          .catch(() => false)
-      ) {
-        configFile = c;
-        break;
-      }
-    }
-    if (!configFile) throw new GitHubError(`${ctx.where ?? "リポジトリのトップ"}に ${CONFIG_FILES.join(" / ")} がありません`);
-    const text = await fs.readFile(path.join(work, configFile), "utf8");
-    const config = parseWranglerConfig(configFile, text);
-    const build = config.build as { command?: string } | undefined;
-    if (build?.command) buildLog.push(`build.command（${build.command}）は実行しません。ビルドが必要な場合は GitHub Actions でデプロイしてください`);
-
-    const out: UploadedFile[] = [{ path: configFile, data: Buffer.from(text) }];
-    let sources: { path: string; content: string }[] | null = null;
-
-    if (typeof config.main === "string") {
-      const { build: esbuild } = await import("esbuild");
-      const entry = path.resolve(work, config.main);
-      if (!inside(work, entry)) throw new GitHubError("main のパスが不正です");
-      const alias = (config.alias ?? {}) as Record<string, unknown>;
-      for (const [from, to] of Object.entries(alias)) {
-        if (typeof to !== "string" || path.isAbsolute(to) || to.split(/[\\/]/).includes("..")) {
-          throw new GitHubError(`alias の ${from} にリポジトリの外は指定できません`);
-        }
-      }
-      const base = path.basename(config.main).replace(/\.[^.]+$/, "");
-      buildLog.push(`$ esbuild ${config.main} --bundle --format=cjs（Kanzume 内でバンドル）`);
-      try {
-        const result = await esbuild({
-          entryPoints: [entry],
-          absWorkingDir: work,
-          bundle: true,
-          format: "cjs",
-          platform: "node",
-          target: "es2022",
-          conditions: ["workerd", "worker", "browser"],
-          external: ["cloudflare:*"],
-          loader: { ".txt": "text", ".html": "text", ".sql": "text", ".bin": "binary" },
-          define: (config.define as Record<string, string>) ?? {},
-          alias: alias as Record<string, string>,
-          plugins: [confine(work)],
-          write: false,
-          metafile: true,
-          logLevel: "silent",
-          outfile: path.join(work, ".kanzume-out", `${base}.cjs`),
-        });
-        for (const w of result.warnings) buildLog.push(`▲ ${w.text}`);
-        out.push({ path: `worker/${base}.cjs`, data: Buffer.from(result.outputFiles[0].contents) });
-        sources = [];
-        for (const p of Object.keys(result.metafile.inputs)) {
-          const file = path.resolve(work, p);
-          if (p.split("/").includes("node_modules") || !inside(work, file)) continue;
-          sources.push({ path: p, content: await fs.readFile(file, "utf8") });
-        }
-        buildLog.push(`バンドルしました: worker/${base}.cjs（${(out[1].data.length / 1024).toFixed(1)} KiB、ソース ${sources.length} ファイル）`);
-      } catch (err) {
-        const errors = (err as { errors?: { text: string; location?: { file: string; line: number } | null }[] }).errors;
-        const message = errors?.length
-          ? errors.map((e) => (e.location ? `${e.location.file}:${e.location.line}: ${e.text}` : e.text)).join("\n")
-          : (err as Error).message;
-        buildLog.push(`✘ ${message}`);
-        throw new GitHubError(hint(message));
-      }
-    }
-
-    const assets = config.assets as { directory?: string } | undefined;
-    if (assets?.directory) {
-      const assetsRoot = path.resolve(work, assets.directory);
-      if (!inside(work, assetsRoot)) throw new GitHubError("assets.directory のパスが不正です");
-      const exists = await fs
-        .stat(assetsRoot)
-        .then((s) => s.isDirectory())
-        .catch(() => false);
-      if (!exists)
-        throw new GitHubError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
-      // .assetsignore に書いたもの（_worker.js など）は配信しない。.assetsignore 自体も
-      const ignoreFile = await fs.readFile(path.join(assetsRoot, ".assetsignore"), "utf8").catch(() => "");
-      const ignored = parseAssetsIgnore(ignoreFile);
-      const list = (await collect(assetsRoot)).filter((p) => p !== ".assetsignore" && !ignored(p));
-      for (const p of list) out.push({ path: `assets/${p}`, data: await fs.readFile(path.join(assetsRoot, p)) });
-      buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);
-    }
-
-    return await deployer.deploy({
-      files: out,
-      sources,
-      source: ctx.source,
-      buildLog: buildLog.join("\n"),
-      log,
-      autoRoot: ctx.autoRoot,
-      siteName: ctx.siteName,
-    });
-  } catch (err) {
-    return fail(deployer, name, err, ctx, "デプロイ");
-  }
 }

@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { SESSION_COOKIE_MAX_AGE } from "./session.ts";
+import { UserFacingError } from "../errors.ts";
 
 export interface StoredCredential {
   id: string;
@@ -44,19 +45,18 @@ export interface Invite {
   revokedAt?: string;
 }
 
-export class UserError extends Error {}
+export class UserError extends UserFacingError {}
 
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
-const MAX_USER_NAME = 40;
+const MAX_NAME = 40;
 
-export function normalizeUserName(input: unknown): string {
+/** ユーザー・パスキー・トークンの名前をそろえる（制御文字を外し、40 文字まで） */
+export function normalizeName(input: unknown): string {
   return String(input ?? "")
     .replace(/[\u0000-\u001f\u007f]/g, "")
     .trim()
-    .slice(0, MAX_USER_NAME);
+    .slice(0, MAX_NAME);
 }
-
-export type RepoScope = "read" | "write";
 
 /**
  * ユーザーの個人トークン。そのユーザーが扱えるサイト（管理者ならすべて）に、git push と GitHub Actions からデプロイできる。
@@ -100,7 +100,7 @@ const hashSession = (id: string) => createHash("sha256").update(id).digest("hex"
 const SESSION_IDLE_MS = SESSION_COOKIE_MAX_AGE * 1000;
 const TOUCH_SAVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
-export class DomainError extends Error {}
+export class DomainError extends UserFacingError {}
 
 const HOST_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
 const DOMAIN = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*(?::\\d{1,5})?$`);
@@ -280,7 +280,7 @@ export class AdminState {
     const info: UserToken = {
       id: randomBytes(6).toString("hex"),
       userId,
-      name: normalizeUserName(name) || "トークン",
+      name: normalizeName(name) || "トークン",
       hash: createHash("sha256").update(token).digest("hex"),
       createdAt: new Date(now).toISOString(),
       expiresAt: ttlSeconds ? new Date(now + ttlSeconds * 1000).toISOString() : null,
@@ -321,10 +321,9 @@ export class AdminState {
   }
 
   /** git の push / clone。そのリポジトリ（＝同じ名前のサイト）を扱えるユーザーの個人トークン */
-  repoAccess(repo: string, token: string): RepoScope | null {
+  repoAccess(repo: string, token: string): boolean {
     const access = this.deployAccess(token);
-    if (!access) return null;
-    return access.sites === null || access.sites.includes(repo) ? "write" : null;
+    return !!access && (access.sites === null || access.sites.includes(repo));
   }
 
   async addCredential(credential: StoredCredential): Promise<void> {
@@ -421,7 +420,7 @@ export class AdminState {
   async createUser(name: string, role: Role, sites: string[] = []): Promise<User> {
     const user: User = {
       id: randomBytes(16).toString("base64url"),
-      name: normalizeUserName(name) || (role === "admin" ? "管理者" : "メンバー"),
+      name: normalizeName(name) || (role === "admin" ? "管理者" : "メンバー"),
       role,
       sites: [...new Set(sites)],
       createdAt: new Date().toISOString(),
@@ -441,7 +440,7 @@ export class AdminState {
     if (patch.role && patch.role !== user.role && user.role === "admin" && this.#admins().length <= 1)
       throw new UserError("最後の管理者はメンバーにできません");
     if (patch.name !== undefined) {
-      const name = normalizeUserName(patch.name);
+      const name = normalizeName(patch.name);
       if (!name) throw new UserError("名前を入力してください");
       user.name = name;
     }
@@ -542,7 +541,7 @@ export class AdminState {
     if (!invite) return null;
     const user: User = {
       id: randomBytes(16).toString("base64url"),
-      name: normalizeUserName(name) || "メンバー",
+      name: normalizeName(name) || "メンバー",
       role: "member",
       sites: [invite.site],
       createdAt: new Date().toISOString(),

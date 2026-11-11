@@ -1,7 +1,7 @@
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SerialQueue } from "../serial.ts";
-import type { Sites } from "../sites.ts";
+import { siteNotFound, type Sites } from "../sites.ts";
 import type { Manifest, Release, UploadedFile } from "../store.ts";
 import type { DeployHistory, DeploySource } from "./history.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig, toManifest } from "./wrangler.ts";
@@ -107,6 +107,14 @@ export class Deployer {
     return this.#sitesQueue.run(site, fn);
   }
 
+  /**
+   * 大きな本文を受け取って展開する処理（ファイルのアップロード・GitHub からの取得・Actions）は、本体で 1 つずつにする
+   * （展開したファイルとビルドでメモリを多く使うため。待たせるだけで断らない）
+   */
+  intake<T>(fn: () => Promise<T>): Promise<T> {
+    return this.#queue.run("intake", fn);
+  }
+
   #serialize<T>(fn: () => Promise<T>): Promise<T> {
     return this.#queue.run("deploy", fn);
   }
@@ -140,9 +148,10 @@ export class Deployer {
       return { ok: false, error };
     };
 
-    if (!name) return fail(`サイト ${input.siteName} がありません。先に管理画面でサイトを追加してください`);
+    if (!name) return fail(siteNotFound(input.siteName).message);
     // 設定ファイルが複数あれば、ほかのデプロイ方法と同じく CONFIG_FILES の順に選ぶ
-    const configFile = CONFIG_FILES.map((name) => files.find((f) => f.path === name)).find((f) => f !== undefined);
+    const configName = CONFIG_FILES.find((c) => files.some((f) => f.path === c));
+    const configFile = files.find((f) => f.path === configName);
     if (!configFile) return fail(`${CONFIG_FILES.join(" / ")} が含まれていません`);
 
     let manifest: Manifest;
@@ -170,7 +179,7 @@ export class Deployer {
     const result = await this.#serialize(async (): Promise<DeployResult> => {
       // 待っている間に消されたサイトにはデプロイしない
       const store = this.#sites.get(manifest.name);
-      if (!store) return { ok: false, error: `サイト ${manifest.name} がありません。先に管理画面でサイトを追加してください` } as const;
+      if (!store) return { ok: false, error: siteNotFound(manifest.name).message } as const;
       const release = await store.createRelease(manifest, kept);
       log.add(`リリース ${release.id} を保存しました`);
       let worker = null;

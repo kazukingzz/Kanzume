@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { DeployLog } from "../src/deploy/deployer.ts";
-import { deployFromFiles } from "../src/deploy/github.ts";
+import { deployFromFiles } from "../src/deploy/build.ts";
 import { matchHost, parentHost } from "../src/sites.ts";
 import { tarGz, toCjs, until } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
