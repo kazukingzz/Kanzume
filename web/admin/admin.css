@@ -2222,7 +2222,21 @@ a.button:hover {
 }
 .managed-preview {
   max-width: 720px;
-  margin-top: 16px;
+  margin-top: 20px;
+}
+.managed-preview > .row {
+  min-height: 36px;
+}
+.managed-preview .log-title {
+  margin: 0;
+}
+/* 返していないとき: 返す内容と同じ枠に、理由を出す */
+.managed-empty {
+  padding: 12px 14px;
+  border: 1px dashed var(--line);
+  border-radius: var(--radius);
+  color: var(--muted);
+  font-size: 13px;
 }
 .managed-preview .log {
   max-height: 320px;

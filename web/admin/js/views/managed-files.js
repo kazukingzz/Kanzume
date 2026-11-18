@@ -169,19 +169,13 @@ function securityTxtForm(config, forSite = false) {
 const FORMS = { robots: robotsForm, securityTxt: securityTxtForm };
 const TITLES = { robots: "robots.txt", securityTxt: "security.txt" };
 
-/** 返す中身のプレビュー（コピーできる） */
+/** 返す中身（コピーできる）。返していないときは、同じ枠にその理由を出す（保存の前後で、位置と見た目を変えない） */
 function previewBox(content, emptyText) {
-  if (!content) return h("p", { class: "muted", text: emptyText });
   return h(
     "div",
     { class: "managed-preview" },
-    h(
-      "div",
-      { class: "row" },
-      h("div", { class: "log-title grow", text: "返す内容" }),
-      copyButton(() => content),
-    ),
-    h("pre", { class: "log", text: content }),
+    h("div", { class: "row" }, h("div", { class: "log-title grow", text: "返す内容" }), content ? copyButton(() => content) : null),
+    content ? h("pre", { class: "log", text: content }) : h("div", { class: "managed-empty", text: emptyText }),
   );
 }
 
@@ -215,7 +209,7 @@ function globalCard(kind, data, reload) {
   const form = FORMS[kind](data[kind]);
   const error = h("div", { class: "error" });
   const done = h("span", { class: "muted" });
-  const preview = h("div", {}, previewBox(data.preview[kind], "今は返していません（有効にして保存すると、ここに内容が出ます）。"));
+  const preview = h("div", {}, previewBox(data.preview[kind], "今は返していません。有効にして保存すると、ここに内容が出ます。"));
   const save = h("button", { class: "primary", text: "保存" });
   save.addEventListener("click", async () => {
     error.textContent = "";
@@ -286,7 +280,7 @@ function siteStatus(kind, entry) {
     });
   if (entry.content) return previewBox(entry.content, "");
   const why = entry.mode === "default" && !entry.defaultEnabled ? "全体の既定が無効なので、" : "";
-  return h("p", { class: "muted", text: `${why}Kanzume は ${name} を返していません。` });
+  return previewBox(null, `${why}Kanzume は ${name} を返していません。`);
 }
 
 function siteSection(kind, entry, reload) {
