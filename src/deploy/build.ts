@@ -12,6 +12,7 @@ import { isInside } from "../paths.ts";
 import type { UploadedFile } from "../store.ts";
 import { parseAssetsIgnore } from "./assetsignore.ts";
 import type { Deployer, DeployLog, DeployResult } from "./deployer.ts";
+import { withEsbuild } from "./esbuild.ts";
 import type { DeploySource } from "./history.ts";
 import { findConfigFile, parseWranglerConfig } from "./wrangler.ts";
 
@@ -117,7 +118,6 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
     let sources: { path: string; content: string }[] | null = null;
 
     if (typeof config.main === "string") {
-      const { build: esbuild } = await import("esbuild");
       const entry = path.resolve(work, config.main);
       if (!isInside(work, entry)) throw new BuildError("main のパスが不正です");
       const alias = (config.alias ?? {}) as Record<string, unknown>;
@@ -129,24 +129,26 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
       const base = path.basename(config.main).replace(/\.[^.]+$/, "");
       buildLog.push(`$ esbuild ${config.main} --bundle --format=cjs（Kanzume 内でバンドル）`);
       try {
-        const result = await esbuild({
-          entryPoints: [entry],
-          absWorkingDir: work,
-          bundle: true,
-          format: "cjs",
-          platform: "node",
-          target: "es2022",
-          conditions: ["workerd", "worker", "browser"],
-          external: ["cloudflare:*"],
-          loader: { ".txt": "text", ".html": "text", ".sql": "text", ".bin": "binary" },
-          define: (config.define as Record<string, string>) ?? {},
-          alias: alias as Record<string, string>,
-          plugins: [confine(work)],
-          write: false,
-          metafile: true,
-          logLevel: "silent",
-          outfile: path.join(work, ".kanzume-out", `${base}.cjs`),
-        });
+        const result = await withEsbuild(({ build }) =>
+          build({
+            entryPoints: [entry],
+            absWorkingDir: work,
+            bundle: true,
+            format: "cjs",
+            platform: "node",
+            target: "es2022",
+            conditions: ["workerd", "worker", "browser"],
+            external: ["cloudflare:*"],
+            loader: { ".txt": "text", ".html": "text", ".sql": "text", ".bin": "binary" },
+            define: (config.define as Record<string, string>) ?? {},
+            alias: alias as Record<string, string>,
+            plugins: [confine(work)],
+            write: false,
+            metafile: true,
+            logLevel: "silent",
+            outfile: path.join(work, ".kanzume-out", `${base}.cjs`),
+          }),
+        );
         for (const w of result.warnings) buildLog.push(`▲ ${w.text}`);
         out.push({ path: `worker/${base}.cjs`, data: Buffer.from(result.outputFiles[0].contents) });
         sources = [];

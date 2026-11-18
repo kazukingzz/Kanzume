@@ -54,7 +54,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     // git の設定は整数しか受け付けないので切り捨てる
     maxUploadBytes: Math.floor(num(env, "KANZUME_MAX_UPLOAD_MB", 50, 0.01, 4096) * 1024 * 1024),
     repoQuotaBytes: Math.floor(num(env, "KANZUME_REPO_QUOTA_MB", 200, 0.01, 1024 * 1024) * 1024 * 1024),
-    workerIdleMs: num(env, "KANZUME_WORKER_IDLE_SEC", 600, 1) * 1000,
+    // 子プロセスは 1 つあたり数十 MiB 使い、起動は 0.2 秒ほどなので、使われなくなったら早めに止める
+    workerIdleMs: num(env, "KANZUME_WORKER_IDLE_SEC", 60, 1) * 1000,
     // vm の timeout は実時間で測るので、0.1 CPU で混んでいるときに正常なリクエストを打ち切らないよう長めにする
     cpuTimeoutMs: num(env, "KANZUME_CPU_TIMEOUT_MS", 5000, 1),
     // Worker のある（動的な）サイトは、サイトごとに子プロセス（それぞれ数十 MiB）を使う。メモリが少ない環境に合わせて少なめにする

@@ -46,6 +46,7 @@ jobs:
       - name: ブラウザ用・Action 用のスクリプトの構文チェック
         run: |
           for f in $(find web/admin/js -name '*.js'); do node --check "$f"; done
+          node --check scripts/build.mjs
           node --check action/deploy.mjs
           node --check action/cjs.mjs
 
@@ -78,6 +79,11 @@ jobs:
           done
           curl -fsS http://127.0.0.1:8080/_health
           curl -fsS -o /dev/null http://127.0.0.1:8080/_admin/kanzume
+          curl -fsS -o /dev/null http://127.0.0.1:8080/_admin/kanzume/js/main.js
+          # イメージに入れた esbuild（Kanzume の中でのバンドルに使う）が動くことを確かめる
+          docker exec -w /app kanzume node -e "import('esbuild').then((e) => e.transform('let a = 1').then(() => e.stop()))"
+          # 本体は dist/ にまとめたもので動いている（TypeScript のソースは入れない）
+          docker exec kanzume test ! -e /app/src
           # Worker の子プロセスを別ユーザーで起動できる前提（root で動いていること）を確かめる
           test "$(docker exec kanzume id -u)" = "0"
 

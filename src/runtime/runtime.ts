@@ -40,6 +40,10 @@ export interface RuntimeOptions {
   stallMs?: number;
 }
 
+const SWEEP_INTERVAL_MS = 15_000;
+/** 応答の送信中（長いストリームなど）でも、これだけ新しいリクエストがなければ止める */
+const BUSY_LIMIT_MS = 60 * 60_000;
+
 /** 読み込んだ Worker をサイト（siteDir）ごとに 1 つずつ持つ */
 export class Runtime {
   #entries = new Map<string, Entry>();
@@ -49,7 +53,8 @@ export class Runtime {
 
   constructor(options: RuntimeOptions) {
     this.#options = options;
-    this.#timer = setInterval(() => this.sweep(), 60_000);
+    // 使われていない Worker を止める掃除。待機時間（既定 60 秒）より細かく見る
+    this.#timer = setInterval(() => this.sweep(), SWEEP_INTERVAL_MS);
     this.#timer.unref();
   }
 
@@ -177,8 +182,10 @@ export class Runtime {
     for (const [key, entry] of [...this.#entries]) {
       const idle = now - entry.lastUsed;
       // 長いストリーム（SSE やダウンロード）の途中のものは使用中として扱う。ただし応答しないまま止まった Worker を
-      // いつまでも残さないよう、使用中でも idleMs の 6 倍（既定 1 時間）新しいリクエストがなければ止める
-      if (idle > this.#options.idleMs && (!entry.handle?.busy || idle > this.#options.idleMs * 6)) this.#drop(key, Boolean(entry.handle?.busy));
+      // いつまでも残さないよう、使用中でも 1 時間新しいリクエストがなければ止める
+      if (idle > this.#options.idleMs && (!entry.handle?.busy || idle > Math.max(this.#options.idleMs, BUSY_LIMIT_MS))) {
+        this.#drop(key, Boolean(entry.handle?.busy));
+      }
     }
   }
 

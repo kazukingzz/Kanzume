@@ -5,9 +5,9 @@
 import fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { UserFacingError } from "../errors.ts";
 import { requestOrigin, rootOrigin, sendJson, sendText } from "../http.ts";
+import { webAdminDir } from "../install.ts";
 import { isInside } from "../paths.ts";
 import { ADMIN_PATH, type AdminDeps, compile, type Ctx, match, Reply, readBodyJson, type SiteRef } from "./context.ts";
 import { adminRoutes } from "./routes/admin.ts";
@@ -23,7 +23,6 @@ import { Challenges, readCookie, SESSION_COOKIE } from "./session.ts";
 
 export { ADMIN_PATH } from "./context.ts";
 
-const WEB_DIR = fileURLToPath(new URL("../../web/admin/", import.meta.url));
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",
@@ -52,8 +51,8 @@ async function serveStatic(res: ServerResponse, sub: string): Promise<boolean> {
   // 隠しファイルや、ディレクトリの外は返さない
   if (!/^[A-Za-z0-9][A-Za-z0-9._/-]*$/.test(rel) || rel.split("/").some((p) => p === "" || p.startsWith("."))) return false;
   const type = TYPES[path.extname(rel)];
-  const file = path.join(WEB_DIR, rel);
-  if (!type || !isInside(WEB_DIR, file)) return false;
+  const file = path.join(webAdminDir, rel);
+  if (!type || !isInside(webAdminDir, file)) return false;
   let data: Buffer;
   try {
     data = await fs.readFile(file);

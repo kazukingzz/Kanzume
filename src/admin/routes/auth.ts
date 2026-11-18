@@ -1,6 +1,5 @@
 /** ログイン（パスキーの登録・サインイン）・ログアウト・招待リンクの確認 */
 import { randomBytes } from "node:crypto";
-import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from "@simplewebauthn/server";
 import { ADMIN_PATH, type Ctx, fail, reply, type Route } from "../context.ts";
 import { describeDevice, providerName } from "../passkeys.ts";
 import { type ChallengePurpose, SESSION_COOKIE_MAX_AGE, SESSION_COOKIE } from "../session.ts";
@@ -8,6 +7,12 @@ import { normalizeName, safeEqual, type User } from "../state.ts";
 
 export const ROOT_SITE_MEMBERS = "ルートドメインで配信しているサイトには、メンバーを追加できません（管理画面と同じオリジンで動くため）";
 const INVALID_INVITE = "招待リンクが無効です（使用済み・期限切れ・取り消し済みのいずれか）";
+
+/**
+ * パスキーのライブラリは、登録・サインインのときにだけ読み込む（読み込むだけでメモリを数 MiB 使い、
+ * ログインしていない間は要らないため）
+ */
+const webauthn = () => import("@simplewebauthn/server");
 
 const sessionCookie = (origin: string, value: string, maxAge: number) =>
   `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
@@ -91,7 +96,7 @@ export const authRoutes: Route[] = [
       const { state, challenges } = ctx.deps;
       const body = await ctx.body();
       allowedToRegister(ctx, ctx.user, body);
-      return generateRegistrationOptions({
+      return (await webauthn()).generateRegistrationOptions({
         rpName: "Kanzume",
         rpID: ctx.rpID,
         userName: `Kanzume（${ctx.rpID}）`,
@@ -114,8 +119,8 @@ export const authRoutes: Route[] = [
       const body = await ctx.body(256 * 1024);
       // オプションを取ったあとに招待が使われたなどを防ぐため、もう一度確かめる
       const allowed = allowedToRegister(ctx, ctx.user, body);
-      const result = await verify(ctx, "register", (expectedChallenge) =>
-        verifyRegistrationResponse({
+      const result = await verify(ctx, "register", async (expectedChallenge) =>
+        (await webauthn()).verifyRegistrationResponse({
           response: body.response as never,
           expectedChallenge,
           expectedOrigin: ctx.origin,
@@ -153,10 +158,10 @@ export const authRoutes: Route[] = [
     method: "POST",
     path: "/api/login/options",
     auth: "public",
-    handle: (ctx) => {
+    handle: async (ctx) => {
       const { state, challenges } = ctx.deps;
       if (state.credentials.length === 0) return fail(400, "パスキーが未登録です");
-      return generateAuthenticationOptions({
+      return (await webauthn()).generateAuthenticationOptions({
         rpID: ctx.rpID,
         challenge: challenges.create("login"),
         allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
@@ -174,8 +179,8 @@ export const authRoutes: Route[] = [
       const response = body.response as { id?: string } | undefined;
       const stored = state.credentials.find((c) => c.id === response?.id);
       if (!stored) return fail(400, "登録されていないパスキーです");
-      const result = await verify(ctx, "login", (expectedChallenge) =>
-        verifyAuthenticationResponse({
+      const result = await verify(ctx, "login", async (expectedChallenge) =>
+        (await webauthn()).verifyAuthenticationResponse({
           response: response as never,
           expectedChallenge,
           expectedOrigin: ctx.origin,

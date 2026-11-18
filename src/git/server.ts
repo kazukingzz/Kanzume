@@ -16,12 +16,12 @@ import { mib, UserFacingError } from "../errors.ts";
 import { readJson, requestToken, rootOrigin, sendText } from "../http.ts";
 import type { Sites } from "../sites.ts";
 import type { Repos } from "./repos.ts";
+import { hookScripts } from "../install.ts";
 import { HOOKS_DIR } from "../layout.ts";
 
 export const GIT_PATH = "/_git";
 export const HOOK_PATH = "/_api/git/hook";
 
-const HOOKS = { "post-receive": "hook.ts", "pre-receive": "pre-receive.ts" };
 /** clone / fetch と push。どちらも、そのサイトを扱えるユーザーの個人トークンで使える */
 const SERVICES = new Set(["git-upload-pack", "git-receive-pack"]);
 
@@ -40,8 +40,8 @@ const shQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`;
 export async function installHooks(dataDir: string): Promise<string> {
   const dir = path.join(dataDir, HOOKS_DIR);
   await fs.mkdir(dir, { recursive: true });
-  for (const [hook, file] of Object.entries(HOOKS)) {
-    const script = `#!/bin/sh\nexec ${shQuote(process.execPath)} --disable-warning=ExperimentalWarning ${shQuote(path.join(import.meta.dirname, file))}\n`;
+  for (const [hook, file] of Object.entries(hookScripts)) {
+    const script = `#!/bin/sh\nexec ${shQuote(process.execPath)} --disable-warning=ExperimentalWarning ${shQuote(file)}\n`;
     await fs.writeFile(path.join(dir, hook), script, { mode: 0o755 });
   }
   try {

@@ -10,9 +10,10 @@ import fs from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { Readable } from "node:stream";
 import { ensureSiteDataDir, siteDataDir } from "../bindings/db.ts";
+import { withEsbuild } from "../deploy/esbuild.ts";
+import { bundled, childEntryFile } from "../install.ts";
 import { currentInvocation } from "../observability/events.ts";
 import type { Release } from "../store.ts";
 import { siteVars, WorkerError, type InvokeResult } from "./loader.ts";
@@ -20,27 +21,28 @@ import { DONE_TIMEOUT_MS, decodeError, HEARTBEAT_MS, MAX_LINE_BYTES, NULL_BODY_S
 import { isInside } from "../paths.ts";
 import { siteSettingsFile, sitesDir, UIDS_FILE } from "../layout.ts";
 
-const CHILD_SOURCE = fileURLToPath(new URL("./child.ts", import.meta.url));
-
 /**
- * child.ts と、それが import するものを 1 つの JS にまとめる（本体の起動ごとに 1 回）。
+ * 子プロセスのエントリ（1 つの JS）。配る版ではまとめ済みのもの（dist/child/child.mjs）をそのまま使う。
+ * 開発では、child.ts と、それが import するものを 1 つの JS にまとめる（本体の起動ごとに 1 回）。
  * TypeScript のまま子で読み込むと、型の除去と多数のモジュールで子 1 つあたり約 30 MiB 多くメモリを使うため。
- * 子が読めるのはこのディレクトリだけで、リポジトリのほかの場所（開発用の .data など）は読ませない
+ * 子が読めるのはこのファイルのディレクトリだけで、リポジトリのほかの場所（開発用の .data など）は読ませない
  */
-let bundled: Promise<string> | null = null;
+let childBundle: Promise<string> | null = null;
 function childEntry(): Promise<string> {
-  bundled ??= (async () => {
+  if (bundled) return Promise.resolve(childEntryFile);
+  childBundle ??= (async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kanzume-child-"));
     fs.chmodSync(dir, 0o755);
     const out = path.join(dir, "child.mjs");
-    const { build } = await import("esbuild");
-    await build({ entryPoints: [CHILD_SOURCE], outfile: out, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent" });
+    await withEsbuild(({ build }) =>
+      build({ entryPoints: [childEntryFile], outfile: out, bundle: true, platform: "node", format: "esm", target: "node22", logLevel: "silent" }),
+    );
     fs.chmodSync(out, 0o644);
     process.once("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
     return out;
   })();
-  bundled.catch(() => (bundled = null));
-  return bundled;
+  childBundle.catch(() => (childBundle = null));
+  return childBundle;
 }
 const START_TIMEOUT_MS = 30_000;
 const FIRST_UID = 20000;
