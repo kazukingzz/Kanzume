@@ -10,6 +10,7 @@ import { GIT_PATH, HOOK_PATH } from "./git/server.ts";
 import { matchHost, parentHost, type Sites } from "./sites.ts";
 import type { Release } from "./store.ts";
 import { DONE_TIMEOUT_MS } from "./runtime/protocol.ts";
+import { MANAGED_PATHS, resolveManagedFile } from "./managed-files.ts";
 
 interface Deps {
   config: Config;
@@ -63,6 +64,15 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
 
     const response = await runInvocation(invocation, async () => {
       const { manifest } = release;
+      // robots.txt・security.txt: サイトのファイルにあればそれを返し、なくて設定が有効なら Kanzume が用意したものを返す
+      // （Worker があっても呼ばない。bot がこれらを取りに来るたびに、Worker の子プロセスを起こさないため）
+      const managedKind = req.method === "GET" || req.method === "HEAD" ? MANAGED_PATHS[pathname] : undefined;
+      if (managedKind) {
+        const asset = await matchAsset(release, request);
+        if (asset) return asset;
+        const text = resolveManagedFile(managedKind, state.managedFiles, sites.settings(manifest.name).managedFiles);
+        if (text !== null) return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } });
+      }
       if (!manifest.main) return serveAssets(release, request);
       if (manifest.assets && !runWorkerFirst(manifest.assets.runWorkerFirst, pathname)) {
         const asset = await matchAsset(release, request);

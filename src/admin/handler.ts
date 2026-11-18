@@ -14,6 +14,7 @@ import { adminRoutes } from "./routes/admin.ts";
 import { authRoutes } from "./routes/auth.ts";
 import { dataRoutes } from "./routes/data.ts";
 import { deployRoutes } from "./routes/deploy.ts";
+import { managedFileRoutes } from "./routes/managed-files.ts";
 import { meRoutes } from "./routes/me.ts";
 import { observabilityRoutes } from "./routes/observability.ts";
 import { repoRoutes } from "./routes/repos.ts";
@@ -38,6 +39,7 @@ const ROUTES = compile([
   ...meRoutes,
   ...userRoutes,
   ...adminRoutes,
+  ...managedFileRoutes,
   ...repoRoutes,
   ...siteRoutes,
   ...deployRoutes,

@@ -4,6 +4,7 @@ import path from "node:path";
 import { SESSION_COOKIE_MAX_AGE } from "./session.ts";
 import { UserFacingError } from "../errors.ts";
 import { ADMIN_FILE } from "../layout.ts";
+import type { ManagedFiles } from "../managed-files.ts";
 
 export interface StoredCredential {
   id: string;
@@ -48,6 +49,8 @@ export interface Invite {
 
 export class UserError extends UserFacingError {}
 
+const NO_MANAGED_FILES: ManagedFiles = Object.freeze({});
+
 export const INVITE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 const MAX_NAME = 40;
 
@@ -85,6 +88,8 @@ interface StateFile {
    * サイトのサブドメインがこれと重なると管理画面に入れなくなるので、サイトの名前に使わせない
    */
   adminHosts?: string[];
+  /** Kanzume が代わりに返すファイル（robots.txt・security.txt）の、全体の既定 */
+  managedFiles?: ManagedFiles;
 }
 
 interface Session {
@@ -249,6 +254,24 @@ export class AdminState {
       throw err;
     }
     return domain;
+  }
+
+  /** Kanzume が代わりに返すファイルの、全体の既定（サイトごとの上書きは Sites の設定にある） */
+  get managedFiles(): ManagedFiles {
+    return this.#state.managedFiles ?? NO_MANAGED_FILES;
+  }
+
+  /** 確かめ済みの設定に置き換える */
+  async setManagedFiles(next: ManagedFiles): Promise<ManagedFiles> {
+    const before = this.#state.managedFiles;
+    this.#state.managedFiles = next;
+    try {
+      await this.#save();
+    } catch (err) {
+      this.#state.managedFiles = before;
+      throw err;
+    }
+    return next;
   }
 
   get credentials(): readonly StoredCredential[] {

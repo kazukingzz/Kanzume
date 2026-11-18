@@ -7,6 +7,7 @@ import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 import { UserFacingError } from "./errors.ts";
 import { ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
+import { normalizeSiteManagedFiles, type SiteManagedFiles } from "./managed-files.ts";
 
 const MAX_VALUE = 5 * 1024;
 const MAX_TOTAL = 64 * 1024;
@@ -19,6 +20,8 @@ export interface SiteSettings {
   vars: Record<string, string>;
   /** 値は管理画面に返さない */
   secrets: Record<string, string>;
+  /** Kanzume が代わりに返すファイル（robots.txt・security.txt）の、このサイトでの上書き。なければ全体の既定に従う */
+  managedFiles?: SiteManagedFiles;
 }
 
 export interface SettingsPatch {
@@ -26,6 +29,8 @@ export interface SettingsPatch {
   vars?: Record<string, string>;
   /** null は削除。書いていないキーはそのまま */
   secrets?: Record<string, string | null>;
+  /** Kanzume が代わりに返すファイルの上書き（リクエストの本文のまま。ここで確かめる）。書いていないファイルはそのまま */
+  managedFiles?: unknown;
 }
 
 export class SettingsError extends UserFacingError {}
@@ -47,9 +52,24 @@ const emptySettings = (): SiteSettings => ({ vars: {}, secrets: {} });
 export function readSiteSettings(siteDir: string): SiteSettings {
   try {
     const raw = JSON.parse(readFileSync(siteSettingsFile(siteDir), "utf8"));
-    return { subdomain: typeof raw.subdomain === "string" ? raw.subdomain : undefined, vars: { ...raw.vars }, secrets: { ...raw.secrets } };
+    return {
+      subdomain: typeof raw.subdomain === "string" ? raw.subdomain : undefined,
+      vars: { ...raw.vars },
+      secrets: { ...raw.secrets },
+      // 手で書き換えられて壊れていたら、上書きなし（全体の既定に従う）として扱う
+      managedFiles: raw.managedFiles ? safeSiteManagedFiles(raw.managedFiles) : undefined,
+    };
   } catch {
     return emptySettings();
+  }
+}
+
+function safeSiteManagedFiles(raw: unknown): SiteManagedFiles | undefined {
+  try {
+    const files = normalizeSiteManagedFiles(raw);
+    return Object.keys(files).length ? files : undefined;
+  } catch {
+    return undefined;
   }
 }
 
@@ -223,6 +243,11 @@ export class Sites {
       if (owner && owner !== id) throw new SettingsError(`サブドメイン ${sub} はサイト ${owner} が使っています`);
       if (sub === id) delete next.subdomain;
       else next.subdomain = sub;
+    }
+    if (patch.managedFiles !== undefined) {
+      const files = normalizeSiteManagedFiles(patch.managedFiles, current.managedFiles);
+      if (Object.keys(files).length) next.managedFiles = files;
+      else delete next.managedFiles;
     }
     if (patch.vars !== undefined) next.vars = checkEnv("環境変数", patch.vars);
     if (patch.secrets !== undefined) {

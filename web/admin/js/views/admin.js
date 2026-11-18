@@ -4,6 +4,7 @@ import { fmtAgo, fmtBytes, fmtDate } from "../core/format.js";
 import { state } from "../core/state.js";
 import { loadOverview, route } from "../shell.js";
 import { armed, busy, pageHead } from "../ui/common.js";
+import { managedFilesCards } from "./managed-files.js";
 
 export function domainCard() {
   const d = state.overview.domain;
@@ -280,5 +281,5 @@ export function usersCard() {
 // ---------- 管理者設定 ----------
 
 export async function viewAdmin(main) {
-  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), rootSiteCard(), backupCard(), usersCard()));
+  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), rootSiteCard(), await managedFilesCards(), backupCard(), usersCard()));
 }

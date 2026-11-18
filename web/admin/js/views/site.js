@@ -4,6 +4,7 @@ import { fmtDate } from "../core/format.js";
 import { isAdmin, siteApi, state } from "../core/state.js";
 import { go, loadOverview, route, siteHash } from "../shell.js";
 import { KIND, armed, copyButton, kindBadge, kindBanner, loadSite, pageHead, releaseKind, siteUrlCell } from "../ui/common.js";
+import { siteManagedFilesCard } from "./managed-files.js";
 
 // ---------- サイト設定 ----------
 
@@ -39,6 +40,7 @@ export async function viewSite(main) {
         ],
       ];
   const settings = await api(siteApi("/settings"));
+  const managedFiles = await siteManagedFilesCard();
 
   const delError = h("div", { class: "error" });
   // 権限や未デプロイで出さないカードは null になるので、DOM の append（null を文字として足す）ではなく fill を使う
@@ -47,6 +49,7 @@ export async function viewSite(main) {
     ...page.childNodes,
     h("section", { class: "card" }, h("h2", { text: "サイト" }), h("dl", { class: "kv" }, ...rows.flatMap(([k, v]) => [h("dt", { text: k }), h("dd", {}, v)]))),
     ...siteSettingsCards(settings),
+    managedFiles,
     isAdmin() ? siteMembersCard() : null,
     h(
       "section",

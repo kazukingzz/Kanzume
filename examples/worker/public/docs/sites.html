@@ -49,6 +49,18 @@
 </table>
 <h2>サブドメインを変える</h2>
 <p>「サイト設定 &gt; サブドメイン」で変えられます。変えると、前のサブドメインでは配信しなくなります。サイトの ID（作ったときの名前）は変わりません。GitHub Actions の <code>site</code> とサイトのリポジトリの名前には ID を使うので、サブドメインを変えてもそのままで構いません。</p>
+<h2 id="managed-files">robots.txt と security.txt</h2>
+<p>デプロイしたファイルに <code>robots.txt</code> や <code>security.txt</code> がないサイトに、Kanzume が代わりのものを返せます。全体の既定は「管理者設定」で、サイトごとの違いは「サイト設定 &gt; Kanzume が返すファイル」で決めます（全体の既定に従う・このサイトだけ変える・このサイトでは返さない）。何も設定しなければ、何も返しません。</p>
+<table>
+<tr><th><code>/robots.txt</code></th><td>「検索・AI エージェント・AI の学習」のそれぞれを許可するか拒否するかを選ぶと、<code>Content-Signal</code>（<code>search</code>・<code>ai-input</code>・<code>ai-train</code>）を出します。AI の学習を拒否にすると、学習用のクローラー（GPTBot・ClaudeBot・CCBot など 8 種）への <code>Disallow: /</code> も出します。<code>Sitemap:</code> などは「追加のルール」に書けます</td></tr>
+<tr><th><code>/.well-known/security.txt</code></th><td>脆弱性の報告先を知らせるファイル（RFC 9116）。Contact（<code>mailto:</code>・<code>tel:</code>・<code>https://</code>）と期限は必須で、Encryption・Acknowledgements・Canonical・Hiring・Policy・Preferred languages も書けます</td></tr>
+</table>
+<ul>
+<li>デプロイしたファイルにあれば、そちらをそのまま返します（Kanzume は何も足しません）。</li>
+<li>Worker があるサイトでも、有効なら Worker を呼ばずに Kanzume が返します。Worker に返させたいサイトは「このサイトでは返さない」にしてください。</li>
+<li>設定を変えると、再デプロイしなくてもすぐに反映されます。</li>
+<li>robots.txt はクローラーへのお願いです。従わないクローラーのアクセスを止めることはできません。</li>
+</ul>
 <h2 id="root">ルートドメインのサイト</h2>
 <p>「管理者設定 &gt; ルートドメインのサイト」で、ルートドメイン（<code>example.com</code>）で配信するサイトを 1 つ選べます。Kanzume で最初にデプロイされたサイトは、管理者のデプロイなら自動でルートになります（メンバーのデプロイではなりません）。その後は、ここで選んだときだけ変わります（ルートを外したり、ルートのサイトを削除したりしても、ほかのサイトが自動でルートになることはありません）。ルートのサイトは管理画面と同じオリジンで動くので、<a href="/docs/members#root">メンバーのいるサイトはルートにできません</a>。</p>
 <p class="callout">ルートのサイトは管理画面と同じオリジンで動きます。Worker は分離されていても、ルートのサイトの JavaScript はブラウザでログイン中の管理者として管理画面の API を呼べるため、そのサイトにデプロイできる人は管理者と同等になる点に注意してください。</p>
