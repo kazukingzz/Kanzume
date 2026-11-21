@@ -1,5 +1,6 @@
 import http from "node:http";
 import { createAdminHandler, ADMIN_PATH } from "./admin/handler.ts";
+import { SiteAuth } from "./site-auth.ts";
 import { AdminState } from "./admin/state.ts";
 import { loadConfig, type Config } from "./config.ts";
 import { Deployer } from "./deploy/deployer.ts";
@@ -126,6 +127,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
     handleReport,
     handleGit,
     handleHook,
+    siteAuth: new SiteAuth(sites),
   });
 
   const server = http.createServer((req, res) => {

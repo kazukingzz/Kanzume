@@ -8,6 +8,7 @@ import { PROJECT_NAME, Store } from "./store.ts";
 import { UserFacingError } from "./errors.ts";
 import { ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
 import { normalizeSiteManagedFiles, type SiteManagedFiles } from "./managed-files.ts";
+import { parseSiteAccess, type SiteAccess } from "./site-auth.ts";
 
 const MAX_VALUE = 5 * 1024;
 const MAX_TOTAL = 64 * 1024;
@@ -22,6 +23,8 @@ export interface SiteSettings {
   secrets: Record<string, string>;
   /** Kanzume が代わりに返すファイル（robots.txt・security.txt）の、このサイトでの上書き。なければ全体の既定に従う */
   managedFiles?: SiteManagedFiles;
+  /** ログインを必須にしているときの、登録したパスキー。なければ誰でも見られる */
+  access?: SiteAccess;
 }
 
 export interface SettingsPatch {
@@ -58,6 +61,7 @@ export function readSiteSettings(siteDir: string): SiteSettings {
       secrets: { ...raw.secrets },
       // 手で書き換えられて壊れていたら、上書きなし（全体の既定に従う）として扱う
       managedFiles: raw.managedFiles ? safeSiteManagedFiles(raw.managedFiles) : undefined,
+      access: parseSiteAccess(raw.access),
     };
   } catch {
     return emptySettings();
@@ -226,7 +230,22 @@ export class Sites {
     return this.#queue.run(id, async () => {
       const store = this.#stores.get(id);
       if (!store) throw new SettingsError("サイトが見つかりません");
-      return this.#write(id, store.siteDir, { ...settings, vars: { ...settings.vars }, secrets: { ...settings.secrets } });
+      // ログインのパスキーは戻さない（戻すと、その間に登録・削除したパスキーが元に戻る）
+      const { access } = this.settings(id);
+      return this.#write(id, store.siteDir, { ...settings, vars: { ...settings.vars }, secrets: { ...settings.secrets }, access });
+    });
+  }
+
+  /** ログインのパスキーを変える。update が undefined を返したらログインをやめる */
+  updateAccess(id: string, update: (current: SiteAccess | undefined) => SiteAccess | undefined): Promise<SiteSettings> {
+    return this.#queue.run(id, async () => {
+      const store = this.#stores.get(id);
+      if (!store) throw new SettingsError("サイトが見つかりません");
+      const next: SiteSettings = { ...this.settings(id) };
+      const access = update(next.access);
+      if (access) next.access = access;
+      else delete next.access;
+      return this.#write(id, store.siteDir, next);
     });
   }
 

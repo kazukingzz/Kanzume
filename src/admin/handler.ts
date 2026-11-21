@@ -18,6 +18,7 @@ import { managedFileRoutes } from "./routes/managed-files.ts";
 import { meRoutes } from "./routes/me.ts";
 import { observabilityRoutes } from "./routes/observability.ts";
 import { repoRoutes } from "./routes/repos.ts";
+import { siteAccessRoutes } from "./routes/site-access.ts";
 import { siteRoutes } from "./routes/sites.ts";
 import { userRoutes } from "./routes/users.ts";
 import { Challenges, readCookie, SESSION_COOKIE } from "./session.ts";
@@ -41,6 +42,7 @@ const ROUTES = compile([
   ...adminRoutes,
   ...managedFileRoutes,
   ...repoRoutes,
+  ...siteAccessRoutes,
   ...siteRoutes,
   ...deployRoutes,
   ...dataRoutes,

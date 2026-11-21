@@ -17,9 +17,9 @@ export function readCookie(req: IncomingMessage, name: string): string | null {
   return null;
 }
 
-export type ChallengePurpose = "register" | "login";
+export type ChallengePurpose = "register" | "login" | "site-register" | "site-login";
 
-const PURPOSE_BYTE: Record<ChallengePurpose, number> = { register: 1, login: 2 };
+const PURPOSE_BYTE: Record<ChallengePurpose, number> = { register: 1, login: 2, "site-register": 3, "site-login": 4 };
 const NONCE = 16;
 const MAC = 16;
 

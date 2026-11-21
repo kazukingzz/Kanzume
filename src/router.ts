@@ -11,6 +11,7 @@ import { matchHost, parentHost, type Sites } from "./sites.ts";
 import type { Release } from "./store.ts";
 import { DONE_TIMEOUT_MS } from "./runtime/protocol.ts";
 import { MANAGED_PATHS, resolveManagedFile } from "./managed-files.ts";
+import { type SiteAuth, siteRpId } from "./site-auth.ts";
 
 interface Deps {
   config: Config;
@@ -23,6 +24,7 @@ interface Deps {
   handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void>;
   handleHook(req: IncomingMessage, res: ServerResponse): Promise<void>;
   observability: Observability;
+  siteAuth: SiteAuth;
 }
 
 const EMPTY = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Kanzume</title>
@@ -55,7 +57,7 @@ function workerFailure(release: Release, error: unknown): Response {
   return new Response("Worker threw exception", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
 }
 
-export function createRouter({ config, state, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability }: Deps) {
+export function createRouter({ config, state, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability, siteAuth }: Deps) {
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
     // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
     const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });
@@ -152,6 +154,7 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
       }
       const release = sites.get(match.name)?.get();
       if (!release) return sendText(res, 404, "Not Found");
+      if (await siteAuth.gate(req, res, match.name, pathname, search, siteRpId(rootHost ?? parentHost(host)))) return;
       return handleSite(req, res, release, pathname, search);
     }
 
@@ -167,6 +170,7 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
       res.end(EMPTY);
       return;
     }
+    if (await siteAuth.gate(req, res, sites.root!, pathname, search, siteRpId(rootHost ?? host))) return;
     await handleSite(req, res, release, pathname, search);
   };
 }
