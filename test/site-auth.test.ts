@@ -131,7 +131,7 @@ test("パスキーを登録できなければ、ログインは必須になら�
   assert.equal((await site(`blog.${ROOT}`, "/")).status, 200);
 });
 
-test("パスキーを追加・削除でき、最後の 1 つは消せない。オフにするとパスキーとログイン中の Cookie が使えなくなる", async (t) => {
+test("パスキーを追加・削除でき、すべて削除すると誰でも開けるようになり、登録し直すと前のログインは使えない", async (t) => {
   const { app, admin, site } = await setup(t);
   const first = new SoftAuthenticator();
   const second = new SoftAuthenticator();
@@ -144,15 +144,15 @@ test("パスキーを追加・削除でき、最後の 1 つは消せない。�
   assert.equal((await site(`blog.${ROOT}`, "/", { headers: { cookie: session } })).status, 401, "消したパスキーでのログインは使えない");
   assert.equal((await login(app, first)).status, 400);
   assert.equal((await login(app, second)).status, 200);
-  assert.equal((await admin(`/sites/blog/access/passkeys/${second.credentialId}`, "DELETE")).status, 400, "最後の 1 つは消せない");
 
   const kept = (await login(app, second)).headers.get("set-cookie")!.split(";")[0];
-  assert.equal((await admin("/sites/blog/access", "DELETE")).status, 200);
+  assert.equal((await admin(`/sites/blog/access/passkeys/${second.credentialId}`, "DELETE")).status, 200);
   assert.deepEqual(await accessOf(admin), { enabled: false, passkeys: [] });
-  assert.equal(await (await site(`blog.${ROOT}`, "/")).text(), "<p>blog</p>", "オフにすると誰でも開ける");
+  assert.equal(await (await site(`blog.${ROOT}`, "/")).text(), "<p>blog</p>", "最後の 1 つを消すと誰でも開ける");
+  assert.equal((await admin(`/sites/blog/access/passkeys/${second.credentialId}`, "DELETE")).status, 404);
 
   assert.equal((await register(admin, second)).status, 200);
-  assert.equal((await site(`blog.${ROOT}`, "/", { headers: { cookie: kept } })).status, 401, "オンにし直すと、前のログインは使えない");
+  assert.equal((await site(`blog.${ROOT}`, "/", { headers: { cookie: kept } })).status, 401, "登録し直すと、前のログインは使えない");
 });
 
 test("ルートドメインのサイトもログインを必須にでき、管理画面はそのまま開ける", async (t) => {
@@ -173,5 +173,5 @@ test("サイトのパスキーは、そのサイトを扱えるユーザーだ�
   const api = app.api(`kanzume_session=${await app.state.createSession(member.id)}`);
   assert.equal((await api("/sites/blog/access")).status, 403);
   assert.equal((await api("/sites/blog/access/register/options", "POST", {})).status, 403);
-  assert.equal((await api("/sites/blog/access", "DELETE")).status, 403);
+  assert.equal((await api("/sites/blog/access/passkeys/x", "DELETE")).status, 403);
 });

@@ -1,4 +1,4 @@
-/** サイトのログイン（パスキー）: ログインを必須にする・パスキーの追加と削除・やめる */
+/** サイトのログイン（パスキー）: パスキーの追加と削除。1 つでもあればログインが必須になり、すべて削除するとやめる */
 import { randomBytes } from "node:crypto";
 import { newSiteAccessSecret, siteRpId, usableOn } from "../../site-auth.ts";
 import { type Ctx, fail, type Route } from "../context.ts";
@@ -106,19 +106,11 @@ export const siteAccessRoutes: Route[] = [
       const { name } = ctx.site;
       const access = sites.settings(name).access;
       if (!access?.passkeys.some((p) => p.id === ctx.params.id)) return fail(404, "パスキーが見つかりません");
-      // 最後の 1 つを消すと誰もログインできなくなる
-      if (access.passkeys.length === 1) return fail(400, "最後のパスキーは削除できません。ログインをやめるときは、ログインの必須をオフにしてください");
-      await sites.updateAccess(name, (current) => current && { ...current, passkeys: current.passkeys.filter((p) => p.id !== ctx.params.id) });
-      return { ok: true };
-    },
-  },
-  {
-    // ログインをやめる。登録したパスキーも消し、ログイン中の Cookie も使えなくする（署名の鍵ごと消す）
-    method: "DELETE",
-    path: "/api/sites/:site/access",
-    auth: "site",
-    handle: async (ctx) => {
-      await ctx.deps.sites.updateAccess(ctx.site.name, () => undefined);
+      // 最後の 1 つを消したらログインをやめる（署名の鍵ごと消し、ログイン中の Cookie も使えなくする）
+      await sites.updateAccess(name, (current) => {
+        const passkeys = (current?.passkeys ?? []).filter((p) => p.id !== ctx.params.id);
+        return current && passkeys.length ? { ...current, passkeys } : undefined;
+      });
       return { ok: true };
     },
   },

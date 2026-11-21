@@ -6,7 +6,7 @@ import { siteApi } from "../core/state.js";
 import { armed } from "../ui/common.js";
 
 // ---------- サイトのログイン（パスキー） ----------
-// オンにするとパスキーの登録が出て、登録できたらログインが必須になる。登録できなければオフに戻す
+// パスキーが 1 つでもあればログインが必須になり、すべて削除すると誰でも開けるようになる
 
 async function registerSitePasskey() {
   const options = await api(siteApi("/access/register/options"), { method: "POST", body: "{}" });
@@ -17,10 +17,11 @@ async function registerSitePasskey() {
 const failure = (err) => (err?.name === "NotAllowedError" ? "パスキーの登録を中止しました" : err.message);
 
 export async function siteAccessCard() {
-  const toggle = h("input", { type: "checkbox" });
-  const body = h("div");
+  const note = h("p", { class: "muted" });
+  const list = h("ul", { class: "passkeys" });
+  const add = h("button");
   const error = h("div", { class: "error" });
-  let info = await api(siteApi("/access"));
+  let info;
 
   const load = async () => {
     info = await api(siteApi("/access"));
@@ -28,117 +29,58 @@ export async function siteAccessCard() {
   };
 
   const render = () => {
-    toggle.checked = info.enabled;
-    fill(body, info.enabled ? passkeysView() : null);
-  };
-
-  const registerView = () => {
-    const register = h("button", { class: "primary", text: "パスキーを登録" });
-    register.addEventListener("click", async () => {
-      error.textContent = "";
-      register.disabled = true;
-      try {
-        await registerSitePasskey();
-        await load();
-      } catch (err) {
-        error.textContent = failure(err);
-        render();
-      }
-    });
-    return h(
-      "div",
-      {},
-      h("p", {
-        class: "muted",
-        text: "このサイトを開くときに使うパスキーを登録してください。登録できたら、このパスキーでログインしないとサイトを開けなくなります。",
-      }),
-      h("div", { class: "actions" }, register),
-    );
-  };
-
-  const passkeysView = () => {
-    const add = h("button", { text: "＋ パスキーを追加" });
-    add.addEventListener("click", async () => {
-      error.textContent = "";
-      add.disabled = true;
-      try {
-        await registerSitePasskey();
-        await load();
-      } catch (err) {
-        error.textContent = failure(err);
-        add.disabled = false;
-      }
-    });
-    const removable = info.passkeys.length > 1;
-    return h(
-      "div",
-      {},
-      h(
-        "ul",
-        { class: "passkeys" },
-        ...info.passkeys.map((p, i) =>
+    const { passkeys } = info;
+    add.textContent = passkeys.length ? "＋ パスキーを追加" : "＋ パスキーを登録";
+    add.disabled = false;
+    note.textContent = passkeys.length
+      ? "登録したパスキーでログインした人だけがサイトを開けます。すべて削除すると、誰でも開けるようになります。"
+      : info.enabled
+        ? "ログインの設定が読めないため、今は誰もサイトを開けません。パスキーを登録し直してください。"
+        : "パスキーを登録すると、そのパスキーでログインした人だけがサイトを開けるようになります。今は誰でも開けます。";
+    list.hidden = !passkeys.length;
+    fill(
+      list,
+      ...passkeys.map((p, i) =>
+        h(
+          "li",
+          { class: "passkey" },
           h(
-            "li",
-            { class: "passkey" },
-            h(
-              "div",
-              { class: "grow" },
-              h("div", { class: "passkey-name", text: p.name || `パスキー ${i + 1}` }),
-              h("div", { class: "muted passkey-meta", text: `登録 ${fmtDate(p.createdAt).slice(0, 10)}` }),
-            ),
-            // 最後の 1 つは消せない（誰もログインできなくなるため）
-            removable
-              ? armed(h("button", { class: "ghost danger" }), "削除", "もう一度押すと削除", async () => {
-                  error.textContent = "";
-                  try {
-                    await api(siteApi(`/access/passkeys/${encodeURIComponent(p.id)}`), { method: "DELETE" });
-                    await load();
-                  } catch (err) {
-                    error.textContent = err.message;
-                  }
-                })
-              : null,
+            "div",
+            { class: "grow" },
+            h("div", { class: "passkey-name", text: p.name || `パスキー ${i + 1}` }),
+            h("div", { class: "muted passkey-meta", text: `登録 ${fmtDate(p.createdAt).slice(0, 10)}` }),
+          ),
+          armed(
+            h("button", { class: "ghost danger" }),
+            "削除",
+            passkeys.length === 1 ? "もう一度押すと削除（誰でも開けるようになります）" : "もう一度押すと削除",
+            async () => {
+              error.textContent = "";
+              try {
+                await api(siteApi(`/access/passkeys/${encodeURIComponent(p.id)}`), { method: "DELETE" });
+                await load();
+              } catch (err) {
+                error.textContent = err.message;
+              }
+            },
           ),
         ),
       ),
-      h("div", { class: "actions" }, add),
     );
   };
 
-  // オフにするとパスキーがすべて消えるので、もう一度押して確かめる
-  const disableView = () => {
-    const cancel = h("button", { text: "キャンセル", onclick: render });
-    const off = armed(h("button", { class: "danger" }), "オフにする", "もう一度押すとオフにする", async () => {
-      error.textContent = "";
-      try {
-        await api(siteApi("/access"), { method: "DELETE" });
-        await load();
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    });
-    return h(
-      "div",
-      {},
-      h("p", { class: "muted", text: "オフにすると、登録したパスキーをすべて削除し、誰でもサイトを開けるようになります。" }),
-      h("div", { class: "actions" }, off, cancel),
-    );
-  };
-
-  toggle.addEventListener("change", () => {
+  add.addEventListener("click", async () => {
     error.textContent = "";
-    if (toggle.checked) fill(body, info.enabled ? passkeysView() : registerView());
-    else fill(body, info.enabled ? disableView() : null);
+    add.disabled = true;
+    try {
+      await registerSitePasskey();
+      await load();
+    } catch (err) {
+      error.textContent = failure(err);
+      add.disabled = false;
+    }
   });
 
-  render();
-  return h(
-    "section",
-    { class: "card" },
-    h("h2", { text: "ログイン" }),
-    h("p", { class: "muted", text: "オンにすると、ここで登録したパスキーでログインした人だけがサイトを開けるようになります。" }),
-    h("label", { class: "inline switch" }, toggle, "ログインを必須にする"),
-    body,
-    error,
-  );
+  await load();
+  return h("section", { class: "card" }, h("h2", { text: "ログイン" }), note, list, h("div", { class: "actions" }, add), error);
 }
