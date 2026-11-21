@@ -93,7 +93,12 @@ const sessionCookie = (req: IncomingMessage, value: string) =>
   `${SITE_SESSION_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${SITE_SESSION_MAX_AGE}${requestOrigin(req).startsWith("https:") ? "; Secure" : ""}`;
 
 /** ログインのあとに戻る先。同じサイトのパスだけ（//evil.example や /\evil.example のような別のホストへは戻さない） */
-export const safeNext = (next: unknown) => (typeof next === "string" && /^\/(?![/\\])/.test(next) ? next : "/");
+export function safeNext(next: unknown): string {
+  // ブラウザは URL のタブ・改行を取り除くので、/<TAB>/evil.example も //evil.example として別のホストへ飛ぶ。空白・制御文字・\ は一切通さない
+  if (typeof next !== "string" || !/^\/(?!\/)/.test(next) || /[\s\x00-\x1f\x7f\\]/.test(next)) return "/";
+  const url = new URL(next, "http://kanzume.invalid");
+  return url.host === "kanzume.invalid" ? `${url.pathname}${url.search}${url.hash}` : "/";
+}
 
 const escapeHtml = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -127,7 +132,8 @@ document.getElementById("login").addEventListener("click", async () => {
       response: { clientDataJSON: bufToB64(r.clientDataJSON), authenticatorData: bufToB64(r.authenticatorData), signature: bufToB64(r.signature), ...(r.userHandle ? { userHandle: bufToB64(r.userHandle) } : {}) },
     };
     const { next } = await post("${SITE_LOGIN_PATH}/verify", { response, next: new URLSearchParams(location.search).get("next") });
-    location.replace(next);
+    const target = new URL(next, location.origin);
+    location.replace(target.origin === location.origin ? target.href : "/");
   } catch (err) {
     error.textContent = err.name === "NotAllowedError" ? "ログインを中止しました" : err.message;
   }

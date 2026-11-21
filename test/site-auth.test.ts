@@ -28,7 +28,8 @@ test("settings.json のログインの設定が壊れていても、誰でも開
 
 test("ログインのあとに戻る先は、同じサイトのパスだけ", () => {
   assert.equal(safeNext("/a?b=c"), "/a?b=c");
-  for (const bad of ["//evil.example", "/\\evil.example", "https://evil.example", "", null]) assert.equal(safeNext(bad), "/", String(bad));
+  for (const bad of ["//evil.example", "/\\evil.example", "/\t/evil.example", "/\n/evil.example", "/ /evil.example", "https://evil.example", "", null])
+    assert.equal(safeNext(bad), "/", String(bad));
 });
 
 const ROOT = "example.test";
