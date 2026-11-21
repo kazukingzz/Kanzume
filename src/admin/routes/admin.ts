@@ -1,6 +1,7 @@
-/** 全体の設定（管理者）: ドメイン・Worker の作り直し・ルートのサイト・バックアップ・リソース */
+/** 全体の設定（管理者）: ドメイン・Worker の作り直し・ルートのサイト・バックアップ・リソース・本体のログ */
 import path from "node:path";
 import { processRss } from "../../observability/resources.ts";
+import { readServerLog } from "../../observability/server-log.ts";
 import { fail, reply, type Route } from "../context.ts";
 
 export const adminRoutes: Route[] = [
@@ -73,6 +74,12 @@ export const adminRoutes: Route[] = [
       const workers = runtime.processes().map((p) => ({ site: path.basename(p.siteDir), pid: p.pid, rss: processRss(p.pid) }));
       return { ...resources.snapshot(), workers };
     },
+  },
+  {
+    method: "GET",
+    path: "/api/server-log",
+    auth: "admin",
+    handle: (ctx) => readServerLog(ctx.deps.config.dataDir),
   },
   {
     // GitHub の公開リポジトリからのデプロイで案内するサンプル

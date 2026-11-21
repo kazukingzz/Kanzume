@@ -23,6 +23,7 @@ import { isRoot, prepareSiteDir, siteUid } from "./runtime/process.ts";
 import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
 import { PRIVATE_DIRS, PRIVATE_FILES, sitesDir } from "./layout.ts";
+import { ServerLog } from "./observability/server-log.ts";
 
 /** 本体が作るファイルを、ほかのユーザー（Worker の子プロセス）から見えないようにする（umask 007）。復元より前に呼ぶ */
 function applyUmask(config: Config): void {
@@ -175,11 +176,13 @@ export async function prepareBackup(config: Config): Promise<Backup | null> {
 }
 
 if (import.meta.main) {
+  const serverLog = new ServerLog().capture();
   let config: Config;
   let backup: Backup | null;
   try {
     config = loadConfig();
     backup = await prepareBackup(config);
+    serverLog.open(config.dataDir);
   } catch (err) {
     // URL や認証情報はメッセージに含めない
     console.error(`[kanzume] 起動できません: ${err instanceof BackupUrlError ? err.message : ((err as Error)?.message ?? err)}`);

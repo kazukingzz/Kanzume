@@ -157,6 +157,7 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
     ["/worker-recycle", "POST"],
     ["/backup", "GET"],
     ["/resources", "GET"],
+    ["/server-log", "GET"],
     ["/root-site", "POST"],
     ["/users", "GET"],
     [`/users/${user.id}`, "PUT"],

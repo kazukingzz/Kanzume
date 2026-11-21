@@ -6,6 +6,7 @@
  *   admin.json            ユーザー・パスキー・セッション・トークン（秘密）
  *   meta.sqlite           デプロイの履歴
  *   events.sqlite         リクエストのログ（バックアップしない）
+ *   logs/server.log(.1)   本体のログ（バックアップする）
  *   repos/<site>.git      サイトのリポジトリ
  *   git-hooks/            git のフック（起動のたびに書き出す。バックアップしない）
  *   sites/_root           ルートドメインのサイト
@@ -17,6 +18,8 @@ import path from "node:path";
 export const ADMIN_FILE = "admin.json";
 export const META_DB = "meta.sqlite";
 export const EVENTS_DB = "events.sqlite";
+export const LOGS_DIR = "logs";
+export const SERVER_LOG = "server.log";
 export const REPOS_DIR = "repos";
 export const HOOKS_DIR = "git-hooks";
 export const SITES_DIR = "sites";
@@ -37,7 +40,7 @@ export const PRIVATE_FILES = [
   `${SITES_DIR}/${UIDS_FILE}`,
 ];
 /** 本体だけが使うディレクトリ（0700） */
-export const PRIVATE_DIRS = [REPOS_DIR, HOOKS_DIR];
+export const PRIVATE_DIRS = [REPOS_DIR, HOOKS_DIR, LOGS_DIR];
 
 /** バックアップしないもの（トップレベル）: ログ（数日で消え、リクエストのたびに変わる）とフック（起動のたびに書き出す） */
 export const NOT_BACKED_UP = [HOOKS_DIR, ...withSqliteSidecars(EVENTS_DB)];

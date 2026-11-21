@@ -330,6 +330,39 @@ export function usersCard() {
 
 // ---------- 管理者設定 ----------
 
+export function serverLogCard() {
+  const log = h("pre", { class: "log", text: "読み込み中…" });
+  const info = h("span", { class: "muted" });
+  const reload = h("button", { text: "再読み込み" });
+  const load = async () => {
+    reload.disabled = true;
+    try {
+      const { lines, bytes } = await api("/server-log");
+      log.textContent = lines.length ? lines.join("\n") : "まだログがありません";
+      info.textContent = lines.length ? `新しい ${lines.length} 行（全 ${fmtBytes(bytes)}）` : "";
+      // 新しい行が下にあるので、いちばん下を見せる
+      log.scrollTop = log.scrollHeight;
+    } catch (err) {
+      log.textContent = err.message;
+    } finally {
+      reload.disabled = false;
+    }
+  };
+  reload.addEventListener("click", load);
+  load();
+  return h(
+    "section",
+    { class: "card" },
+    h("div", { class: "card-head" }, h("h2", { text: "本体のログ" }), reload),
+    h("p", {
+      class: "muted",
+      text: "管理画面・デプロイ・配信を受け持つ本体のプロセスのログです（Worker のログは各サイトの「可観測性」にあります）。バックアップに含まれるので、復元したあとも落ちる前のログを追えます。",
+    }),
+    log,
+    h("p", { class: "muted hint" }, info),
+  );
+}
+
 export async function viewAdmin(main) {
   main.replaceChildren(
     h(
@@ -341,6 +374,7 @@ export async function viewAdmin(main) {
       workerRecycleCard(),
       await managedFilesCards(),
       backupCard(),
+      serverLogCard(),
       usersCard(),
     ),
   );
