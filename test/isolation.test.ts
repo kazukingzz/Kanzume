@@ -65,7 +65,7 @@ async function site(dataDir: string, name: string, source = PROBE): Promise<Rele
   return r;
 }
 
-function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; stallMs?: number } = {}) {
+function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; stallMs?: number; maxAgeMs?: number } = {}) {
   // 後片付けは登録した順に動くので、子を止めるのをデータのディレクトリを消すより先に登録する
   let runtime: Runtime | undefined;
   t.after(() => runtime?.close());
@@ -76,6 +76,7 @@ function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; 
     cpuTimeoutMs: 1000,
     maxWorkers: options.maxWorkers,
     stallMs: options.stallMs,
+    maxAgeMs: options.maxAgeMs,
     isolation: "process",
     dataDir,
   });
@@ -170,6 +171,33 @@ test("再デプロイで新しい子に入れ替わり、読み込めないデ�
   runtime.install(w2);
   await waitClosed(w1);
   assert.equal(await (await (await runtime.get(v2)).fetch(new Request("http://x/"))).response!.text(), "v2");
+});
+
+test("起動から一定時間が過ぎた子は、新しい子に入れ替わり、古い子は処理中のリクエストを返し終えてから止まる", async (t) => {
+  const { dataDir, runtime } = setup(t, { maxAgeMs: 50 });
+  const a = await site(
+    dataDir,
+    "a",
+    `module.exports = { async fetch(request) {
+      if (new URL(request.url).pathname === "/slow") await new Promise((r) => setTimeout(r, 300));
+      return new Response("ok");
+    } };`,
+  );
+  const old = (await runtime.get(a)) as ChildWorker;
+  const slow = old.fetch(new Request("http://x/slow"));
+  await new Promise((r) => setTimeout(r, 80));
+  assert.equal(await runtime.get(a), old, "新しい子が起動するまでは古い子が応答する");
+  let next = old;
+  for (let i = 0; i < 300 && next === old; i++) {
+    await new Promise((r) => setTimeout(r, 10));
+    next = (await runtime.get(a)) as ChildWorker;
+  }
+  assert.notEqual(next.pid, old.pid);
+  assert.equal(old.closed, false, "処理中のリクエストがあるあいだは止めない");
+  const { response } = await slow;
+  assert.equal(await response!.text(), "ok");
+  await waitClosed(old);
+  assert.equal(next.closed, false);
 });
 
 async function waitClosed(w: ChildWorker) {

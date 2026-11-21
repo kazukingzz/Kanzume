@@ -85,6 +85,7 @@ export async function createServer(config: Config, options: { github?: Partial<G
     maxWorkers: config.maxWorkers,
     isolation: config.isolation,
     dataDir: config.dataDir,
+    maxAgeMs: state.workerRecycleMinutes * 60_000,
   });
 
   const metaDb = openMetaDb(config.dataDir);

@@ -55,6 +55,56 @@ export function domainCard() {
   );
 }
 
+export function workerRecycleCard() {
+  const input = h("input", {
+    type: "number",
+    min: "0",
+    step: "1",
+    inputmode: "numeric",
+    value: String(state.overview.workerRecycleMinutes || ""),
+    placeholder: "0",
+    "aria-label": "作り直す間隔（分）",
+  });
+  const error = h("div", { class: "error" });
+  const done = h("p", { class: "muted hint", hidden: true });
+  const save = h("button", { class: "primary", text: "保存" });
+  const run = async () => {
+    if (save.disabled) return;
+    error.textContent = "";
+    done.hidden = true;
+    save.disabled = true;
+    try {
+      const { minutes } = await api("/worker-recycle", { method: "POST", body: JSON.stringify({ minutes: Number(input.value || 0) }) });
+      state.overview.workerRecycleMinutes = minutes;
+      done.textContent = minutes ? `保存しました。起動から ${minutes} 分を過ぎた子プロセスを作り直します。` : "保存しました。子プロセスを作り直しません。";
+      done.hidden = false;
+    } catch (err) {
+      error.textContent = err.message;
+    } finally {
+      save.disabled = false;
+    }
+  };
+  save.addEventListener("click", run);
+  input.addEventListener("keydown", (e) => e.key === "Enter" && !e.isComposing && run());
+  return h(
+    "section",
+    { class: "card" },
+    h("h2", { text: "Worker のプロセスの作り直し" }),
+    h("p", {
+      class: "muted",
+      text: "Worker の子プロセスを、起動してからこの時間が過ぎたら作り直してメモリを解放します。すべてのサイトに効きます。作り直すあいだも古いプロセスが応答を続け、処理中のリクエストが終わってから止めます。0 にすると作り直しません。",
+    }),
+    h(
+      "div",
+      { class: "field" },
+      h("label", { text: "作り直す間隔" }),
+      h("div", { class: "row" }, h("div", { class: "suffix-input grow" }, input, h("span", { class: "suffix", text: "分" })), save),
+    ),
+    done,
+    error,
+  );
+}
+
 export function backupCard() {
   const body = h("div", {}, h("p", { class: "muted", text: "読み込み中…" }));
   const error = h("div", { class: "error" });
@@ -281,5 +331,17 @@ export function usersCard() {
 // ---------- 管理者設定 ----------
 
 export async function viewAdmin(main) {
-  main.replaceChildren(h("div", { class: "page" }, pageHead("管理者設定"), domainCard(), rootSiteCard(), await managedFilesCards(), backupCard(), usersCard()));
+  main.replaceChildren(
+    h(
+      "div",
+      { class: "page" },
+      pageHead("管理者設定"),
+      domainCard(),
+      rootSiteCard(),
+      workerRecycleCard(),
+      await managedFilesCards(),
+      backupCard(),
+      usersCard(),
+    ),
+  );
 }

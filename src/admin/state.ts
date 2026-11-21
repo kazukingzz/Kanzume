@@ -90,6 +90,8 @@ interface StateFile {
   adminHosts?: string[];
   /** Kanzume が代わりに返すファイル（robots.txt・security.txt）の、全体の既定 */
   managedFiles?: ManagedFiles;
+  /** Worker の子プロセスを作り直す間隔（分）。未設定なら作り直さない */
+  workerRecycleMinutes?: number;
 }
 
 interface Session {
@@ -107,6 +109,8 @@ const SESSION_IDLE_MS = SESSION_COOKIE_MAX_AGE * 1000;
 const TOUCH_SAVE_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 export class DomainError extends UserFacingError {}
+
+export const MAX_WORKER_RECYCLE_MINUTES = 7 * 24 * 60;
 
 const HOST_LABEL = "[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?";
 const DOMAIN = new RegExp(`^${HOST_LABEL}(?:\\.${HOST_LABEL})*(?::\\d{1,5})?$`);
@@ -254,6 +258,28 @@ export class AdminState {
       throw err;
     }
     return domain;
+  }
+
+  get workerRecycleMinutes(): number {
+    return this.#state.workerRecycleMinutes ?? 0;
+  }
+
+  /** 0 なら作り直さない */
+  async setWorkerRecycleMinutes(input: unknown): Promise<number> {
+    const minutes = typeof input === "number" ? input : Number.NaN;
+    if (!Number.isInteger(minutes) || minutes < 0 || minutes > MAX_WORKER_RECYCLE_MINUTES) {
+      throw new UserError(`0〜${MAX_WORKER_RECYCLE_MINUTES} の整数（分）で指定してください`);
+    }
+    const before = this.#state.workerRecycleMinutes;
+    if (minutes) this.#state.workerRecycleMinutes = minutes;
+    else delete this.#state.workerRecycleMinutes;
+    try {
+      await this.#save();
+    } catch (err) {
+      this.#state.workerRecycleMinutes = before;
+      throw err;
+    }
+    return minutes;
   }
 
   /** Kanzume が代わりに返すファイルの、全体の既定（サイトごとの上書きは Sites の設定にある） */

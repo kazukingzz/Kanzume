@@ -22,6 +22,9 @@ interface Entry {
   /** 読み込みが終わった Worker（子プロセスが落ちたかを見るため） */
   handle?: WorkerHandle;
   lastUsed: number;
+  startedAt: number;
+  /** 作り直しの Worker を起動しているところ */
+  replacing?: boolean;
 }
 
 export interface RuntimeOptions {
@@ -38,6 +41,8 @@ export interface RuntimeOptions {
   dataDir?: string;
   /** process のとき、子のイベントループが止まったとみなして止めるまでの時間（省略時は CPU 時間の上限 + 10 秒） */
   stallMs?: number;
+  /** 起動してからこの時間が過ぎた Worker を作り直す。0 なら作り直さない */
+  maxAgeMs?: number;
 }
 
 const SWEEP_INTERVAL_MS = 15_000;
@@ -58,6 +63,14 @@ export class Runtime {
     this.#timer.unref();
   }
 
+  get maxAgeMs(): number {
+    return this.#options.maxAgeMs ?? 0;
+  }
+
+  set maxAgeMs(ms: number) {
+    this.#options.maxAgeMs = ms;
+  }
+
   get loaded(): boolean {
     return this.#entries.size > 0;
   }
@@ -72,9 +85,10 @@ export class Runtime {
     if (existing && !existing.handle?.closed && (existing.release.id === release.id || existing.release.deployedAt > release.deployedAt)) {
       // デプロイの前に古いリリースを読んだリクエストは、入れたばかりの新しい Worker で受ける（新しいものを追い出さない）
       existing.lastUsed = Date.now();
+      if (existing.handle && this.maxAgeMs > 0 && existing.lastUsed - existing.startedAt > this.maxAgeMs) this.#recycle(existing);
       return existing.worker;
     }
-    const entry: Entry = { release, worker: this.preload(release), lastUsed: Date.now() };
+    const entry: Entry = { release, worker: this.preload(release), lastUsed: Date.now(), startedAt: Date.now() };
     void entry.worker.then(
       (w) => (entry.handle = w),
       () => {},
@@ -103,6 +117,26 @@ export class Runtime {
     return [...this.#retiring];
   }
 
+  /** 古い Worker で応答を続けながら新しい Worker を起動し、起動できたら入れ替える（古いものは処理中のリクエストを終えてから止まる） */
+  #recycle(entry: Entry): void {
+    if (entry.replacing) return;
+    entry.replacing = true;
+    const key = entry.release.siteDir;
+    this.preload(entry.release).then(
+      (worker) => {
+        // 起動を待つあいだに再デプロイ・追い出し・削除で入れ替わっていたら使わない
+        if (this.#entries.get(key) !== entry) return worker.close?.();
+        this.#set({ release: entry.release, worker: Promise.resolve(worker), handle: worker, lastUsed: entry.lastUsed, startedAt: Date.now() });
+      },
+      (err) => {
+        // 起動できなければ古い Worker のまま、次の周期でまた試す
+        console.error(`[kanzume] Worker を作り直せませんでした（${key}）: ${(err as Error)?.message ?? err}`);
+        entry.replacing = false;
+        entry.startedAt = Date.now();
+      },
+    );
+  }
+
   preload(release: Release): Promise<WorkerHandle> {
     if (this.#options.isolation === "process") {
       if (!this.#options.dataDir) return Promise.reject(new Error("子プロセスで動かすには dataDir が要ります"));
@@ -112,7 +146,7 @@ export class Runtime {
   }
 
   install(worker: WorkerHandle): void {
-    this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now() });
+    this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now(), startedAt: Date.now() });
   }
 
   /** 捨てた Worker が子プロセスなら止める。now でなければ、処理中のリクエストと waitUntil を終えてから止める */

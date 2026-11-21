@@ -169,6 +169,35 @@ test("Runtime は一定時間使われていない Worker を捨てる", async (
   assert.equal(runtime.loaded, false);
 });
 
+test("Runtime は起動から maxAgeMs を過ぎた Worker を、使われたときに作り直す", async (t) => {
+  const a = await worker(t, `export default { fetch() { return new Response("a"); } }`);
+  const runtime = new Runtime({ idleMs: 60_000, cpuTimeoutMs: 200, maxAgeMs: 20 });
+  t.after(() => runtime.close());
+  const first = await runtime.get(a.r);
+  await new Promise((r) => setTimeout(r, 30));
+  assert.equal(await runtime.get(a.r), first, "作り直しが終わるまでは古い Worker を返す");
+  let next = first;
+  for (let i = 0; i < 100 && next === first; i++) {
+    await tick();
+    next = await runtime.get(a.r);
+  }
+  assert.notEqual(next, first);
+  assert.equal(await (await next.fetch(new Request("http://x/"))).response!.text(), "a");
+  assert.equal(runtime.size, 1);
+});
+
+test("Runtime は maxAgeMs が 0 なら Worker を作り直さない", async (t) => {
+  const a = await worker(t, `export default { fetch() { return new Response("a"); } }`);
+  const runtime = new Runtime({ idleMs: 60_000, cpuTimeoutMs: 200, maxAgeMs: 20 });
+  t.after(() => runtime.close());
+  runtime.maxAgeMs = 0;
+  const first = await runtime.get(a.r);
+  await new Promise((r) => setTimeout(r, 30));
+  await runtime.get(a.r);
+  for (let i = 0; i < 10; i++) await tick();
+  assert.equal(await runtime.get(a.r), first);
+});
+
 test("再デプロイで差し替えた古い Worker のコンテキストは GC で解放される", async (t) => {
   const gc = (globalThis as { gc?: () => void }).gc;
   if (!gc) return t.skip("--expose-gc が必要");

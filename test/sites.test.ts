@@ -280,3 +280,18 @@ test("別名が連鎖して重なっても、起動時にどのサイトも自�
   assert.equal(sites.resolve("a"), "a");
   assert.equal(sites.resolve("b"), "b");
 });
+
+test("管理画面で Worker の子プロセスを作り直す間隔を設定でき、保存して Runtime に反映される", async (t) => {
+  const app = await start(t);
+  const admin = app.api(await app.adminCookie());
+  const overview = async () => ((await (await admin("/overview")).json()) as { workerRecycleMinutes: number }).workerRecycleMinutes;
+
+  assert.equal(await overview(), 0, "既定は作り直さない");
+  for (const bad of [-1, 1.5, "60", null, 7 * 24 * 60 + 1]) assert.equal((await admin("/worker-recycle", "POST", { minutes: bad })).status, 400, String(bad));
+  assert.equal((await admin("/worker-recycle", "POST", { minutes: 60 })).status, 200);
+  assert.equal(app.state.workerRecycleMinutes, 60);
+  assert.equal(app.runtime.maxAgeMs, 60 * 60_000);
+  assert.equal(await overview(), 60);
+  assert.equal((await admin("/worker-recycle", "POST", { minutes: 0 })).status, 200);
+  assert.equal(app.runtime.maxAgeMs, 0);
+});

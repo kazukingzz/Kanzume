@@ -27,6 +27,7 @@ export const meRoutes: Route[] = [
           effective: configuredRootHost(config.origin, state.domain) ?? current,
           current,
         },
+        workerRecycleMinutes: state.workerRecycleMinutes,
       };
     },
   },

@@ -1,4 +1,4 @@
-/** 全体の設定（管理者）: ドメイン・ルートのサイト・バックアップ・リソース */
+/** 全体の設定（管理者）: ドメイン・Worker の作り直し・ルートのサイト・バックアップ・リソース */
 import path from "node:path";
 import { processRss } from "../../observability/resources.ts";
 import { fail, reply, type Route } from "../context.ts";
@@ -15,6 +15,18 @@ export const adminRoutes: Route[] = [
       // 読めない本文や domain のない本文で、保存したドメインを消さない（null か "" で消す）
       if (typeof body.domain !== "string" && body.domain !== null) return fail(400, "domain を指定してください");
       return { domain: await state.setDomain(String(body.domain ?? "")) };
+    },
+  },
+  {
+    // Worker の子プロセスを作り直す間隔（分）。0 で作り直さない
+    method: "POST",
+    path: "/api/worker-recycle",
+    auth: "admin",
+    handle: async (ctx) => {
+      const { state, runtime } = ctx.deps;
+      const minutes = await state.setWorkerRecycleMinutes((await ctx.body()).minutes);
+      runtime.maxAgeMs = minutes * 60_000;
+      return { minutes };
     },
   },
   {

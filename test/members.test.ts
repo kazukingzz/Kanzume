@@ -154,6 +154,7 @@ test("メンバーは自分のサイトだけを見て操作でき、全体の�
     ["/repos", "POST"],
     ["/sites/blog/members", "GET"],
     ["/domain", "POST"],
+    ["/worker-recycle", "POST"],
     ["/backup", "GET"],
     ["/resources", "GET"],
     ["/root-site", "POST"],
