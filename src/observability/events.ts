@@ -197,12 +197,20 @@ const BUCKETS: Record<string, { range: number; step: number }> = {
   "3d": { range: 3 * 24 * 60 * 60_000, step: 2 * 60 * 60_000 },
 };
 
-function percentile(sorted: number[], q: number): number | null {
-  if (!sorted.length) return null;
-  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * q))];
+/** 検索で 1 件の detail のうち見る長さ（ログが大きいイベントが並んでも、検索 1 回で読む量を抑える） */
+const SEARCH_DETAIL_CHARS = 32 * 1024;
+
+/** n 件を並べたうちの q の位置（JS で sorted[min(n - 1, floor(n * q))] と同じ）。r は ROW_NUMBER() - 1 の i と件数 n を持つ */
+const percentileSql = (q: number) => `MAX(CASE WHEN i = MIN(n - 1, CAST(n * ${q} AS INTEGER)) THEN d END)`;
+
+export interface ObservabilityLimits {
+  /** サイトごとに残すイベントの数 */
+  perSite: number;
+  /** events.sqlite の使っている大きさの上限（バイト） */
+  maxBytes: number;
 }
 
-const isError = (status: number, outcome: string) => status >= 500 || outcome !== "ok";
+const DEFAULT_LIMITS: ObservabilityLimits = { perSite: 10_000, maxBytes: 256 * 1024 * 1024 };
 
 export class Observability {
   #db: DatabaseSync;
@@ -210,10 +218,14 @@ export class Observability {
   #insert: StatementSync;
   #timer: NodeJS.Timeout;
   #retentionMs: number;
+  #limits: ObservabilityLimits;
+  /** 前に上限を確かめてから記録したサイト（全サイトを毎回数えない） */
+  #written = new Set<string>();
 
-  constructor(db: DatabaseSync, retentionHours: number) {
+  constructor(db: DatabaseSync, retentionHours: number, limits: Partial<ObservabilityLimits> = {}) {
     this.#db = db;
     this.#retentionMs = retentionHours * 60 * 60_000;
+    this.#limits = { ...DEFAULT_LIMITS, ...limits };
     this.#insert = db.prepare(
       `INSERT INTO events (site, ts, kind, release, method, path, status, outcome, duration_ms, log_count, error, detail)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -221,7 +233,9 @@ export class Observability {
     let ticks = 0;
     this.#timer = setInterval(() => {
       this.flush();
-      if (++ticks % 600 === 0) this.prune();
+      // 保持期間だけだと、リクエストを大量に送られたときに数日分がたまり続ける。件数と大きさでも削る
+      if (++ticks % 10 === 0) this.enforceLimits();
+      if (ticks % 600 === 0) this.prune();
     }, 1000);
     this.#timer.unref();
   }
@@ -238,6 +252,7 @@ export class Observability {
     try {
       this.#db.exec("BEGIN");
       for (const { invocation: inv, status, duration } of queue) {
+        this.#written.add(inv.worker);
         const error = inv.detail.exceptions[0] ? `${inv.detail.exceptions[0].name}: ${inv.detail.exceptions[0].message}` : null;
         this.#insert.run(
           inv.worker,
@@ -273,6 +288,33 @@ export class Observability {
     }
   }
 
+  /**
+   * サイトごとの件数と、DB 全体の大きさの上限を超えた分を古い方から消す。
+   * 件数は新しい方から perSite 件目の id より前を消す（インデックスを perSite 件たどるだけで、数え直さない）。
+   * 大きさは空きページを除いたページ数で見て、超えていれば古い方から 1 割ずつ消す
+   */
+  enforceLimits(): void {
+    try {
+      this.flush();
+      const sites = [...this.#written];
+      this.#written.clear();
+      const trim = this.#db.prepare("DELETE FROM events WHERE site = ? AND id <= (SELECT id FROM events WHERE site = ? ORDER BY id DESC LIMIT 1 OFFSET ?)");
+      for (const site of sites) trim.run(site, site, this.#limits.perSite);
+      const pragma = (name: string) => Number((this.#db.prepare(`PRAGMA ${name}`).get() as Record<string, number>)[name]);
+      for (let i = 0; i < 5; i++) {
+        const used = (pragma("page_count") - pragma("freelist_count")) * pragma("page_size");
+        if (used <= this.#limits.maxBytes) break;
+        const { lo, hi } = this.#db.prepare("SELECT MIN(id) AS lo, MAX(id) AS hi FROM events").get() as { lo: number | null; hi: number | null };
+        if (lo === null || hi === null) break;
+        // 超えた割合より 1 割多く、古い方から消す（id はほぼ連続なので、範囲の割合で行数の割合を近似する）
+        const ratio = Math.min(1, (used - this.#limits.maxBytes) / used + 0.1);
+        this.#db.prepare("DELETE FROM events WHERE id <= ?").run(lo + Math.ceil((hi - lo) * ratio));
+      }
+    } catch (err) {
+      console.error("[kanzume] イベントを上限まで減らせませんでした:", (err as Error)?.message ?? err);
+    }
+  }
+
   clear(site: string): void {
     this.flush();
     this.#db.prepare("DELETE FROM events WHERE site = ?").run(site);
@@ -301,7 +343,7 @@ export class Observability {
     if (query.result === "error") where.push("(status >= 500 OR outcome != 'ok')");
     if (query.result === "ok") where.push("(status < 500 AND outcome = 'ok')");
     if (query.q) {
-      where.push("(instr(lower(path), ?) > 0 OR instr(lower(detail), ?) > 0)");
+      where.push(`(instr(lower(path), ?) > 0 OR instr(lower(substr(detail, 1, ${SEARCH_DETAIL_CHARS})), ?) > 0)`);
       params.push(query.q.toLowerCase(), query.q.toLowerCase());
     }
     const limit = Math.min(Math.max(query.limit ?? 50, 1), 200);
@@ -354,52 +396,50 @@ export class Observability {
     const { range: span, step } = BUCKETS[range] ?? BUCKETS["24h"];
     const end = Math.ceil(now / step) * step;
     const start = end - span;
-    const rows = this.#db.prepare("SELECT ts, status, outcome, duration_ms, kind FROM events WHERE site = ? AND ts >= ? ORDER BY ts").all(site, start) as {
-      ts: number;
-      status: number;
-      outcome: string;
-      duration_ms: number;
-      kind: string;
-    }[];
-
     const count = span / step;
-    const buckets = Array.from({ length: count }, (_, i) => ({ t: start + i * step, ok: 0, errors: 0, durations: [] as number[] }));
-    const all: number[] = [];
-    const statuses: Record<string, number> = { "2xx": 0, "3xx": 0, "4xx": 0, "5xx": 0 };
-    let errors = 0;
-    let worker = 0;
-    for (const r of rows) {
-      const b = buckets[Math.min(count - 1, Math.floor((r.ts - start) / step))];
-      if (isError(r.status, r.outcome)) {
-        b.errors++;
-        errors++;
-      } else {
-        b.ok++;
-      }
-      b.durations.push(r.duration_ms);
-      all.push(r.duration_ms);
-      const cls = `${Math.floor(r.status / 100)}xx`;
-      if (cls in statuses) statuses[cls]++;
-      if (r.kind === "worker") worker++;
-    }
-    all.sort((a, b) => a - b);
+    // 行を JS に持ってこず、集計と百分位は SQLite の中で出す（件数が多いと、全行の配列とソートで本体が止まり、メモリも使う）
+    const isError = "(status >= 500 OR outcome != 'ok')";
+    const t = this.#db
+      .prepare(
+        `WITH r AS (
+           SELECT duration_ms AS d, status, outcome, kind, ROW_NUMBER() OVER (ORDER BY duration_ms) - 1 AS i, COUNT(*) OVER () AS n
+           FROM events WHERE site = ? AND ts >= ?
+         )
+         SELECT COUNT(*) AS requests, SUM(kind = 'worker') AS worker, SUM(${isError}) AS errors,
+           SUM(status >= 200 AND status < 300) AS s2, SUM(status >= 300 AND status < 400) AS s3,
+           SUM(status >= 400 AND status < 500) AS s4, SUM(status >= 500 AND status < 600) AS s5,
+           ${percentileSql(0.5)} AS p50, ${percentileSql(0.95)} AS p95, ${percentileSql(0.99)} AS p99
+         FROM r`,
+      )
+      .get(site, start) as Record<string, number | null>;
+    const rows = this.#db
+      .prepare(
+        `WITH e AS (
+           SELECT MIN(?, CAST((ts - ?) / ? AS INTEGER)) AS b, duration_ms AS d, ${isError} AS err FROM events WHERE site = ? AND ts >= ?
+         ), r AS (
+           SELECT b, d, err, ROW_NUMBER() OVER (PARTITION BY b ORDER BY d) - 1 AS i, COUNT(*) OVER (PARTITION BY b) AS n FROM e
+         )
+         SELECT b, SUM(err) AS errors, COUNT(*) - SUM(err) AS ok, ${percentileSql(0.5)} AS p50, ${percentileSql(0.99)} AS p99 FROM r GROUP BY b`,
+      )
+      .all(count - 1, start, step, site, start) as { b: number; errors: number; ok: number; p50: number | null; p99: number | null }[];
+    const byBucket = new Map(rows.map((r) => [r.b, r]));
     return {
       range,
       step,
       start,
       end,
       totals: {
-        requests: rows.length,
-        worker,
-        errors,
-        p50: percentile(all, 0.5),
-        p95: percentile(all, 0.95),
-        p99: percentile(all, 0.99),
-        statuses,
+        requests: t.requests ?? 0,
+        worker: t.worker ?? 0,
+        errors: t.errors ?? 0,
+        p50: t.p50,
+        p95: t.p95,
+        p99: t.p99,
+        statuses: { "2xx": t.s2 ?? 0, "3xx": t.s3 ?? 0, "4xx": t.s4 ?? 0, "5xx": t.s5 ?? 0 },
       },
-      buckets: buckets.map((b) => {
-        const d = b.durations.sort((x, y) => x - y);
-        return { t: b.t, ok: b.ok, errors: b.errors, p50: percentile(d, 0.5), p99: percentile(d, 0.99) };
+      buckets: Array.from({ length: count }, (_, i) => {
+        const b = byBucket.get(i);
+        return { t: start + i * step, ok: b?.ok ?? 0, errors: b?.errors ?? 0, p50: b?.p50 ?? null, p99: b?.p99 ?? null };
       }),
     };
   }
