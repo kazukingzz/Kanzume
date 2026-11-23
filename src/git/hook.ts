@@ -7,7 +7,7 @@ try {
   const res = await fetch(process.env.KANZUME_HOOK_URL!, {
     method: "POST",
     headers: { "content-type": "application/json", "x-kanzume-hook": process.env.KANZUME_HOOK_SECRET ?? "" },
-    body: JSON.stringify({ repo: process.env.KANZUME_REPO, origin: process.env.KANZUME_ORIGIN_URL, scope: process.env.KANZUME_PUSH_SCOPE, updates }),
+    body: JSON.stringify({ repo: process.env.KANZUME_REPO, origin: process.env.KANZUME_ORIGIN_URL, push: process.env.KANZUME_PUSH_ID, updates }),
   });
   if (!res.ok || !res.body) {
     // サーバーが再起動して合言葉が変わった直後など。同じコミットは push し直せないので、空のコミットを案内する

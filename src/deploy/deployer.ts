@@ -3,7 +3,7 @@ import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SerialQueue } from "../serial.ts";
 import { siteNotFound, type Sites } from "../sites.ts";
-import type { Manifest, Release, UploadedFile } from "../store.ts";
+import type { Manifest, Release, Store, UploadedFile } from "../store.ts";
 import type { DeployHistory, DeploySource } from "./history.ts";
 import { CONFIG_FILES, ConfigError, parseWranglerConfig, toManifest } from "./wrangler.ts";
 
@@ -36,7 +36,19 @@ export class DeployLog {
   }
 }
 
+/** 反映してよいか。admin は管理者として扱うか（ルートのサイトへのデプロイと、最初のサイトをルートにすること） */
+export type DeployAccess = { ok: true; admin: boolean } | { ok: false; error: string };
+
+/**
+ * 受け付けたときと同じ権限が今もあるかを確かめる。store は今そのサイト名にあるサイト（消して作り直されていれば別のもの）。
+ * 受け付けたときだけで済ませないのは、本文の受け取りや順番待ちの間に、メンバーから外す・トークンを取り消す・
+ * サイトを作り直すといった変更があっても、そのまま反映されてしまうため
+ */
+export type DeployGuard = (store: Store) => DeployAccess;
+
 export interface DeployInput {
+  /** 反映の直前に権限を確かめ直す（省くと管理者のデプロイとして扱う。サーバーの中から呼ぶときとテスト用） */
+  guard?: DeployGuard;
   files: UploadedFile[];
   sources: { path: string; content: string }[] | null;
   source: DeploySource;
@@ -118,6 +130,17 @@ export class Deployer {
     return this.#queue.run("intake", fn);
   }
 
+  /**
+   * そのサイトに今デプロイしてよいか。guard で権限とサイトが受け付けたときのままかを確かめ、
+   * 管理者でなければルートのサイトには反映しない（ルートは管理画面と同じオリジンで動くため）
+   */
+  checkAccess(guard: DeployGuard | undefined, site: string): DeployAccess {
+    const store = this.#sites.get(site);
+    if (!store) return { ok: false, error: siteNotFound(site).message };
+    const access = guard ? guard(store) : ({ ok: true, admin: true } as const);
+    return access;
+  }
+
   #serialize<T>(fn: () => Promise<T>): Promise<T> {
     return this.#queue.run("deploy", fn);
   }
@@ -196,6 +219,13 @@ export class Deployer {
           if (err instanceof WorkerError) return { ok: false, error: err.message };
           throw err;
         }
+      }
+      // 切り替える直前に確かめ直す（Worker の読み込みの間の変更も拾うため、保存の前ではなくここで）
+      const access = this.checkAccess(input.guard, manifest.name);
+      if (!access.ok || this.#sites.get(manifest.name) !== store) {
+        worker?.close?.();
+        await store.discard(release);
+        return { ok: false, error: access.ok ? siteNotFound(manifest.name).message : access.error };
       }
       try {
         // 切り替えと同じタイミングで新しい Worker を入れる（間に来たリクエストが古い Worker や二重の起動に当たらないように）

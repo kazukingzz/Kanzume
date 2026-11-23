@@ -460,3 +460,22 @@ test("展開後の合計サイズが上限を超える push は、取り出す�
 });
 
 test("push のデプロイは、順番を待つ間にトークンを取り消すと反映されない", { skip: NO_GIT }, async (t) => {
+  const { remote, state, sites, deployer, createRepo } = await start(t);
+  await createRepo("blog");
+  const user = await state.createUser("メンバー", "member", ["blog"]);
+  const { token, info } = await state.createUserToken(user.id, "test", null);
+  let release!: () => void;
+  deployer.exclusive("blog", () => new Promise<void>((r) => (release = r)));
+  const child = spawn("git", ["push", remote("blog", token), "main"], { cwd: workTree(t, WORKER), env: GIT_ENV });
+  let output = "";
+  child.stdout.on("data", (d) => (output += d));
+  child.stderr.on("data", (d) => (output += d));
+  const status = new Promise<number | null>((resolve) => child.on("close", resolve));
+  // push を受け付けて（トークンを確かめて）、フックが順番待ちに入るまで待つ
+  await until(() => output.includes("デプロイの順番を待っています"), 20_000);
+  await state.revokeUserToken(user.id, info.id);
+  release();
+  assert.equal(await status, 0, output);
+  assert.match(output, /remote: デプロイに失敗しました: 受け付けたあとにトークンかログインが無効になったため/);
+  assert.equal(sites.get("blog")!.get(), undefined);
+});

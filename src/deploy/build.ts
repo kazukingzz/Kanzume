@@ -10,7 +10,7 @@ import { UserFacingError } from "../errors.ts";
 import { isInside } from "../paths.ts";
 import type { UploadedFile } from "../store.ts";
 import { parseAssetsIgnore } from "./assetsignore.ts";
-import type { Deployer, DeployLog, DeployResult } from "./deployer.ts";
+import type { Deployer, DeployGuard, DeployLog, DeployResult } from "./deployer.ts";
 import { withEsbuild } from "./esbuild.ts";
 import type { DeploySource } from "./history.ts";
 import { findConfigFile, parseWranglerConfig, stripJsonc } from "./wrangler.ts";
@@ -108,6 +108,8 @@ export interface BuildContext {
   autoRoot?: boolean;
   /** デプロイ先のサイト（管理画面で追加済みのもの。wrangler の name は使わない） */
   siteName: string;
+  /** 反映の直前に権限を確かめ直す（deployer.ts の DeployGuard） */
+  guard?: DeployGuard;
 }
 
 /** ビルドの作業ディレクトリ（本体だけが読み書きできる 0700）を deployer.workRoot の下に作る。後片付けは呼び出し側 */
@@ -243,6 +245,7 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
       buildLog: buildLog.join("\n"),
       log,
       autoRoot: ctx.autoRoot,
+      guard: ctx.guard,
       siteName: ctx.siteName,
     });
   } catch (err) {

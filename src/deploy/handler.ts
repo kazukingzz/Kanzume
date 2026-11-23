@@ -7,6 +7,7 @@ import { readBody, readJson, requestToken, rootOrigin, sendJson } from "../http.
 import { normalizeSiteName, siteNotFound, type Sites } from "../sites.ts";
 import type { UploadedFile } from "../store.ts";
 import { DeployLog, type Deployer } from "./deployer.ts";
+import { tokenGuard } from "./guard.ts";
 import { sanitizeSource } from "./history.ts";
 import { extractTarGz } from "./tar.ts";
 
@@ -33,7 +34,8 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
   async function handleDeploy(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
     // 個人トークン。メンバーのトークンなら、デプロイできるのは参加しているサイトだけ
-    const access = state.deployAccess(requestToken(req));
+    const token = requestToken(req);
+    const access = state.deployAccess(token);
     if (!access) return sendJson(res, 401, { error: "Token が違います" });
     // デプロイ先は Action の site（サイトの ID）で指定する（wrangler の name は使わない）。サイトは先に管理画面で追加しておく
     const site = normalizeSiteName(req.headers["x-kanzume-site"]);
@@ -42,6 +44,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
       return sendJson(res, 403, { error: `このトークンでは、参加しているサイト（${access.sites.join(", ") || "なし"}）にしかデプロイできません` });
     }
     if (!sites.has(site)) return sendJson(res, 404, { error: siteNotFound(site).message });
+    const guard = tokenGuard(state, sites, token, site);
 
     const log = new DeployLog("GitHub Actions からのデプロイを受け付けました");
     try {
@@ -54,6 +57,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
         return deployer.deploy({
           // 管理者のトークンのときだけ、最初のサイトをルートにする
           autoRoot: access.autoRoot,
+          guard,
           siteName: site,
           files: files.filter((f) => !f.path.startsWith(META_DIR)),
           sources: Array.isArray(sources) ? sources : null,

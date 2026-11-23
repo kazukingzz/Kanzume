@@ -7,8 +7,9 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { safeEqual, type AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
-import { DeployLog, type Deployer } from "../deploy/deployer.ts";
 import { BuildError, deployFromDirectory, makeWorkDir } from "../deploy/build.ts";
+import { DeployLog, type DeployGuard, type Deployer } from "../deploy/deployer.ts";
+import { tokenGuard } from "../deploy/guard.ts";
 import { EXTRACT_RATIO, MAX_FILES } from "../deploy/tar.ts";
 import { findConfigFile } from "../deploy/wrangler.ts";
 import { mib, UserFacingError } from "../errors.ts";
@@ -65,6 +66,11 @@ function gitConfigEnv(entries: [string, string][]): Record<string, string> {
 export function createGitHandler({ config, state, repos, sites, deployer }: Deps, hooksDir: string) {
   // フックから Kanzume に戻ってくるときの合言葉。起動のたびに変わる
   const hookSecret = randomBytes(24).toString("base64url");
+  /**
+   * 受け付け中の push（フックに渡す ID → push したトークンの guard）。フックは git が起動するのでトークンを知らない。
+   * デプロイの直前にも、push したときの権限が残っているかを確かめるために使う
+   */
+  const pushes = new Map<string, DeployGuard>();
 
   async function handleGit(req: IncomingMessage, res: ServerResponse, pathname: string, search: string): Promise<void> {
     const m = /^\/_git\/([a-z0-9-]+)\.git(\/.*)$/.exec(pathname);
@@ -88,6 +94,8 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       return;
     }
     if (!(await repos.exists(name))) return sendText(res, 404, "リポジトリが見つかりません\n");
+    // フックが走るのは push の本体（info/refs ではない git-receive-pack）だけ
+    const pushId = service === "git-receive-pack" && rest !== "/info/refs" ? randomBytes(16).toString("base64url") : "";
 
     const env: NodeJS.ProcessEnv = {
       PATH: process.env.PATH,
@@ -113,8 +121,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       KANZUME_HOOK_SECRET: hookSecret,
       KANZUME_REPO: name,
       KANZUME_ORIGIN_URL: rootOrigin(req, config.origin, state.domain),
-      // 管理者の個人トークンでの push かどうか（メンバーのトークンでは、最初のサイトをルートにしない）
-      KANZUME_PUSH_SCOPE: state.deployAccess(token)?.autoRoot ? "global" : "repo",
+      KANZUME_PUSH_ID: pushId,
       KANZUME_REPO_QUOTA_BYTES: String(repos.quotaBytes),
     };
     if (req.headers["content-encoding"]) env.HTTP_CONTENT_ENCODING = String(req.headers["content-encoding"]);
@@ -132,6 +139,11 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
       return fail(500, "git を起動できませんでした\n");
     }
     const { stdin, stdout, stderr } = child;
+    if (pushId) {
+      pushes.set(pushId, tokenGuard(state, sites, token, name));
+      // フック（post-receive）は git http-backend の中で走り、デプロイが終わるまで git は終わらない
+      child.on("close", () => pushes.delete(pushId));
+    }
 
     // 途中で切れたら git も止める（止めないと stdin を待ったまま残り続ける）
     let tooLarge = false;
@@ -209,12 +221,13 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
     const body = (await readJson(req, 1024 * 1024)) as {
       repo?: string;
       origin?: string;
-      scope?: string;
+      push?: string;
       updates?: { old: string; new: string; ref: string }[];
     } | null;
     if (!body) return sendText(res, 400, "Bad Request");
     const name = String(body.repo ?? "");
     if (!(await repos.exists(name))) return sendText(res, 404, "Not Found");
+    const guard = pushes.get(String(body.push ?? ""));
 
     res.writeHead(200, { "content-type": "text/plain; charset=utf-8", "cache-control": "no-store" });
     const say = (line: string) => res.write(`${line}\n`);
@@ -239,6 +252,11 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
             return;
           }
           Object.assign(source, { commitMessage: head.subject, actor: head.author });
+          // 順番を待っている間にトークンの取り消し・メンバーから外す・サイトの作り直しがあれば、取り出す前に止める
+          // （反映の直前にも deployer がもう一度確かめる）
+          if (!guard) throw new BuildError("この push の受け付けが見つからないため、デプロイしません");
+          const access = deployer.checkAccess(guard, name);
+          if (!access.ok) throw new BuildError(access.error);
 
           // 取り出す前に、設定があるかと大きさ・ファイル数だけを確かめる（デプロイできない push で全体を書き出さない）。
           // リポジトリはサイトのものなので、wrangler の name にかかわらずこのサイトにデプロイする
@@ -255,6 +273,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
               buildLog: [],
               siteName: name,
               autoRoot: body.scope === "global",
+              guard,
             });
             if (result.ok) {
               let url = "";

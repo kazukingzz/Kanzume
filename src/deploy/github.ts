@@ -1,7 +1,7 @@
 import { UserFacingError } from "../errors.ts";
 import type { UploadedFile } from "../store.ts";
 import { deployFromFiles, recordBuildFailure } from "./build.ts";
-import { DeployLog, type Deployer, type DeployResult } from "./deployer.ts";
+import { DeployLog, type DeployGuard, type Deployer, type DeployResult } from "./deployer.ts";
 import type { DeploySource } from "./history.ts";
 import { extractTarGz } from "./tar.ts";
 import { CONFIG_FILES, parseWranglerConfig } from "./wrangler.ts";
@@ -173,7 +173,7 @@ export function inspectFiles(fetched: Fetched): Inspection {
 export async function deployFromGitHub(
   input: string,
   deployer: Deployer,
-  options: GitHubOptions & { siteName: string; autoRoot?: boolean },
+  options: GitHubOptions & { siteName: string; byAdmin: boolean; guard?: DeployGuard },
 ): Promise<DeployResult> {
   const log = new DeployLog(`GitHub からのデプロイを開始しました: ${input}`);
   let fetched: Fetched;
@@ -189,6 +189,7 @@ export async function deployFromGitHub(
     buildLog: [],
     where: dir ? `${dir}/ ` : "リポジトリのトップ",
     autoRoot: options.autoRoot ?? false,
+    guard: options.guard,
     siteName: options.siteName,
   });
 }

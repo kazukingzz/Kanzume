@@ -2,6 +2,7 @@
 import { deployFromFiles } from "../../deploy/build.ts";
 import { DeployLog } from "../../deploy/deployer.ts";
 import { deployFromGitHub, fetchFromGitHub, inspectFiles } from "../../deploy/github.ts";
+import { sessionGuard } from "../../deploy/guard.ts";
 import { extractTarGz } from "../../deploy/tar.ts";
 import { CONFIG_FILES } from "../../deploy/wrangler.ts";
 import { mib, tooLarge } from "../../errors.ts";
@@ -27,6 +28,7 @@ async function deployGitHub(ctx: Ctx) {
   if (sites.deployed(siteName) && body.confirm !== true)
     return reply(409, { error: `サイト ${siteName} には公開中のリリースがあります。置き換えるには確認してください`, exists: true });
   const patch = envPatch(body);
+  const guard = sessionGuard(ctx.deps.state, sites, ctx.sessionId, siteName);
   const evict = () => {
     const store = sites.get(siteName);
     if (store) runtime.evict(store.siteDir);
@@ -43,6 +45,9 @@ async function deployGitHub(ctx: Ctx) {
         evict();
       };
       try {
+        // 順番を待っている間に権限がなくなっていたら、環境変数も書き換えない
+        const access = deployer.checkAccess(guard, siteName);
+        if (!access.ok) return fail(403, access.error);
         if (patch.vars || patch.secrets) {
           // 最初に読み込む Worker から新しい環境変数を使うように、デプロイの前に設定を書く
           before = sites.settings(siteName);
@@ -50,7 +55,7 @@ async function deployGitHub(ctx: Ctx) {
           evict();
         }
         // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
-        const result = await deployFromGitHub(url, deployer, { ...githubOptions(ctx), siteName, autoRoot: ctx.isAdmin });
+        const result = await deployFromGitHub(url, deployer, { ...githubOptions(ctx), siteName, byAdmin: ctx.isAdmin, guard });
         if (!result.ok) {
           await rollback();
           return fail(400, result.error);
@@ -72,6 +77,7 @@ async function upload(ctx: Ctx) {
   const { config, repos, deployer, sites } = ctx.deps;
   const { name } = ctx.site;
   const user = userOf(ctx);
+  const guard = sessionGuard(ctx.deps.state, sites, ctx.sessionId, name);
   // 本文の受け取りと展開は本体で 1 つずつ（展開したファイルとビルドでメモリを多く使うため）
   return deployer.intake(async () => {
     const body = await readBody(ctx.req, config.maxUploadBytes);
@@ -92,6 +98,9 @@ async function upload(ctx: Ctx) {
     const uploaded = files;
     // 同じサイトの git push とは 1 つずつ（コミット → デプロイ → ブランチを進める、の間に push を挟まない）
     return deployer.exclusive(name, async () => {
+      // 本文を受け取る間・順番を待っている間に権限がなくなっていたら、コミットも作らない
+      const access = deployer.checkAccess(guard, name);
+      if (!access.ok) return fail(403, access.error);
       const message = `ファイルをアップロード（${count} ファイル${hasConfig ? "" : "・静的サイト"}）`;
       // 手元にファイルがなくなっても clone で取り出せるように、サイトのリポジトリのコミットにする。
       // 取り込むのはデプロイに成功してから（リポジトリの先頭と動いているものをそろえる）
@@ -118,6 +127,7 @@ async function upload(ctx: Ctx) {
         siteName: name,
         // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
         autoRoot: ctx.isAdmin,
+        guard,
       }).catch(async (err: unknown) => {
         await discard();
         throw err;
