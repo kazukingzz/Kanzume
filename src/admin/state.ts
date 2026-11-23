@@ -174,7 +174,8 @@ export class AdminState {
     this.#state = state;
     // ユーザーがない（ロールを入れる前の）admin.json は、今のパスキーとセッションをすべて最初の管理者のものにする
     let migrated = false;
-    if (!this.#state.users?.length) {
+    const withoutUsers = !this.#state.users?.length;
+    if (withoutUsers) {
       this.#state.userId ||= randomBytes(16).toString("base64url");
       this.#state.users = [this.#newAdmin(this.#state.userId)];
       migrated = true;
@@ -188,13 +189,20 @@ export class AdminState {
         migrated = true;
       }
     }
-    const firstAdmin = this.#state.users.find((u) => u.role === "admin")!.id;
-    for (const c of this.#state.credentials) {
-      if (!c.userId || !this.user(c.userId)) {
+    const firstAdmin = this.users.find((u) => u.role === "admin")!.id;
+    // 持ち主のいないパスキーは最初の管理者に付け替えずに捨てる（消されたユーザーのパスキーが管理者のものになってしまう）。
+    // 持ち主が未設定なのは、ユーザーを入れる前の admin.json（パスキーはすべて最初の管理者のもの）だけ
+    this.#state.credentials = this.#state.credentials.filter((c) => {
+      if (!c.userId && withoutUsers) {
         c.userId = firstAdmin;
         migrated = true;
+        return true;
       }
-    }
+      if (c.userId && this.user(c.userId)) return true;
+      console.warn(`[kanzume] 持ち主のいないパスキー（${c.id}）を削除しました`);
+      migrated = true;
+      return false;
+    });
     if (sessions && typeof sessions === "object" && !Array.isArray(sessions)) {
       for (const [hash, v] of Object.entries(sessions)) {
         const session = typeof v === "number" ? { lastSeen: v, userId: firstAdmin } : v;
@@ -377,7 +385,9 @@ export class AdminState {
   }
 
   async addCredential(credential: StoredCredential): Promise<void> {
-    this.#state.credentials.push({ ...credential, userId: credential.userId ?? this.#primaryAdmin() });
+    const userId = credential.userId ?? this.#primaryAdmin();
+    if (!this.user(userId)) throw new UserError("ユーザーが見つかりません");
+    this.#state.credentials.push({ ...credential, userId });
     await this.#save();
   }
 

@@ -9,7 +9,9 @@ import { EnvError, loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
 import { tmpDir } from "./helpers.ts";
+import http from "node:http";
 import { startApp } from "./fixtures.ts";
+import { SoftAuthenticator } from "./webauthn.ts";
 
 async function start(t: TestContext, dataDir?: string) {
   const app = await startApp(t, dataDir ? { KANZUME_DATA_DIR: dataDir } : {});
@@ -321,3 +323,78 @@ test("管理画面のファイルは web/admin の下だけを返す（モジュ
     assert.equal((await get(bad)).status, 404, bad);
   }
 });
+
+/** 管理画面の API を Cookie 付きで呼ぶ。https を付けると、TLS を終端したプロキシの後ろ（X-Forwarded-Proto: https）として呼ぶ */
+function caller(base: string, cookie: string | null, { https = false } = {}) {
+  const origin = https ? base.replace("http:", "https:") : base;
+  return (p: string, method = "GET", body?: unknown) =>
+    fetch(`${base}/_admin/kanzume/api${p}`, {
+      method,
+      headers: { ...(cookie ? { cookie } : {}), origin, "content-type": "application/json", ...(https ? { "x-forwarded-proto": "https" } : {}) },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+}
+
+test("登録の検証中にメンバーが削除されたら、そのパスキーは保存されず、再起動しても管理者のものにならない", async (t) => {
+  const dataDir = tmpDir(t);
+  const app = await start(t, dataDir);
+  await app.state.addCredential(fakeCredential);
+  const member = await app.state.createUser("参加者", "member", []);
+  const cookie = `kanzume_session=${await app.state.createSession(member.id)}`;
+  const options = await (await caller(app.base, cookie)("/register/options", "POST", {})).json();
+  const body = JSON.stringify({ response: new SoftAuthenticator().create(options, app.base) });
+
+  // 本文を送り切る前（セッションを確かめたあと）に、管理者がメンバーを削除する
+  const res = await new Promise<number>((resolve, reject) => {
+    const req = http.request(`${app.base}/_admin/kanzume/api/register/verify`, {
+      method: "POST",
+      headers: { cookie, origin: app.base, "content-type": "application/json", "content-length": Buffer.byteLength(body) },
+    });
+    req.on("response", (r) => {
+      r.resume();
+      resolve(r.statusCode ?? 0);
+    });
+    req.on("error", reject);
+    req.write(body.slice(0, 10));
+    setTimeout(async () => {
+      await app.state.removeUser(member.id);
+      req.end(body.slice(10));
+    }, 200);
+  });
+  assert.equal(res, 401);
+  assert.deepEqual(
+    app.state.credentials.map((c) => c.id),
+    ["cred-1"],
+  );
+  await assert.rejects(app.state.addCredential({ ...fakeCredential, id: "late", userId: member.id }), /ユーザーが見つかりません/);
+});
+
+test("持ち主のいないパスキーは起動時に捨て、最初の管理者のものにはしない（持ち主が未設定のパスキーを付け替えるのは、ユーザーのない admin.json だけ）", async (t) => {
+  const dir = tmpDir(t);
+  const admin = { id: "admin", name: "管理者", role: "admin", sites: [], createdAt: new Date().toISOString() };
+  fs.writeFileSync(
+    path.join(dir, "admin.json"),
+    JSON.stringify({
+      userId: "admin",
+      users: [admin],
+      credentials: [
+        { ...fakeCredential, id: "mine", userId: "admin" },
+        { ...fakeCredential, id: "deleted-member", userId: "gone" },
+        { ...fakeCredential, id: "no-owner" },
+      ],
+    }),
+  );
+  const state = new AdminState(dir);
+  await state.init();
+  assert.deepEqual(
+    state.credentials.map((c) => c.id),
+    ["mine"],
+  );
+  await state.flush();
+  const saved = JSON.parse(fs.readFileSync(path.join(dir, "admin.json"), "utf8"));
+  assert.deepEqual(
+    saved.credentials.map((c: { id: string }) => c.id),
+    ["mine"],
+  );
+});
+

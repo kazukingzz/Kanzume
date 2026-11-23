@@ -32,6 +32,12 @@ async function login(ctx: Ctx, userId: string) {
  */
 type Registration = { kind: "self"; userId: string } | { kind: "setup" } | { kind: "invite"; token: string };
 
+/** 今のセッションのユーザー。リクエストを受けたときにログインしていたのに、セッションが消えていたら 401 */
+function currentUser(ctx: Ctx): User | null {
+  if (!ctx.user) return null;
+  return ctx.deps.state.sessionUser(ctx.sessionId) ?? fail(401, "ログインしてください");
+}
+
 function allowedToRegister(ctx: Ctx, user: User | null, body: Record<string, unknown>): Registration {
   const { state, config, sites } = ctx.deps;
   if (user) return { kind: "self", userId: user.id };
@@ -117,8 +123,8 @@ export const authRoutes: Route[] = [
     handle: async (ctx) => {
       const { state } = ctx.deps;
       const body = await ctx.body(256 * 1024);
-      // オプションを取ったあとに招待が使われたなどを防ぐため、もう一度確かめる
-      const allowed = allowedToRegister(ctx, ctx.user, body);
+      // オプションを取ったあとに招待が使われた・本文を送っている間にログアウトした（ユーザーが消された）などを防ぐため、もう一度確かめる
+      const allowed = allowedToRegister(ctx, currentUser(ctx), body);
       const result = await verify(ctx, "register", async (expectedChallenge) =>
         (await webauthn()).verifyRegistrationResponse({
           response: body.response as never,
@@ -130,6 +136,11 @@ export const authRoutes: Route[] = [
       );
       const { credential, aaguid } = result.registrationInfo!;
       const device = describeDevice(ctx.req.headers["user-agent"]);
+      // 検証している間に変わっていないか（ユーザーが消された・ログアウトした・ほかの人が初回のパスキーを登録した）
+      const still = allowedToRegister(ctx, currentUser(ctx), body);
+      if (still.kind !== allowed.kind || (still.kind === "self" && allowed.kind === "self" && still.userId !== allowed.userId)) {
+        return fail(403, "パスキーを登録できませんでした。もう一度ログインしてから試してください");
+      }
       let owner: string;
       if (allowed.kind === "self") owner = allowed.userId;
       else if (allowed.kind === "setup") owner = state.setupUserId;
