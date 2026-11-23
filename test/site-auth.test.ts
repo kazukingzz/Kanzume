@@ -18,7 +18,7 @@ test("ログインの Cookie は、署名・サイト・期限・登録済みの
   assert.equal(checkSiteSession({ ...access, secret: "other" }, "blog", token, now), false, "ログインをやめて鍵が変わったら使えない");
   assert.equal(checkSiteSession({ ...access, passkeys: [] }, "blog", token, now), false, "パスキーを消したら使えない");
   assert.equal(checkSiteSession(access, "blog", token, now + SITE_SESSION_MAX_AGE * 1000 + 1), false, "30 日を過ぎたら使えない");
-  assert.equal(checkSiteSession(access, "blog", `${token.slice(0, -1)}A`, now), false);
+  assert.equal(checkSiteSession(access, "blog", `${token.slice(0, -1)}${token.endsWith("A") ? "B" : "A"}`, now), false);
   assert.equal(checkSiteSession(access, "blog", token.replace(String(now), String(now + 1)), now + 1), false, "発行時刻を書き換えられない");
 });
 
