@@ -78,7 +78,12 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
     if (cookie === undefined) delete req.headers.cookie;
     else req.headers.cookie = cookie;
     // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
-    const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });
+    // 応答を送り終える前に接続が閉じたら（訪問者が離れたら）、子プロセスの Worker へのリクエストも切る
+    const visitor = new AbortController();
+    res.once("close", () => {
+      if (!res.writableFinished) visitor.abort();
+    });
+    const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) }, visitor.signal);
     const invocation = new Invocation(release.manifest.name, release.id, request, `${pathname}${search}`);
     let waitUntil: Promise<unknown>[] = [];
 
@@ -108,6 +113,10 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
         const result = await worker.fetch(request);
         waitUntil = result.waitUntil;
         if (result.response) return result.response;
+        if (visitor.signal.aborted) {
+          invocation.outcome = "canceled";
+          return new Response(null, { status: 499 });
+        }
         invocation.exception(result.error);
         invocation.outcome = /Script execution timed out/.test(String((result.error as Error)?.message ?? result.error)) ? "exceededCpu" : "exception";
         if (result.passThrough) return serveAssets(release, request);

@@ -43,6 +43,8 @@ export interface RuntimeOptions {
   stallMs?: number;
   /** 起動してからこの時間が過ぎた Worker を作り直す。0 なら作り直さない */
   maxAgeMs?: number;
+  /** process のとき、子が応答のヘッダーを返すまで待つ上限（省略時は 100 秒） */
+  responseTimeoutMs?: number;
   /** Worker の fetch / WebSocket で確かめずに接続を許す「IP アドレス:ポート」（テスト専用。ループバックのテスト用サーバーに届くように） */
   egressAllow?: string[];
 }
@@ -146,6 +148,7 @@ export class Runtime {
         dataDir: this.#options.dataDir,
         timeout: this.#options.cpuTimeoutMs,
         stallMs: this.#options.stallMs,
+        responseTimeoutMs: this.#options.responseTimeoutMs,
         egressAllow: this.#options.egressAllow,
       });
     }

@@ -46,10 +46,10 @@ export function clientIp(req: IncomingMessage): string {
   return forwarded || req.socket.remoteAddress || "";
 }
 
-export function toWebRequest(req: IncomingMessage, url: string, extraHeaders: Record<string, string> = {}): Request {
+/** signal: 訪問者が離れたときに中止を伝える（子プロセスの Worker へのリクエストを切るため） */
+export function toWebRequest(req: IncomingMessage, url: string, extraHeaders: Record<string, string> = {}, signal?: AbortSignal): Request {
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
-    if (value === undefined || key.startsWith(":")) continue;
     if (Array.isArray(value)) for (const v of value) headers.append(key, v);
     else headers.set(key, value);
   }
@@ -62,6 +62,7 @@ export function toWebRequest(req: IncomingMessage, url: string, extraHeaders: Re
     body: hasBody ? (Readable.toWeb(req) as ReadableStream) : undefined,
     duplex: "half",
     redirect: "manual",
+    signal,
   } as RequestInit);
 }
 

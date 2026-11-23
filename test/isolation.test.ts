@@ -82,6 +82,7 @@ function setup(
     maxWorkers: options.maxWorkers,
     stallMs: options.stallMs,
     maxAgeMs: options.maxAgeMs,
+    responseTimeoutMs: options.responseTimeoutMs,
     egressAllow: options.egressAllow,
     isolation: "process",
     dataDir,
@@ -253,6 +254,16 @@ module.exports = {
       await env.KV.get("x");
       while (true) {}
     }
+    if (url.pathname === "/never") return new Promise(() => {});
+    if (url.pathname === "/hijack") {
+      // 子の HTTP サーバーを乗っ取り、以降のリクエストに生きたままの 101 を返す
+      const server = host._getActiveHandles().find((h) => typeof h.listeners === "function" && h.listeners("request").length > 0);
+      server.prependListener("request", (req) => {
+        if (req.headers["x-kanzume-url"].endsWith("/upgrade")) req.socket.write("HTTP/1.1 101 Switching Protocols\\r\\nConnection: Upgrade\\r\\nUpgrade: evil\\r\\n\\r\\n");
+      });
+      return new Response("hijacked");
+    }
+    if (url.pathname === "/upgrade") return new Promise(() => {});
     if (url.pathname === "/egress") {
       try {
         const r = await fetch(url.searchParams.get("url"));
@@ -466,5 +477,51 @@ test("子の Worker の fetch / WebSocket は、許可していないループ�
   );
   assert.deepEqual(await call("/ws", `ws://127.0.0.1:${port}/`), { result: "closed" });
   assert.equal(connections, 0, "許可していないサーバーには 1 度も接続していない");
+});
+
+test("子が生きたままの 101 を返しても、そのリクエストは失敗で終わり、待ち状態が残らない", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const hijack = await w.fetch(new Request("http://x/hijack"));
+  assert.equal(await hijack.response!.text(), "hijacked");
+  await Promise.all(hijack.waitUntil);
+  const res = await w.fetch(new Request("http://x/upgrade"));
+  assert.equal(res.response, null);
+  assert.match(String((res.error as Error).message), /101/);
+  assert.equal(w.busy, false);
+});
+
+test("Worker が応答を返さなければ、上限の時間で失敗にし、待ち状態が残らない", async (t) => {
+  const { dataDir, runtime } = setup(t, { responseTimeoutMs: 500 });
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const res = await w.fetch(new Request("http://x/never"));
+  assert.equal(res.response, null);
+  assert.match(String((res.error as Error).message), /応答しませんでした/);
+  assert.equal(w.busy, false);
+  assert.equal(w.closed, false, "子は止めない（ほかのリクエストは受けられる）");
+  assert.equal((await w.fetch(new Request("http://x/"))).response?.status, 200);
+});
+
+test("訪問者が離れたら、子へのリクエストを切り、待ち状態が残らない", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const visitor = new AbortController();
+  const pending = w.fetch(new Request("http://x/never", { signal: visitor.signal }));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(w.busy, true);
+  visitor.abort();
+  const res = await pending;
+  assert.equal(res.response, null);
+  assert.match(String((res.error as Error).message), /訪問者が接続を切りました/);
+  assert.equal(w.busy, false);
+
+  const aborted = new AbortController();
+  aborted.abort();
+  const early = await w.fetch(new Request("http://x/", { signal: aborted.signal }));
+  assert.equal(early.response, null);
+  assert.equal(w.busy, false);
 });
 

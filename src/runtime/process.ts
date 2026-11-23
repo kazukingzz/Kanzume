@@ -58,6 +58,11 @@ const RETIRE_DEADLINE_MS = 35_000;
  * await のあとで無限ループすると止まらないので、イベントループが止まった子はプロセスごと作り直す
  */
 const STALL_GRACE_MS = 10_000;
+/**
+ * 子が応答のヘッダーを返すまで待つ上限。Cloudflare の手前のプロキシが応答を待つ時間（100 秒で 524）に合わせる。
+ * 子のイベントループが動いていれば alive は届き続けるので、決して解決しない Promise を返す Worker はこれで切る
+ */
+const RESPONSE_TIMEOUT_MS = 100_000;
 
 export const isRoot = () => typeof process.getuid === "function" && process.getuid() === 0;
 
@@ -189,6 +194,8 @@ export interface ChildOptions {
   timeout: number;
   /** イベントループが止まったとみなすまでの時間（省略時は timeout + STALL_GRACE_MS） */
   stallMs?: number;
+  /** 応答のヘッダーを待つ上限（省略時は RESPONSE_TIMEOUT_MS） */
+  responseTimeoutMs?: number;
   /** Worker の fetch / WebSocket で確かめずに接続を許す宛先（テスト専用） */
   egressAllow?: string[];
 }
@@ -213,6 +220,7 @@ export class ChildWorker {
   #lastAlive = Date.now();
   #watchdog: NodeJS.Timeout | null = null;
   #onMessage: ((m: Record<string, unknown>) => void) | null = null;
+  #responseTimeoutMs = RESPONSE_TIMEOUT_MS;
 
   private constructor(release: Release, child: ChildProcess, socket: string, socketDir: string) {
     this.release = release;
@@ -321,6 +329,7 @@ export class ChildWorker {
       },
     );
     const worker = new ChildWorker(release, child, socket, socketDir);
+    if (options.responseTimeoutMs !== undefined) worker.#responseTimeoutMs = options.responseTimeoutMs;
     try {
       await new Promise<void>((resolve, reject) => {
         const timer = setTimeout(() => reject(new WorkerError("Worker のプロセスが起動しませんでした（時間切れ）")), START_TIMEOUT_MS);
@@ -402,21 +411,40 @@ export class ChildWorker {
     if (length !== null && request.body) headers["x-kanzume-content-length"] = length;
     // DELETE などでも本文を正しく区切って送る
     if (request.body) headers["transfer-encoding"] = "chunked";
+    const signal = request.signal;
+    let onAbort: (() => void) | undefined;
     this.#inflight++;
     let finished = false;
     const finish = () => {
       if (finished) return;
       finished = true;
       this.#inflight--;
+      if (onAbort) signal.removeEventListener("abort", onAbort);
       // 応答を送り終えたあと、done（waitUntil の終わり）が来なければあきらめる
       doneTimer = setTimeout(giveUp, DONE_TIMEOUT_MS);
       doneTimer.unref();
       this.#maybeFinishRetire();
     };
     try {
+      if (signal.aborted) throw new Error("訪問者が接続を切りました");
       const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
         const req = http.request({ socketPath: this.#socket, method: request.method, path: "/", headers, maxHeaderSize: 256 * 1024 }, resolve);
         req.on("error", reject);
+        // 子は 101 を返さない。upgrade のリスナーがないと、Node は response も error も出さずに待ち続ける
+        req.on("upgrade", (_res, socket: NodeJS.ReadableStream & { destroy(): void }) => {
+          socket.destroy();
+          reject(new Error("Worker のプロセスが不正な応答（101）を返しました"));
+        });
+        const timer = setTimeout(
+          () => req.destroy(new Error(`Worker が ${Math.round(this.#responseTimeoutMs / 1000)} 秒以内に応答しませんでした`)),
+          this.#responseTimeoutMs,
+        );
+        timer.unref();
+        req.once("response", () => clearTimeout(timer));
+        req.once("close", () => clearTimeout(timer));
+        // 訪問者が離れたら子へのリクエストも切る（応答の途中なら応答のストリームも閉じる）
+        onAbort = () => req.destroy(new Error("訪問者が接続を切りました"));
+        signal.addEventListener("abort", onAbort, { once: true });
         if (request.body)
           Readable.fromWeb(request.body as never)
             .on("error", (err) => req.destroy(err))
