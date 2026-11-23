@@ -264,6 +264,18 @@ module.exports = {
       return new Response("hijacked");
     }
     if (url.pathname === "/upgrade") return new Promise(() => {});
+    if (url.pathname === "/flood") {
+      host.getBuiltinModule("fs").writeSync(3, "\\n".repeat(50_000));
+      return new Response("flooded");
+    }
+    if (url.pathname === "/socket-dir") {
+      const server = host._getActiveHandles().find((h) => typeof h.listeners === "function" && h.listeners("request").length > 0);
+      const socket = server.address();
+      const fs = host.getBuiltinModule("fs");
+      const junk = host.getBuiltinModule("path").join(host.getBuiltinModule("path").dirname(socket), "junk");
+      fs.mkdirSync(junk + "/a/b/c", { recursive: true });
+      return Response.json({ socket, junk });
+    }
     if (url.pathname === "/egress") {
       try {
         const r = await fetch(url.searchParams.get("url"));
@@ -525,3 +537,25 @@ test("訪問者が離れたら、子へのリクエストを切り、待ち状�
   assert.equal(w.busy, false);
 });
 
+test("子が本体への知らせのパイプに大量の行を書いたら、子を止める", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  await w.fetch(new Request("http://x/flood"));
+  await waitClosed(w);
+});
+
+test("子がソケットのディレクトリに物を置いても、本体はソケットだけを消し、置かれたものをたどらない", async (t) => {
+  const { dataDir, runtime } = setup(t);
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const res = await w.fetch(new Request("http://x/socket-dir"));
+  const { socket, junk } = (await res.response!.json()) as { socket: string; junk: string };
+  t.after(() => fs.rmSync(path.dirname(socket), { recursive: true, force: true }));
+  assert.equal(fs.existsSync(socket), true);
+  w.close();
+  await waitClosed(w);
+  for (let i = 0; i < 100 && fs.existsSync(socket); i++) await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(fs.existsSync(socket), false);
+  assert.equal(fs.existsSync(junk), true);
+});

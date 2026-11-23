@@ -31,6 +31,13 @@ export const DONE_TIMEOUT_MS = WAIT_UNTIL_LIMIT_MS + 5_000;
 export const HEARTBEAT_MS = 1_000;
 /** 子からの知らせ 1 行の上限（ログ 100 件 × 4 KiB と例外 20 件を収められる大きさ） */
 export const MAX_LINE_BYTES = 2 * 1024 * 1024;
+/**
+ * 子からの知らせの量の上限（LINE_WINDOW_MS ごと）。ふだんは alive が 1 秒に 1 行と、リクエストごとの done が 1 行なので、
+ * 超えたら子が本体の CPU を使わせようとしているとみなして止める（空行でも 1 行ずつ読む手間がかかる）
+ */
+export const LINE_WINDOW_MS = 5_000;
+export const MAX_LINES_PER_WINDOW = 20_000;
+export const MAX_BYTES_PER_WINDOW = 64 * MAX_LINE_BYTES;
 /** 例外の情報の上限（ヘッダーと知らせに入れるため） */
 export const MAX_ERROR_MESSAGE = 8 * 1024;
 export const MAX_ERROR_STACK = 16 * 1024;

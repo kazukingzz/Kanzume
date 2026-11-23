@@ -240,3 +240,32 @@ test("Runtime はサイトごとに Worker を持ち、上限を超えたら最�
   assert.equal(await runtime.get(a.r), wa, "直前に使った a は残る");
   assert.notEqual(await runtime.get(b.r), wb, "一番古い b は捨てられて読み込み直される");
 });
+
+test("起動に失敗したサイトは、待ちのあいだ起動し直さずに同じエラーを返し、待ちは失敗が続くと延びる。新しいリリースはすぐ試す", async (t) => {
+  const broken = await worker(t, `throw new Error("壊れた");`);
+  class Counting extends Runtime {
+    starts = 0;
+    override preload(r: Parameters<Runtime["preload"]>[0]) {
+      this.starts++;
+      return super.preload(r);
+    }
+  }
+  const runtime = new Counting({ idleMs: 60_000, cpuTimeoutMs: 200 });
+  t.after(() => runtime.close());
+  await assert.rejects(runtime.get(broken.r), /壊れた/);
+  await assert.rejects(runtime.get(broken.r), /壊れた/);
+  assert.equal(runtime.starts, 1, "待ちのあいだは起動しない");
+
+  await new Promise((r) => setTimeout(r, 1100));
+  await assert.rejects(runtime.get(broken.r), /壊れた/);
+  assert.equal(runtime.starts, 2, "待ちが過ぎたら起動し直す");
+  await new Promise((r) => setTimeout(r, 1100));
+  await assert.rejects(runtime.get(broken.r), /壊れた/);
+  assert.equal(runtime.starts, 2, "2 回目の失敗のあとは待ちが倍になる");
+
+  const v2 = toCjs(t, { "worker/index.js": `export default { fetch() { return new Response("fixed"); } }` });
+  const fixed = await broken.store.createRelease(manifest(), [{ path: "worker/index.cjs", data: Buffer.from(v2["worker/index.cjs"]) }]);
+  const w = await runtime.get(fixed);
+  assert.equal(runtime.starts, 3, "新しいリリースは待たずに試す");
+  assert.equal(await (await w.fetch(new Request("http://x/"))).response!.text(), "fixed");
+});

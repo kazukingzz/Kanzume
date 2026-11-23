@@ -50,6 +50,9 @@ export interface RuntimeOptions {
 }
 
 const SWEEP_INTERVAL_MS = 15_000;
+/** 起動に失敗したサイトで、次に起動を試すまでの待ち（失敗が続くたびに倍にする） */
+const START_BACKOFF_MS = 1_000;
+const MAX_START_BACKOFF_MS = 60_000;
 /** 応答の送信中（長いストリームなど）でも、これだけ新しいリクエストがなければ止める */
 const BUSY_LIMIT_MS = 60 * 60_000;
 
@@ -57,6 +60,11 @@ const BUSY_LIMIT_MS = 60 * 60_000;
 export class Runtime {
   #entries = new Map<string, Entry>();
   #retiring = new Set<WorkerHandle>();
+  /**
+   * 起動に失敗したサイト（siteDir ごと）。待ちのあいだは起動せずに同じエラーを返す
+   * （待たないと、起動できないサイトへのリクエストのたびに子プロセスを作ってしまう）
+   */
+  #failures = new Map<string, { releaseId: string; error: unknown; delay: number; until: number }>();
   #options: RuntimeOptions;
   #timer: NodeJS.Timeout;
 
@@ -92,10 +100,19 @@ export class Runtime {
       if (existing.handle && this.maxAgeMs > 0 && existing.lastUsed - existing.startedAt > this.maxAgeMs) this.#recycle(existing);
       return existing.worker;
     }
+    const failure = this.#failures.get(release.siteDir);
+    // 新しいリリースは待たずに試す（直したデプロイをすぐ使えるように）
+    if (failure?.releaseId === release.id && Date.now() < failure.until) return Promise.reject(failure.error);
     const entry: Entry = { release, worker: this.preload(release), lastUsed: Date.now(), startedAt: Date.now() };
     void entry.worker.then(
-      (w) => (entry.handle = w),
-      () => {},
+      (w) => {
+        entry.handle = w;
+        if (this.#failures.get(release.siteDir)?.releaseId === release.id) this.#failures.delete(release.siteDir);
+      },
+      (error) => {
+        const delay = failure?.releaseId === release.id ? Math.min(failure.delay * 2, MAX_START_BACKOFF_MS) : START_BACKOFF_MS;
+        this.#failures.set(release.siteDir, { releaseId: release.id, error, delay, until: Date.now() + delay });
+      },
     );
     this.#set(entry);
     entry.worker.catch(() => {
@@ -156,6 +173,7 @@ export class Runtime {
   }
 
   install(worker: WorkerHandle): void {
+    this.#failures.delete(worker.release.siteDir);
     this.#set({ release: worker.release, worker: Promise.resolve(worker), handle: worker, lastUsed: Date.now(), startedAt: Date.now() });
   }
 
@@ -212,6 +230,8 @@ export class Runtime {
   evict(siteDir?: string, options: { now?: boolean } = {}): void {
     const keys = siteDir === undefined ? [...this.#entries.keys()] : [siteDir];
     for (const key of keys) this.#drop(key, options.now);
+    if (siteDir === undefined) this.#failures.clear();
+    else this.#failures.delete(siteDir);
     if (options.now) {
       for (const w of this.#liveRetiring()) {
         if (siteDir === undefined || w.release.siteDir === siteDir) {

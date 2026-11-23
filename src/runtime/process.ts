@@ -17,7 +17,16 @@ import { bundled, childEntryFile } from "../install.ts";
 import { currentInvocation } from "../observability/events.ts";
 import type { Release } from "../store.ts";
 import { siteVars, WorkerError, type InvokeResult } from "./loader.ts";
-import { DONE_TIMEOUT_MS, decodeError, HEARTBEAT_MS, MAX_LINE_BYTES, NULL_BODY_STATUS } from "./protocol.ts";
+import {
+  DONE_TIMEOUT_MS,
+  decodeError,
+  HEARTBEAT_MS,
+  MAX_LINE_BYTES,
+  MAX_LINES_PER_WINDOW,
+  MAX_BYTES_PER_WINDOW,
+  NULL_BODY_STATUS,
+  LINE_WINDOW_MS,
+} from "./protocol.ts";
 import { isInside } from "../paths.ts";
 import { siteSettingsFile, sitesDir, UIDS_FILE } from "../layout.ts";
 
@@ -251,8 +260,8 @@ export class ChildWorker {
           this.#maybeFinishRetire();
         } else if (msg.type !== "alive") this.#onMessage?.(msg);
       },
-      () => {
-        console.error(`[runtime] Worker のプロセスが大きすぎる知らせを送ったので止めます（${release.manifest.name}）`);
+      (reason) => {
+        console.error(`[runtime] Worker のプロセスが${reason}を送ったので止めます（${release.manifest.name}）`);
         this.#kill();
       },
     );
@@ -274,7 +283,14 @@ export class ChildWorker {
     this.#pending.clear();
     if (this.#retireTimer) clearTimeout(this.#retireTimer);
     if (this.#watchdog) clearInterval(this.#watchdog);
-    fs.rmSync(this.#socketDir, { recursive: true, force: true });
+    // ディレクトリごと消さない（子が書けるので、大量・深いファイルを置かれると本体が止まる）。ソケットだけ消し、空なら消す
+    const dir = this.#socketDir;
+    fs.promises
+      .rm(this.#socket, { force: true })
+      .then(() => fs.promises.rmdir(dir))
+      .catch((err: NodeJS.ErrnoException) => {
+        if (err.code !== "ENOENT") console.warn(`[runtime] Worker のソケットのディレクトリを消せませんでした（${dir}）: ${err.code ?? err.message}`);
+      });
   }
 
   get closed(): boolean {
@@ -510,24 +526,41 @@ export class ChildWorker {
   }
 }
 
-/** 1 行ずつ読む。max バイトを超える行が来たら onTooLong を呼んで読むのをやめる */
-function readLines(stream: NodeJS.ReadableStream | null, max: number, onLine: (line: string) => void, onTooLong: () => void): void {
+/**
+ * 1 行ずつ読む。max バイトを超える行や、LINE_WINDOW_MS あたりの行数・量が上限を超えたら、onAbuse を呼んで読むのをやめる
+ * （量は UTF-8 にしたあとの文字数で数える。上限の目安なのでバイト数に直さない）
+ */
+function readLines(stream: NodeJS.ReadableStream | null, max: number, onLine: (line: string) => void, onAbuse: (reason: string) => void): void {
   if (!stream) return;
   let buf = "";
+  let windowStart = Date.now();
+  let lines = 0;
+  let bytes = 0;
+  const stop = (reason: string) => {
+    buf = "";
+    stream.removeAllListeners("data");
+    stream.resume();
+    onAbuse(reason);
+  };
   stream.setEncoding("utf8");
   stream.on("data", (chunk: string) => {
+    const now = Date.now();
+    if (now - windowStart >= LINE_WINDOW_MS) {
+      windowStart = now;
+      lines = 0;
+      bytes = 0;
+    }
+    bytes += chunk.length;
+    if (bytes > MAX_BYTES_PER_WINDOW) return stop("多すぎる知らせ");
     buf += chunk;
+    let start = 0;
     let nl: number;
-    while ((nl = buf.indexOf("\n")) !== -1) {
-      const line = buf.slice(0, nl);
-      buf = buf.slice(nl + 1);
-      onLine(line);
+    while ((nl = buf.indexOf("\n", start)) !== -1) {
+      if (++lines > MAX_LINES_PER_WINDOW) return stop("多すぎる知らせ");
+      if (nl > start) onLine(buf.slice(start, nl));
+      start = nl + 1;
     }
-    if (buf.length > max) {
-      buf = "";
-      stream.removeAllListeners("data");
-      stream.resume();
-      onTooLong();
-    }
+    buf = buf.slice(start);
+    if (buf.length > max) stop("大きすぎる知らせ");
   });
 }
