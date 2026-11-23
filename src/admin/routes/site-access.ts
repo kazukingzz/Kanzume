@@ -59,28 +59,25 @@ export const siteAccessRoutes: Route[] = [
       const { name } = ctx.site;
       const rpId = rpIdFor(ctx);
       const body = await ctx.body(256 * 1024);
-      let challenge = "";
+      const attempt = challenges.attempt("site-register");
       let result: Awaited<ReturnType<Awaited<ReturnType<typeof webauthn>>["verifyRegistrationResponse"]>>;
       try {
         result = await (await webauthn()).verifyRegistrationResponse({
           response: body.response as never,
-          expectedChallenge: (c) => {
-            challenge = c;
-            return challenges.claim(c, "site-register");
-          },
+          expectedChallenge: attempt.expected,
           expectedOrigin: ctx.origin,
           expectedRPID: rpId,
           requireUserVerification: false,
         });
       } catch (err) {
-        challenges.release(challenge);
+        attempt.release();
         return fail(400, (err as Error).message);
       }
       if (!result.verified) {
-        challenges.release(challenge);
+        attempt.release();
         return fail(400, "パスキーを検証できませんでした");
       }
-      challenges.markUsed(challenge);
+      attempt.markUsed();
       const { credential, aaguid } = result.registrationInfo!;
       const passkey = {
         id: credential.id,

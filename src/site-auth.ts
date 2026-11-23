@@ -204,29 +204,26 @@ export class SiteAuth {
     const access = this.#sites.settings(site).access;
     const stored = access?.passkeys.find((p) => p.id === body?.response?.id);
     if (!access || !stored) return sendJson(res, 400, { error: "このサイトに登録されていないパスキーです" });
-    let challenge = "";
+    const attempt = this.#challenges.attempt("site-login");
     let result: Awaited<ReturnType<Awaited<ReturnType<typeof webauthn>>["verifyAuthenticationResponse"]>>;
     try {
       result = await (await webauthn()).verifyAuthenticationResponse({
         response: body.response as never,
-        expectedChallenge: (c) => {
-          challenge = c;
-          return this.#challenges.claim(c, "site-login");
-        },
+        expectedChallenge: attempt.expected,
         expectedOrigin: requestOrigin(req),
         expectedRPID: rpId,
         credential: { id: stored.id, publicKey: Buffer.from(stored.publicKey, "base64url"), counter: stored.counter, transports: stored.transports as never },
         requireUserVerification: false,
       });
     } catch (err) {
-      this.#challenges.release(challenge);
+      attempt.release();
       return sendJson(res, 400, { error: (err as Error).message });
     }
     if (!result.verified) {
-      this.#challenges.release(challenge);
+      attempt.release();
       return sendJson(res, 400, { error: "パスキーを検証できませんでした" });
     }
-    this.#challenges.markUsed(challenge);
+    attempt.markUsed();
     const counter = result.authenticationInfo.newCounter;
     // 同期するパスキー（iCloud キーチェーンなど）は常に 0 なので、変わったときだけ書く
     if (counter !== stored.counter) {

@@ -451,6 +451,19 @@ test("ログインの選択肢にはパスキーの ID を出さず、ID を渡�
   assert.deepEqual(await allowed(), ["phone", "synced", "old-key"], "一部だけ渡すと、渡していないパスキーが使えなくなる");
 });
 
+test("同時に来た同じ challenge の検証で、負けた方は勝った方の押さえを外さない", () => {
+  const challenges = new Challenges();
+  const c = Buffer.from(challenges.create("login")).toString("base64url");
+  const winner = challenges.attempt("login");
+  const loser = challenges.attempt("login");
+  assert.equal(winner.expected(c), true);
+  assert.equal(loser.expected(c), false);
+  loser.release();
+  assert.equal(challenges.attempt("login").expected(c), false, "勝った方の検証が終わるまで、ほかには通さない");
+  winner.release();
+  assert.equal(challenges.attempt("login").expected(c), true);
+});
+
 test("https では __Host- の Cookie でセッションを持ち、ほかのサブドメインから置ける同名の Cookie ではログインさせられない", async (t) => {
   const dataDir = tmpDir(t);
   // __Host- を入れる前からあるセッション（前の名前の Cookie で持っている）

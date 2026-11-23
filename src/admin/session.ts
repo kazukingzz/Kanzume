@@ -107,6 +107,27 @@ export class Challenges {
     this.#claimed.delete(challenge);
   }
 
+  /**
+   * 1 回の検証で使う。expected を expectedChallenge に渡し、失敗したら release、成功したら markUsed を呼ぶ。
+   * 自分が押さえた challenge だけを外す（同時に来た同じ応答の負けた方が、勝った方の押さえを外さないように）
+   */
+  attempt(purpose: ChallengePurpose): { expected: (challenge: string) => boolean; release(): void; markUsed(): void } {
+    let claimed: string | null = null;
+    return {
+      expected: (challenge) => {
+        if (claimed !== null || !this.claim(challenge, purpose)) return false;
+        claimed = challenge;
+        return true;
+      },
+      release: () => {
+        if (claimed !== null) this.release(claimed);
+      },
+      markUsed: () => {
+        if (claimed !== null) this.markUsed(claimed);
+      },
+    };
+  }
+
   // 検証に成功したものだけを記録するので、この Map が増えるのは本当に登録・ログインした回数ぶんだけ
   markUsed(challenge: string, now = Date.now()): void {
     this.#claimed.delete(challenge);

@@ -65,23 +65,19 @@ async function verify<T extends { verified: boolean }>(
   purpose: ChallengePurpose,
   run: (expectedChallenge: (c: string) => boolean) => Promise<T>,
 ): Promise<T> {
-  const { challenges } = ctx.deps;
-  let challenge = "";
+  const attempt = ctx.deps.challenges.attempt(purpose);
   let result: T;
   try {
-    result = await run((c) => {
-      challenge = c;
-      return challenges.claim(c, purpose);
-    });
+    result = await run(attempt.expected);
   } catch (err) {
-    challenges.release(challenge);
+    attempt.release();
     return fail(400, (err as Error).message);
   }
   if (!result.verified) {
-    challenges.release(challenge);
+    attempt.release();
     return fail(400, "パスキーを検証できませんでした");
   }
-  challenges.markUsed(challenge);
+  attempt.markUsed();
   return result;
 }
 
