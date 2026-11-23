@@ -25,6 +25,8 @@ export type BackupConfig =
       dir: string;
       /** file:// には SECRET がないので、暗号化の鍵は ?secret= で渡す（なければ固定の開発用の値） */
       secret: string;
+      /** ?secret= がなく、固定の値を使っている（保存先に書ける人なら誰でも世代を作れる） */
+      defaultSecret: boolean;
       previous?: string;
     });
 
@@ -73,7 +75,8 @@ export function parseBackupUrl(raw: string | undefined): BackupConfig | null {
     if (url.host) throw new BackupUrlError("KANZUME_BACKUP_URL の file:// は file:///絶対パス の形式にしてください");
     const dir = decode(url.pathname, "パス");
     if (!dir || dir === "/") throw new BackupUrlError("KANZUME_BACKUP_URL の file:// にディレクトリを指定してください");
-    return { kind: "file", dir, secret: params.get("secret") || DEV_SECRET, previous, keep, intervalMs, target: `file://${dir}` };
+    const secret = params.get("secret");
+    return { kind: "file", dir, secret: secret || DEV_SECRET, defaultSecret: !secret, previous, keep, intervalMs, target: `file://${dir}` };
   }
 
   if (url.protocol !== "s3:" && url.protocol !== "s3+http:") throw new BackupUrlError("KANZUME_BACKUP_URL は s3:// か file:// で始めてください");

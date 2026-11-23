@@ -45,7 +45,8 @@ function childEntry(): Promise<string> {
   return childBundle;
 }
 const START_TIMEOUT_MS = 30_000;
-const FIRST_UID = 20000;
+/** サイトに配る uid の最初（復元するときの _uids.json の確かめにも使う） */
+export const FIRST_UID = 20000;
 /** 子に転送しないリクエストヘッダー。content-length は本文の送り方を Node に任せるため（GET の本文は送らないので食い違う） */
 const REQUEST_SKIP = new Set(["connection", "keep-alive", "transfer-encoding", "upgrade", "proxy-connection", "te", "trailer", "content-length"]);
 /** 子からの応答で引き継がないヘッダー */

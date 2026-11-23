@@ -3,9 +3,10 @@ import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
-import { Backup } from "../src/backup/backup.ts";
-import { KeyMismatchError } from "../src/backup/crypto.ts";
 import { DatabaseSync } from "node:sqlite";
+import { gzipSync } from "node:zlib";
+import { Backup, isSafeManifestPath, UnsafeManifestError } from "../src/backup/backup.ts";
+import { encrypt, KeyMismatchError, loadDek } from "../src/backup/crypto.ts";
 import { LocalStore, S3Store, signV4 } from "../src/backup/store.ts";
 import { BackupUrlError, parseBackupUrl } from "../src/backup/url.ts";
 import { loadConfig, type Config } from "../src/config.ts";
@@ -232,6 +233,7 @@ test("KANZUME_BACKUP_URL を読む（パーセントエンコード・プレフ�
     kind: "file",
     dir: "/var/backup dir",
     secret: "kanzume-local-backup",
+    defaultSecret: true,
     previous: undefined,
     keep: 48,
     intervalMs: 3_600_000,
@@ -495,3 +497,104 @@ test("サイトの KV / R2 に上限を超えるファイルや壊れた DB が�
   back.close();
 });
 
+/** 保存先に書ける人が作った世代（鍵は file:// の既定の値） */
+async function forge(store: string, name: string, entries: { path: string; data: Buffer }[], dirs: string[] = []) {
+  const s = new LocalStore(store);
+  const dek = await loadDek(s, "kanzume-local-backup");
+  const files = [];
+  for (const e of entries) {
+    const blob = dek.blobName(e.data);
+    await s.put(`blobs/${blob}`, encrypt(dek.key, gzipSync(e.data), `blob:${blob}`));
+    files.push({ path: e.path, size: e.data.length, blob });
+  }
+  const manifest = { version: 1, createdAt: new Date().toISOString(), reason: "forged", dekId: dek.id, dirs, files };
+  await s.put(`snapshots/${name}/manifest`, encrypt(dek.key, gzipSync(JSON.stringify(manifest)), `manifest:${name}`));
+}
+
+test("/data の外や決まった場所の外を指す世代、root の uid を割り当てる世代は、何も書かずに復元を止める", async (t) => {
+  const { store, make } = configs(t);
+  const config = make();
+  const app = await boot(t, config);
+  await setup(app);
+  assert.equal((await app.backup.backupNow("test")).ok, true);
+  await app.close();
+
+  const outside = path.join(path.dirname(config.dataDir), `escape-${path.basename(config.dataDir)}`);
+  const admin = { path: "admin.json", data: Buffer.from(JSON.stringify({ credentials: [fakeCredential] })) };
+  // 復元は <data>/.restoring に書いてから入れ替えるので、../../ で <data> の外に出る
+  const cases: { files: { path: string; data: Buffer }[]; dirs?: string[] }[] = [
+    { files: [admin, { path: `../../${path.basename(outside)}`, data: Buffer.from("x") }] },
+    { files: [admin, { path: `sites/../../../${path.basename(outside)}`, data: Buffer.from("x") }] },
+    { files: [admin, { path: outside, data: Buffer.from("x") }] },
+    { files: [admin, { path: "sites\\..\\x", data: Buffer.from("x") }] },
+    { files: [admin, { path: "app/dist/server.js", data: Buffer.from("x") }] },
+    { files: [admin, { path: "sites/./x", data: Buffer.from("x") }] },
+    { files: [admin], dirs: [`../../${path.basename(outside)}`] },
+    { files: [admin, { path: "sites/_uids.json", data: Buffer.from(JSON.stringify({ app: 0 })) }] },
+  ];
+  for (const [i, c] of cases.entries()) {
+    await forge(store, `9999-${i}`, c.files, c.dirs);
+    fs.rmSync(config.dataDir, { recursive: true, force: true });
+    await assert.rejects(new Backup(config.backup!, config.dataDir).restoreIfEmpty(), UnsafeManifestError, JSON.stringify(c));
+    assert.equal(fs.existsSync(outside), false, "データのディレクトリの外に書かない");
+    assert.deepEqual(fs.existsSync(config.dataDir) ? fs.readdirSync(config.dataDir) : [], [], "途中まで書いたものも残さない");
+  }
+});
+
+test("復元したリポジトリの設定・フック・ほかの場所を指すファイルは、保存先のものを使わずに作り直す", async (t) => {
+  const { make } = configs(t);
+  const config = make();
+  const app = await boot(t, config);
+  await setup(app);
+  const repo = app.repos.path("app");
+  fs.appendFileSync(
+    path.join(repo, "config"),
+    '[core]\n\tfsmonitor = "touch /tmp/kanzume-pwned"\n\thooksPath = /tmp\n[filter "x"]\n\tsmudge = touch /tmp/kanzume-pwned\n',
+  );
+  fs.mkdirSync(path.join(repo, "hooks"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "hooks", "post-checkout"), "#!/bin/sh\ntouch /tmp/kanzume-pwned\n", { mode: 0o755 });
+  fs.writeFileSync(path.join(repo, "commondir"), "../../sites/app/data\n");
+  fs.mkdirSync(path.join(repo, "objects", "info"), { recursive: true });
+  fs.writeFileSync(path.join(repo, "objects", "info", "alternates"), "/elsewhere/objects\n");
+  assert.equal((await app.backup.backupNow("test")).ok, true);
+  await app.close();
+  fs.rmSync(config.dataDir, { recursive: true, force: true });
+
+  const restored = await boot(t, config);
+  const back = restored.repos.path("app");
+  const gitConfig = fs.readFileSync(path.join(back, "config"), "utf8");
+  assert.doesNotMatch(gitConfig, /fsmonitor|hooksPath|smudge/);
+  assert.match(gitConfig, /bare = true/);
+  assert.equal(fs.existsSync(path.join(back, "hooks", "post-checkout")), false);
+  assert.equal(fs.existsSync(path.join(back, "commondir")), false);
+  assert.equal(fs.existsSync(path.join(back, "objects", "info", "alternates")), false);
+  assert.equal(await restored.repos.exists("app"), true);
+  assert.equal(await restored.repos.defaultBranch("app"), "main");
+  await restored.repos.git("app", ["rev-parse", "--git-dir"]);
+});
+
+test("マニフェストのパスは、相対・正規化済みで、決まったトップレベルの下だけを通す", () => {
+  for (const ok of ["admin.json", "meta.sqlite", "sites/app/settings.json", "repos/app.git/HEAD", "logs/server.log"]) {
+    assert.equal(isSafeManifestPath(ok, "file"), true, ok);
+  }
+  assert.equal(isSafeManifestPath("sites", "dir"), true);
+  for (const bad of [
+    "",
+    "/etc/passwd",
+    "../x",
+    "sites/../x",
+    "sites//x",
+    "sites/./x",
+    "sites/x/",
+    "sites\\x",
+    "sites/x\0",
+    "other/x",
+    "sites",
+    "events.sqlite",
+    "git-hooks/x",
+    1,
+    null,
+  ]) {
+    assert.equal(isSafeManifestPath(bad, "file"), false, String(bad));
+  }
+});

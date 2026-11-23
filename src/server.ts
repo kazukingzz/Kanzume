@@ -173,6 +173,11 @@ export async function prepareBackup(config: Config): Promise<Backup | null> {
     console.log("[backup] KANZUME_BACKUP_URL が未設定なので、バックアップしません");
     return null;
   }
+  if (config.backup.kind === "file" && config.backup.defaultSecret) {
+    console.warn(
+      "[backup] file:// に ?secret= がないので、固定の鍵で暗号化します。保存先に書ける人は誰でも世代を作れる（認証されない）ので、本番では ?secret= を付けるか s3:// を使ってください",
+    );
+  }
   const backup = new Backup(config.backup, config.dataDir);
   await restoreOnBoot(backup);
   return backup;

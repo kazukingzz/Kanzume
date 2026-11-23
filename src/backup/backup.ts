@@ -118,6 +118,64 @@ async function readContained(abs: string, root: string, max: number): Promise<Bu
   }
 }
 
+/** マニフェストのパスとして正しいか（相対・正規化済み・.. や絶対パスを含まない・決まったトップレベルの下） */
+export function isSafeManifestPath(p: unknown, kind: "file" | "dir"): p is string {
+  if (typeof p !== "string" || !p || p.length > 4096) return false;
+  if (p.includes("\0") || p.includes("\\") || p.startsWith("/")) return false;
+  const parts = p.split("/");
+  if (parts.some((s) => s === "" || s === "." || s === "..")) return false;
+  if (path.posix.normalize(p) !== p) return false;
+  if (parts.length === 1) return kind === "file" ? TOP_FILES.has(p) : TOP_DIRS.has(p);
+  return TOP_DIRS.has(parts[0]);
+}
+
+/**
+ * 保存先から読んだマニフェストを確かめる。保存先に書ける人が世代を偽造しても、/data の外や決まった場所の外に書かせない
+ * （1 つでもおかしければ、その世代は使わない）
+ */
+function checkManifest(name: string, raw: unknown): SnapshotManifest {
+  const m = raw as SnapshotManifest;
+  const broken = (why: string) => new UnsafeManifestError(`世代 ${name} のマニフェストが正しくないので復元しません（${why}）`);
+  if (!m || typeof m !== "object" || m.version !== 1 || !Array.isArray(m.dirs) || !Array.isArray(m.files)) throw broken("形が違います");
+  for (const d of m.dirs) if (!isSafeManifestPath(d, "dir")) throw broken(`ディレクトリ ${JSON.stringify(d).slice(0, 200)}`);
+  for (const f of m.files) {
+    if (!f || typeof f !== "object" || !isSafeManifestPath(f.path, "file")) throw broken(`ファイル ${JSON.stringify(f?.path).slice(0, 200)}`);
+    if (typeof f.blob !== "string" || !/^[0-9a-f]{64}$/.test(f.blob)) throw broken(`${f.path} のデータの名前`);
+  }
+  return m;
+}
+
+/**
+ * 復元しないリポジトリの中身。設定（core.fsmonitor・core.hooksPath・filter.*.smudge など）・フック・ほかの場所を指すファイル
+ * （commondir・gitdir・alternates）は、push のデプロイで root の git に読ませるとコマンドを実行されうるので、
+ * 偽造された世代から持ち込ませない。config は復元のあとに決まった内容で作り直す
+ */
+const REPO_KEEP = /^repos\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.git\/(HEAD|packed-refs|description|shallow|refs\/.+|logs\/.+|objects\/.+)$/;
+/** 空でも要るディレクトリ（refs/ と objects/ がないと、git はリポジトリとして扱わない） */
+const REPO_KEEP_DIR = /^repos\/[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.git\/(refs|objects|logs)(\/.+)?$/;
+const REPO_DROP_OBJECTS = /^repos\/[^/]+\.git\/objects\/info\/(alternates|http-alternates)$/;
+/** git init --bare で作る設定と同じもの */
+const REPO_CONFIG = "[core]\n\trepositoryformatversion = 0\n\tfilemode = true\n\tbare = true\n";
+
+/** サイトの uid の割り当て。root（0）やシステムのユーザーで Worker を動かさせない */
+function checkUids(name: string, data: Buffer): void {
+  let map: unknown;
+  try {
+    map = JSON.parse(data.toString("utf8"));
+  } catch {
+    map = null;
+  }
+  const uids = map && typeof map === "object" && !Array.isArray(map) ? Object.values(map) : null;
+  const ok = uids?.every((uid) => Number.isInteger(uid) && (uid as number) >= FIRST_UID && (uid as number) < 2 ** 31) && new Set(uids).size === uids.length;
+  if (!ok) throw new UnsafeManifestError(`世代 ${name} の ${SITES_DIR}/${UIDS_FILE} が正しくないので復元しません`);
+}
+
+/** 復元してよいファイルか。リポジトリの中は、git の中身として要るものだけ */
+function restorable(p: string): boolean {
+  if (!p.startsWith(`${REPOS_DIR}/`)) return true;
+  return REPO_KEEP.test(p) && !REPO_DROP_OBJECTS.test(p);
+}
+
 interface FileEntry {
   path: string;
   size: number;
@@ -186,6 +244,12 @@ async function pool<T>(items: T[], n: number, fn: (item: T) => Promise<void>): P
 
 /** ブロブがない・壊れている（この世代は使えない）。通信の失敗とは分けて、ひとつ前の世代を試す */
 class SnapshotBroken extends Error {}
+
+/**
+ * マニフェストが /data の外や決まった場所の外を指している（保存先に書ける人が世代を偽造した疑い）。
+ * 壊れた世代と違って前の世代に黙って戻らず、何も書かずに起動を止める
+ */
+export class UnsafeManifestError extends Error {}
 
 /** 一時的な失敗（保存先との通信）なら数回やり直す */
 async function retry<T>(fn: () => Promise<T>, attempts = 4): Promise<T> {
@@ -385,11 +449,25 @@ export class Backup {
       if (err instanceof BackupStoreError) throw err;
       throw new SnapshotBroken(`世代 ${name} のマニフェストを読めません: ${(err as Error)?.message ?? err}`);
     }
-    const staging = path.join(this.dataDir, ".restoring");
+    checkManifest(name, manifest);
+    const staging = path.resolve(this.dataDir, ".restoring");
+    const inStaging = (p: string) => {
+      const dest = path.resolve(staging, p);
+      // checkManifest で確かめてあるが、書く直前にも外に出ないことを確かめる
+      if (!isInside(staging, dest) || dest === staging) throw new UnsafeManifestError(`世代 ${name} の ${p} は復元先の外を指しています`);
+      return dest;
+    };
+    const files = manifest.files.filter((f) => restorable(f.path));
+    const skipped = manifest.files.length - files.length;
+    if (skipped) console.warn(`[backup] リポジトリの設定・フックなど ${skipped} ファイルは復元せず、作り直します`);
     await fs.rm(staging, { recursive: true, force: true });
     try {
-      for (const d of manifest.dirs) await fs.mkdir(path.join(staging, d), { recursive: true });
-      await pool(manifest.files, PARALLEL * 2, async (f) => {
+      for (const d of manifest.dirs) {
+        // フックのディレクトリなどは作らない（中身も復元しない）
+        if (d.startsWith(`${REPOS_DIR}/`) && d.split("/").length > 2 && !REPO_KEEP_DIR.test(d)) continue;
+        await fs.mkdir(inStaging(d), { recursive: true });
+      }
+      await pool(files, PARALLEL * 2, async (f) => {
         const data = await retry(() => this.store.get(`blobs/${f.blob}`));
         if (!data) throw new SnapshotBroken(`${f.path} のデータ（${f.blob.slice(0, 12)}）がありません`);
         let plain: Buffer;
@@ -399,10 +477,17 @@ export class Backup {
           throw new SnapshotBroken(`${f.path} のデータを復号できません`);
         }
         if (dek.blobName(plain) !== f.blob) throw new SnapshotBroken(`${f.path} のデータが壊れています`);
-        const dest = path.join(staging, f.path);
+        if (f.path === `${SITES_DIR}/${UIDS_FILE}`) checkUids(name, plain);
+        const dest = inStaging(f.path);
         await fs.mkdir(path.dirname(dest), { recursive: true });
         await fs.writeFile(dest, plain, { mode: PRIVATE_FILE.test(f.path) ? 0o600 : 0o644 });
       });
+      // リポジトリの設定は、偽造されていても使わないように決まった内容で作る
+      for (const entry of await fs.readdir(path.join(staging, REPOS_DIR)).catch(() => [] as string[])) {
+        const repo = path.join(staging, REPOS_DIR, entry);
+        if (!entry.endsWith(".git") || !(await fs.lstat(repo)).isDirectory()) continue;
+        await fs.writeFile(path.join(repo, "config"), REPO_CONFIG, { mode: 0o644 });
+      }
       // 全部そろってから、トップレベルを入れ替える（起動前で、/data は空なので上書きしてよい）
       await fs.mkdir(this.dataDir, { recursive: true });
       for (const entry of await fs.readdir(staging)) {
@@ -411,7 +496,7 @@ export class Backup {
         if (entry.endsWith(".sqlite")) for (const s of ["-wal", "-shm"]) await fs.rm(dest + s, { force: true });
         await fs.rename(path.join(staging, entry), dest);
       }
-      return manifest.files.length;
+      return files.length;
     } finally {
       await fs.rm(staging, { recursive: true, force: true });
     }
@@ -671,7 +756,7 @@ export async function restoreOnBoot(backup: Backup, attempts = 5, baseDelayMs = 
     try {
       return await backup.restoreIfEmpty();
     } catch (err) {
-      if (err instanceof KeyMismatchError || i >= attempts) throw err;
+      if (err instanceof KeyMismatchError || err instanceof UnsafeManifestError || i >= attempts) throw err;
       const wait = baseDelayMs * 2 ** (i - 1);
       console.error(`[backup] 復元に失敗しました（${i}/${attempts}）。${wait / 1000} 秒後にやり直します: ${(err as Error)?.message ?? err}`);
       await new Promise((r) => setTimeout(r, wait));

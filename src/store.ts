@@ -86,7 +86,9 @@ export class Store {
       }
     }
     const id = await fs.readFile(path.join(this.siteDir, "current"), "utf8").catch(() => null);
-    if (id) this.#current = await this.#readRelease(id.trim()).catch(() => undefined);
+    // releases/ の外を指す current（復元した世代が偽造されていたなど）は使わない。リリースのディレクトリは子のために所有者とモードを変えるため
+    const safe = id?.trim();
+    if (safe && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(safe)) this.#current = await this.#readRelease(safe).catch(() => undefined);
   }
 
   get(): Release | undefined {
