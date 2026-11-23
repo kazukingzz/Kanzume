@@ -3,7 +3,7 @@ import { ADMIN_PATH } from "./admin/handler.ts";
 import { assetPath, matchAsset, notFoundAsset, serveAssets } from "./bindings/assets.ts";
 import type { AdminState } from "./admin/state.ts";
 import type { Config } from "./config.ts";
-import { clientIp, configuredRootHost, requestOrigin, rootOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
+import { clientIp, configuredRootHost, requestHost, requestOrigin, rootOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
 import { Invocation, runInvocation, type Observability } from "./observability/events.ts";
 import type { Runtime } from "./runtime/runtime.ts";
 import { GIT_PATH, HOOK_PATH } from "./git/server.ts";
@@ -182,7 +182,7 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
     if (pathname.startsWith(`${GIT_PATH}/`)) return handleGit(req, res, pathname, search);
 
     const isAdmin = pathname === ADMIN_PATH || pathname.startsWith(`${ADMIN_PATH}/`);
-    const host = String(req.headers["x-forwarded-host"] ?? req.headers.host ?? "");
+    const host = requestHost(req);
     // ルートドメインは管理画面で設定でき、保存したらすぐ効くように毎回読む
     const rootHost = configuredRootHost(config.origin, state.domain);
     const match = matchHost(host, (label) => sites.resolve(label), rootHost);

@@ -13,7 +13,7 @@ import { ResourceMonitor } from "./observability/resources.ts";
 import { createRouter } from "./router.ts";
 import { Runtime } from "./runtime/runtime.ts";
 import { RESERVED_SITE_NAMES, Sites, siteLabel } from "./sites.ts";
-import { configuredRootHost } from "./http.ts";
+import { configuredRootHost, setTrustProxy } from "./http.ts";
 import { Repos } from "./git/repos.ts";
 import { createGitHandler, installHooks } from "./git/server.ts";
 import { closeAllSiteDbs } from "./bindings/db.ts";
@@ -75,6 +75,7 @@ function reservedLabels(config: Config, state: AdminState): Set<string> {
 
 export async function createServer(config: Config, options: { github?: Partial<GitHubOptions>; backup?: Backup | null } = {}) {
   applyUmask(config);
+  setTrustProxy(config.trustProxy);
   const state = new AdminState(config.dataDir);
   await state.init();
   const sites = new Sites(config.dataDir);

@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import path from "node:path";
 import { parseBackupUrl, type BackupConfig } from "./backup/url.ts";
+import type { TrustProxy } from "./http.ts";
 
 export interface Config {
   port: number;
@@ -24,6 +25,16 @@ export interface Config {
   isolation: "process" | "inline";
   /** KANZUME_BACKUP_URL。未設定なら null（バックアップしない） */
   backup: BackupConfig | null;
+  /** KANZUME_TRUST_PROXY。X-Forwarded-* を信じる相手（auto は内側のアドレスからの接続だけ。http.ts の TrustProxy） */
+  trustProxy: TrustProxy;
+}
+
+function trustProxyOf(raw: string | undefined): TrustProxy {
+  const v = (raw ?? "").trim().toLowerCase();
+  if (v === "" || v === "auto") return "auto";
+  if (v === "true" || v === "always") return "always";
+  if (v === "false" || v === "never") return "never";
+  throw new EnvError(`KANZUME_TRUST_PROXY は auto・always・never のどれかにしてください（${raw}）`);
 }
 
 /** 環境変数の値が使えないとき（起動を止める） */
@@ -64,5 +75,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): Config {
     logRetentionHours: num(env, "KANZUME_LOG_RETENTION_HOURS", 72, 1),
     backup: parseBackupUrl(env.KANZUME_BACKUP_URL),
     isolation: env.KANZUME_ISOLATION === "inline" ? "inline" : "process",
+    trustProxy: trustProxyOf(env.KANZUME_TRUST_PROXY),
   };
 }

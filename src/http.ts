@@ -1,15 +1,64 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { BlockList, isIPv4, isIPv6 } from "node:net";
 import { Readable } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { NULL_BODY_STATUS } from "./runtime/protocol.ts";
 
+/**
+ * X-Forwarded-* を信じるか（KANZUME_TRUST_PROXY）。auto（既定）は、直接つないできた相手がループバック・プライベートなどの
+ * 内側のアドレスのときだけ信じる。Railway・Render・Docker・同じホストのリバースプロキシは内側のアドレスからつなぐので、そのまま動く。
+ * インターネットから直接受けるときは、訪問者が書いた X-Forwarded-For で IP を偽れないようにする
+ */
+export type TrustProxy = "auto" | "always" | "never";
+
+let trustProxy: TrustProxy = "auto";
+
+export function setTrustProxy(mode: TrustProxy): void {
+  trustProxy = mode;
+}
+
+const INTERNAL = new BlockList();
+for (const [net, prefix] of [
+  ["127.0.0.0", 8],
+  ["10.0.0.0", 8],
+  ["172.16.0.0", 12],
+  ["192.168.0.0", 16],
+  ["169.254.0.0", 16],
+  // キャリアグレード NAT（Railway などの内部ネットワーク）
+  ["100.64.0.0", 10],
+] as const) {
+  INTERNAL.addSubnet(net, prefix, "ipv4");
+}
+for (const [net, prefix] of [
+  ["::1", 128],
+  ["fc00::", 7],
+  ["fe80::", 10],
+] as const) {
+  INTERNAL.addSubnet(net, prefix, "ipv6");
+}
+
+/** 直接つないできた相手が、X-Forwarded-* を信じてよいプロキシか */
+export function fromTrustedProxy(req: IncomingMessage): boolean {
+  if (trustProxy !== "auto") return trustProxy === "always";
+  const addr = req.socket.remoteAddress ?? "";
+  const v4 = addr.startsWith("::ffff:") ? addr.slice(7) : addr;
+  if (isIPv4(v4)) return INTERNAL.check(v4, "ipv4");
+  return isIPv6(addr) && INTERNAL.check(addr, "ipv6");
+}
+
+/** リクエストされたホスト（信じてよいプロキシからなら X-Forwarded-Host） */
+export function requestHost(req: IncomingMessage): string {
+  const forwarded = fromTrustedProxy(req) ? req.headers["x-forwarded-host"] : undefined;
+  return String(forwarded ?? req.headers.host ?? "");
+}
+
 /** リクエストされたホストのオリジン */
 export function requestOrigin(req: IncomingMessage): string {
   const proto =
-    String(req.headers["x-forwarded-proto"] ?? "")
+    String((fromTrustedProxy(req) && req.headers["x-forwarded-proto"]) || "")
       .split(",")[0]
       .trim() || "http";
-  return `${proto}://${req.headers["x-forwarded-host"] ?? req.headers.host ?? "localhost"}`;
+  return `${proto}://${requestHost(req) || "localhost"}`;
 }
 
 /**
@@ -35,9 +84,10 @@ export function siteOrigin(rootOrigin: string, name: string): string {
 
 /**
  * 訪問者の IP（Worker の cf-connecting-ip）。X-Forwarded-For の先頭は訪問者が自由に書けるので、
- * 手前のプロキシ（Railway・Render など）が最後に足した値を使う。プロキシがなければ接続元のアドレス
+ * 手前のプロキシ（Railway・Render など）が最後に足した値を使う。信じてよいプロキシからでなければ接続元のアドレス
  */
 export function clientIp(req: IncomingMessage): string {
+  if (!fromTrustedProxy(req)) return req.socket.remoteAddress || "";
   const forwarded = String(req.headers["x-forwarded-for"] ?? "")
     .split(",")
     .map((s) => s.trim())
@@ -50,6 +100,8 @@ export function clientIp(req: IncomingMessage): string {
 export function toWebRequest(req: IncomingMessage, url: string, extraHeaders: Record<string, string> = {}, signal?: AbortSignal): Request {
   const headers = new Headers();
   for (const [key, value] of Object.entries(req.headers)) {
+    // cf-connecting-ip など cf- で始まるものは Cloudflare が付けるヘッダーで、Worker はそれを信じる。訪問者が書いたものは渡さない
+    if (value === undefined || key.startsWith(":") || key.startsWith("cf-")) continue;
     if (Array.isArray(value)) for (const v of value) headers.append(key, v);
     else headers.set(key, value);
   }

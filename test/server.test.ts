@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import http from "node:http";
+import http, { type IncomingMessage } from "node:http";
+import { EnvError, loadConfig } from "../src/config.ts";
+import { fromTrustedProxy, setTrustProxy } from "../src/http.ts";
 import { test, type TestContext } from "node:test";
 import { nameInTarGz, rawTarEntry, rawTarGz, tarGz, toCjs } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
@@ -101,6 +103,34 @@ test("アセットがあればアセット、なければ Worker が応答する
   await deploy(workerBundle(t, source, { assets: { directory: "public", run_worker_first: ["/api/*"] } }, assets));
   assert.equal(await (await fetch(`${base}/api/static.txt`)).text(), "worker:/api/static.txt");
   assert.equal(await (await fetch(`${base}/`)).text(), "index");
+});
+
+test("訪問者が送った cf- で始まるヘッダーは Worker に渡さず、cf-connecting-ip は Kanzume が付ける", async (t) => {
+  const { base, deploy } = await start(t);
+  const source = `export default { fetch(request) { return Response.json(Object.fromEntries([...request.headers].filter(([k]) => k.startsWith("cf-")))); } }`;
+  await deploy(workerBundle(t, source));
+  const headers = await (await fetch(`${base}/`, { headers: { "cf-connecting-ip": "6.6.6.6", "cf-ipcountry": "JP", "cf-ray": "x" } })).json();
+  assert.deepEqual(headers, { "cf-connecting-ip": "127.0.0.1" });
+});
+
+test("KANZUME_TRUST_PROXY=never なら X-Forwarded-* を信じず、接続元のアドレスとホストを使う", async (t) => {
+  const { base, deploy } = await start(t, { KANZUME_TRUST_PROXY: "never" });
+  t.after(() => setTrustProxy("auto"));
+  const source = `export default { fetch(request) { return Response.json({ url: request.url, ip: request.headers.get("cf-connecting-ip") }); } }`;
+  await deploy(workerBundle(t, source));
+  const res = await fetch(`${base}/p`, { headers: { "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https" } });
+  assert.deepEqual(await res.json(), { url: `${base}/p`, ip: "127.0.0.1" });
+});
+
+test("auto では、内側のアドレス（ループバック・プライベート・CGNAT・ULA）からの接続だけ X-Forwarded-* を信じる", () => {
+  const req = (remoteAddress: string) => ({ socket: { remoteAddress }, headers: {} }) as unknown as IncomingMessage;
+  for (const a of ["127.0.0.1", "::1", "10.1.2.3", "172.20.0.1", "192.168.1.1", "100.64.0.5", "::ffff:192.168.1.1", "fd12::1", "fe80::1"]) {
+    assert.equal(fromTrustedProxy(req(a)), true, a);
+  }
+  for (const a of ["8.8.8.8", "203.0.113.9", "::ffff:8.8.8.8", "2001:db8::1", "172.32.0.1", ""]) assert.equal(fromTrustedProxy(req(a)), false, a);
+  assert.throws(() => loadConfig({ KANZUME_TRUST_PROXY: "yes" }), EnvError);
+  assert.equal(loadConfig({}).trustProxy, "auto");
+  assert.equal(loadConfig({ KANZUME_TRUST_PROXY: "true" }).trustProxy, "always");
 });
 
 /** パスをそのまま送る（fetch は URL を正規化してから送るので、//admin や \admin を再現できない） */
