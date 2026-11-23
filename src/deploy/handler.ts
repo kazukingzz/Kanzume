@@ -55,8 +55,7 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
         const meta = parseJson(files.find((f) => f.path === `${META_DIR}meta.json`)) as { source?: unknown } | undefined;
         const sources = parseJson(files.find((f) => f.path === `${META_DIR}sources.json`));
         return deployer.deploy({
-          // 管理者のトークンのときだけ、最初のサイトをルートにする
-          autoRoot: access.autoRoot,
+          byAdmin: access.sites === null,
           guard,
           siteName: site,
           files: files.filter((f) => !f.path.startsWith(META_DIR)),

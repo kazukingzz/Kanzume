@@ -44,6 +44,11 @@ export const adminRoutes: Route[] = [
       if (name !== null && state.siteHasMembers(name)) {
         return fail(400, "メンバー（または未使用の招待）がいるサイトは、ルートドメインにできません（管理画面と同じオリジンで動くため）");
       }
+      // 今のメンバーを外しても、メンバーが書いたコードが動いていたり、リポジトリに残っていたりする
+      if (name !== null && sites.memberDeployed(name)) {
+        return fail(400, "メンバーがデプロイしたことがあるサイトは、ルートドメインにできません（管理画面と同じオリジンで動くため）");
+      }
+      // 確かめてから切り替えるまでに await を挟まない（setRoot は書き込みの前に切り替え、デプロイの側も同期で確かめる）
       await sites.setRoot(name);
       return { root: sites.root };
     },

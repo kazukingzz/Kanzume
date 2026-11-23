@@ -1,12 +1,20 @@
 import assert from "node:assert/strict";
 import http from "node:http";
 import { test, type TestContext } from "node:test";
-import { rawTarEntry, rawTarGz, tarGz, toCjs } from "./helpers.ts";
+import { nameInTarGz, rawTarEntry, rawTarGz, tarGz, toCjs } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
 
 async function start(t: TestContext, env: Record<string, string> = {}) {
   const app = await startApp(t, env);
-  const deploy = (body: Buffer, token = app.token) => app.deploy(body, { token });
+  // ここでは最初にデプロイするサイトをルートで配信して確かめる（ルートは管理者が選ぶものなので、デプロイの前に選んでおく）
+  const deploy = async (body: Buffer, token = app.token) => {
+    const site = nameInTarGz(body);
+    if (!app.sites.root) {
+      await app.sites.ensure(site);
+      await app.sites.setRoot(site);
+    }
+    return app.deploy(body, { token, site });
+  };
   return { ...app, deploy, store: { get: () => app.sites.get(app.sites.root ?? "")?.get() } };
 }
 
@@ -42,7 +50,7 @@ test("静的サイトをデプロイするとルートで配信される", async
   assert.equal(res.status, 200);
   const json = (await res.json()) as { url: string; name: string };
   assert.equal(json.name, "site");
-  assert.equal(json.url, `${base}/`, "最初のサイトはルートで配信するのでルートの URL");
+  assert.equal(json.url, `${base}/`, "ルートに選んだサイトなのでルートの URL");
 
   assert.equal(await (await fetch(`${base}/`)).text(), "<h1>site</h1>");
   assert.equal(await (await fetch(`${base}/about`)).text(), "about");

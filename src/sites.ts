@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { closeSiteDb } from "./bindings/db.ts";
@@ -6,7 +6,7 @@ import { siteOrigin } from "./http.ts";
 import { SerialQueue } from "./serial.ts";
 import { PROJECT_NAME, Store } from "./store.ts";
 import { UserFacingError } from "./errors.ts";
-import { ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
+import { MEMBER_DEPLOYED_FILE, ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
 import { normalizeSiteManagedFiles, type SiteManagedFiles } from "./managed-files.ts";
 import { parseSiteAccess, type SiteAccess } from "./site-auth.ts";
 
@@ -101,8 +101,8 @@ export class Sites {
   #settings = new Map<string, SiteSettings>();
   #queue = new SerialQueue();
   #root: string | null = null;
-  /** ルートを一度でも決めた（外した）か。_root ファイルがあれば決めたことにする（空ならルートなし） */
-  #rootDecided = false;
+  /** 管理者以外がデプロイしたことのあるサイト */
+  #memberDeployed = new Set<string>();
   /** 新しいサイトのディレクトリを作ったあとに呼ぶ（Worker を子プロセスで動かすとき、権限をそろえる） */
   onCreate: ((name: string, siteDir: string) => void) | null = null;
   /** 設定・ルート・サイトの削除のあとに呼ぶ（バックアップのきっかけ） */
@@ -131,6 +131,7 @@ export class Sites {
       await store.init();
       this.#stores.set(entry.name, store);
       this.#settings.set(entry.name, readSiteSettings(store.siteDir));
+      if (existsSync(path.join(store.siteDir, MEMBER_DEPLOYED_FILE))) this.#memberDeployed.add(entry.name);
     }
     // 変更のときと同じく、サブドメインの形と重なりを確かめる（ファイルを直接書き換えられても、ほかのサイトのサブドメインを取らせない）。
     // サイトの ID と同じサブドメイン（既定）を先に確保し、それと重なる別名や不正な別名は無視する
@@ -159,13 +160,8 @@ export class Sites {
         taken.add(label);
       }
     }
+    // 以前は最初のデプロイで自動でルートにしていた。そのときに決まったルートは、そのまま使う
     const raw = await fs.readFile(path.join(this.dir, ROOT_FILE), "utf8").catch(() => null);
-    this.#rootDecided = raw !== null;
-    // _root を記録する前から使っている環境: デプロイ済みのサイトがあれば、もう決めたものとして扱う
-    if (!this.#rootDecided && [...this.#stores.values()].some((s) => s.get())) {
-      await fs.writeFile(path.join(this.dir, ROOT_FILE), "");
-      this.#rootDecided = true;
-    }
     const root = (raw ?? "").trim();
     this.#root = root && this.#stores.has(root) ? root : null;
   }
@@ -295,6 +291,7 @@ export class Sites {
     if (!store) return;
     this.#stores.delete(name);
     this.#settings.delete(name);
+    this.#memberDeployed.delete(name);
     closeSiteDb(store.siteDir);
     await fs.rm(store.siteDir, { recursive: true, force: true });
     if (this.#root === name) await this.setRoot(null);
@@ -312,19 +309,38 @@ export class Sites {
     return this.#root;
   }
 
-  /** ルートを一度でも決めた（外した）か */
-  get rootDecided(): boolean {
-    return this.#rootDecided;
-  }
-
+  /**
+   * ルートドメインで配信するサイトを変える（管理者が選んだときだけ。デプロイでは変えない）。
+   * 書き込みを待つ前に切り替える（呼び出し側の確かめと切り替えの間に、メンバーのデプロイを挟ませないため。
+   * デプロイ側も、ルートかを見てから markMemberDeployed するまでを同期で行う）
+   */
   async setRoot(name: string | null): Promise<void> {
     if (name !== null && !this.#stores.has(name)) throw new Error(`サイトがありません: ${name}`);
-    const file = path.join(this.dir, ROOT_FILE);
-    // 外したときもファイルは残す（空にする）。一度決めたら、デプロイで自動でルートにしないため
-    await fs.writeFile(file, name ?? "");
+    const prev = this.#root;
     this.#root = name;
-    this.#rootDecided = true;
+    try {
+      await fs.writeFile(path.join(this.dir, ROOT_FILE), name ?? "");
+    } catch (err) {
+      if (this.#root === name) this.#root = prev;
+      throw err;
+    }
     this.onChange?.();
+  }
+
+  /** 管理者以外（メンバーのトークン・セッション・push）がデプロイしたことがあるか。一度でもあれば、ルートドメインにしない */
+  memberDeployed(name: string): boolean {
+    return this.#memberDeployed.has(name);
+  }
+
+  /**
+   * 管理者以外のデプロイを記録する（リリースを作る前に呼ぶ）。印は同期で付け、ファイルにはそのあと書く。
+   * 履歴（meta.sqlite）に頼らないのは、サイトごとに古いものから消えるため
+   */
+  async markMemberDeployed(name: string): Promise<void> {
+    const store = this.#stores.get(name);
+    if (!store || this.#memberDeployed.has(name)) return;
+    this.#memberDeployed.add(name);
+    await fs.writeFile(path.join(store.siteDir, MEMBER_DEPLOYED_FILE), "");
   }
 }
 

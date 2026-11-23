@@ -104,8 +104,8 @@ export interface BuildContext {
   buildLog: string[];
   /** 設定ファイルが見つからないときのメッセージに使う場所の説明 */
   where?: string;
-  /** 最初のデプロイのとき、このサイトをルートドメインにしてよいか（管理者のデプロイのときだけ） */
-  autoRoot?: boolean;
+  /** 管理者のデプロイか（DeployInput.byAdmin） */
+  byAdmin: boolean;
   /** デプロイ先のサイト（管理画面で追加済みのもの。wrangler の name は使わない） */
   siteName: string;
   /** 反映の直前に権限を確かめ直す（deployer.ts の DeployGuard） */
@@ -244,7 +244,7 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
       source: ctx.source,
       buildLog: buildLog.join("\n"),
       log,
-      autoRoot: ctx.autoRoot,
+      byAdmin: ctx.byAdmin,
       guard: ctx.guard,
       siteName: ctx.siteName,
     });

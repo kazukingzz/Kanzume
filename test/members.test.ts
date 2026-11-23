@@ -17,7 +17,7 @@ const cred = (id: string, userId?: string) => ({ id, publicKey: "AAAA", counter:
 async function start(t: TestContext) {
   const app = await startApp(t);
   const as = app.api;
-  const deploy = async (name: string) => {
+  const deploy = async (name: string, byAdmin = true) => {
     await app.sites.ensure(name);
     const result = await deployFromFiles(
       [
@@ -25,7 +25,7 @@ async function start(t: TestContext) {
         { path: "index.js", data: Buffer.from(`export default { fetch() { return new Response(${JSON.stringify(name)}); } };`) },
       ],
       app.deployer,
-      { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: false, siteName: name },
+      { source: {}, log: new DeployLog("test"), buildLog: [], byAdmin, siteName: name },
     );
     assert.equal(result.ok, true, result.ok ? "" : result.error);
   };
@@ -333,7 +333,7 @@ test("データベース（KV）とストレージ（R2）の中身を見て、�
       },
     ],
     app.deployer,
-    { source: {}, log: new DeployLog("t"), buildLog: [], autoRoot: true, siteName: "blog" },
+    { source: {}, log: new DeployLog("t"), buildLog: [], byAdmin: true, siteName: "blog" },
   );
   assert.equal(result.ok, true);
   const worker = await app.runtime.get(app.sites.get("blog")!.get()!);
@@ -480,13 +480,66 @@ test("ルートドメインのサイトにはメンバーを入れない（管�
   assert.equal((await member(app, []).then((m) => m.api("/invite/accept", "POST", { token }))).status, 400);
 });
 
-test("最初のデプロイでも、メンバーのいるサイトは自動でルートにしない", async (t) => {
+test("管理者の最初のデプロイでも自動でルートにはならず、管理者が選んだときだけルートになる", async (t) => {
   const app = await start(t);
-  await app.sites.ensure("blog");
-  await member(app, ["blog"]);
   await app.deploy("blog");
   assert.equal(app.sites.root, null);
-  assert.equal(app.sites.rootDecided, true);
+  assert.equal((await app.admin("/root-site", "POST", { name: "blog" })).status, 200);
+  assert.equal(app.sites.root, "blog");
+  await app.sites.init();
+  assert.equal(app.sites.root, "blog", "再起動しても管理者が選んだルートのまま");
+});
+
+test("メンバーがデプロイしたことのあるサイトは、メンバーを外したあとも、管理者が再デプロイしてもルートにできない", async (t) => {
+  const app = await start(t);
+  await app.sites.ensure("blog");
+  const { user } = await member(app, ["blog"]);
+  const { token } = await app.state.createUserToken(user.id, "ci", null);
+  const bundle = gzipSync(
+    rawTar([
+      rawTarEntry("wrangler.jsonc", Buffer.from(JSON.stringify({ name: "blog", compatibility_date: "2026-10-01", assets: { directory: "public" } }))),
+      rawTarEntry("assets/index.html", Buffer.from("member")),
+    ]),
+  );
+  const deployed = await fetch(`${app.base}/_api/deploy`, {
+    method: "POST",
+    headers: { authorization: `Bearer ${token}`, "x-kanzume-site": "blog" },
+    body: bundle,
+  });
+  assert.equal(deployed.status, 200, await deployed.clone().text());
+  assert.equal(app.sites.memberDeployed("blog"), true);
+  assert.equal(app.sites.root, null);
+
+  assert.equal((await app.admin(`/users/${user.id}`, "DELETE")).status, 200);
+  assert.equal(app.state.siteHasMembers("blog"), false);
+  await app.deploy("blog");
+  const res = await app.admin("/root-site", "POST", { name: "blog" });
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as { error: string }).error, /メンバーがデプロイしたことがあるサイト/);
+  await app.sites.init();
+  assert.equal((await app.admin("/root-site", "POST", { name: "blog" })).status, 400, "再起動しても覚えている");
+  assert.equal(app.sites.root, null);
+});
+
+test("ルートのサイトには、管理者以外のデプロイを断る（記録も残さない）", async (t) => {
+  const app = await start(t);
+  await app.deploy("home");
+  assert.equal((await app.admin("/root-site", "POST", { name: "home" })).status, 200);
+  const before = app.sites.get("home")!.get()!.id;
+  const result = await deployFromFiles(
+    [
+      { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: "home", assets: { directory: "p" } })) },
+      { path: "p/index.html", data: Buffer.from("member") },
+    ],
+    app.deployer,
+    { source: {}, log: new DeployLog("t"), buildLog: [], byAdmin: false, siteName: "home" },
+  );
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /管理者しかデプロイできません/);
+  assert.equal(app.sites.get("home")!.get()!.id, before, "公開中のリリースは変わらない");
+  assert.equal(app.sites.memberDeployed("home"), false);
+  await app.deploy("home");
+  assert.notEqual(app.sites.get("home")!.get()!.id, before, "管理者はデプロイできる");
 });
 
 test("URL にできないドメインは保存しない。管理画面で追加していないサイトへの Actions のデプロイは 404", async (t) => {

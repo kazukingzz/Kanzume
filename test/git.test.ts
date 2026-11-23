@@ -62,18 +62,18 @@ const NO_GIT = (() => {
 })();
 
 test("Kanzume のリポジトリに main を push すると、wrangler の設定どおりにデプロイされる", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, sites, history, createRepo } = await start(t);
+  const { site, remote, repos, sites, history, createRepo } = await start(t);
   await createRepo("blog");
   const dir = workTree(t, WORKER);
 
   const push = await git(dir, ["push", remote("blog"), "main"]);
   assert.equal(push.status, 0, push.output);
   assert.match(push.output, /remote: .*git push（blog@main [0-9a-f]{7}）からデプロイします/);
-  assert.match(push.output, /remote: デプロイしました: http:\/\/127\.0\.0\.1:\d+\//);
+  assert.match(push.output, /remote: デプロイしました: http:\/\/blog\.127\.0\.0\.1:\d+\//);
 
   assert.equal(sites.list()[0].name, "blog");
-  assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git");
-  assert.equal(await (await fetch(`${base}/robots.txt`)).text(), "User-agent: *");
+  assert.equal(await (await site("blog.localhost", "/x")).text(), "hi from git");
+  assert.equal(await (await site("blog.localhost", "/robots.txt")).text(), "User-agent: *");
   const [d] = history.list("blog");
   assert.equal(d.status, "success");
   assert.deepEqual(
@@ -93,7 +93,7 @@ test("Kanzume のリポジトリに main を push すると、wrangler の設定
   const feature = await git(dir, ["push", remote("blog"), "feature"]);
   assert.equal(feature.status, 0, feature.output);
   assert.match(feature.output, /remote: main 以外への push なので、保存だけしてデプロイはしません/);
-  assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git");
+  assert.equal(await (await site("blog.localhost", "/x")).text(), "hi from git");
   assert.deepEqual((await repos.refs("blog")).map((r) => r.branch).sort(), ["feature", "main"]);
 
   // 強制 push も write なら通る
@@ -206,7 +206,7 @@ test("管理 API でリポジトリを作り、ブランチ・コミット・フ
 });
 
 test("name がほかのサイトのコミットも、リポジトリのサイトにデプロイし、ほかのサイトは上書きできない", { skip: NO_GIT }, async (t) => {
-  const { base, remote, sites, state, history, createRepo } = await start(t);
+  const { site, remote, sites, state, history, createRepo } = await start(t);
   await createRepo("blog");
   await createRepo("sample");
   assert.equal((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).status, 0);
@@ -216,7 +216,7 @@ test("name がほかのサイトのコミットも、リポジトリのサイト
   const push = await git(evil, ["push", remote("sample", token), "main"]);
   assert.equal(push.status, 0, push.output);
   assert.match(push.output, /remote: デプロイしました/);
-  assert.equal(await (await fetch(`${base}/x`)).text(), "hi from git", "blog はそのまま");
+  assert.equal(await (await site("blog.localhost", "/x")).text(), "hi from git", "blog はそのまま");
   assert.deepEqual(
     sites.list().map((s) => s.name),
     ["blog", "sample"],
@@ -227,7 +227,7 @@ test("name がほかのサイトのコミットも、リポジトリのサイト
 });
 
 test("main の削除は拒否し（ほかのブランチは消せる）、続けて push したときは新しいコミットが残る", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, state, createRepo } = await start(t);
+  const { base, site, remote, repos, state, createRepo } = await start(t);
   await createRepo("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
@@ -251,7 +251,7 @@ test("main の削除は拒否し（ほかのブランチは消せる）、続け
     execFileSync("git", ["commit", "-qam", v], { cwd: dir, env: GIT_ENV });
     assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
   }
-  assert.equal(await (await fetch(`${base}/x`)).text(), "hi v3");
+  assert.equal(await (await site("blog.localhost", "/x")).text(), "hi v3");
 
   const cookie = `kanzume_session=${await state.createSession()}`;
   const blob = (p: string) => fetch(`${base}/_admin/kanzume/api/repos/blog/blob?path=${encodeURIComponent(p)}`, { headers: { cookie } });
@@ -320,7 +320,7 @@ test("IP アドレスの先頭の数字と同じ名前のサイトがあって�
 });
 
 test("main という名前のタグがあっても、main への push はデプロイされる", { skip: NO_GIT }, async (t) => {
-  const { base, remote, repos, createRepo } = await start(t);
+  const { site, remote, repos, createRepo } = await start(t);
   await createRepo("blog");
   const dir = workTree(t, WORKER);
   assert.equal((await git(dir, ["push", remote("blog"), "main"])).status, 0);
@@ -329,7 +329,7 @@ test("main という名前のタグがあっても、main への push はデプ�
   execFileSync("git", ["commit", "-qam", "タグのあと"], { cwd: dir, env: GIT_ENV });
   const push = await git(dir, ["push", remote("blog"), "main"]);
   assert.match(push.output, /remote: デプロイしました/, push.output);
-  assert.equal(await (await fetch(`${base}/x`)).text(), "hi after tag");
+  assert.equal(await (await site("blog.localhost", "/x")).text(), "hi after tag");
   assert.equal(await repos.defaultBranch("blog"), "main");
 });
 
@@ -346,24 +346,16 @@ test("リポジトリの容量の上限を超える push は受け付けない",
   assert.deepEqual(await app.repos.refs("blog"), []);
 });
 
-test("メンバーの最初の push はルートにならず、その後の管理者の push でもルートにならない", { skip: NO_GIT }, async (t) => {
+test("push ではルートにならず、メンバーの push は記録される", { skip: NO_GIT }, async (t) => {
   const { remote, sites, state, createRepo } = await start(t);
-  for (const name of ["blog", "shop", "docs"]) await createRepo(name);
+  for (const name of ["blog", "shop"]) await createRepo(name);
   const token = await memberToken(state, ["shop"]);
   const shop = workTree(t, { ...WORKER, "wrangler.jsonc": JSON.stringify({ name: "shop", main: "src/index.js" }) });
   assert.match((await git(shop, ["push", remote("shop", token), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, null, "メンバーのトークンでは自動でルートにしない");
+  assert.equal(sites.memberDeployed("shop"), true);
   assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, null, "最初のデプロイではないので、管理者の push でもルートにしない");
-
-  assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");
-});
-
-test("管理者の最初の push はルートになる", { skip: NO_GIT }, async (t) => {
-  const { remote, sites, createRepo } = await start(t);
-  await createRepo("blog");
-  assert.match((await git(workTree(t, WORKER), ["push", remote("blog"), "main"])).output, /remote: デプロイしました/);
-  assert.equal(sites.root, "blog");
+  assert.equal(sites.memberDeployed("blog"), false, "管理者の push は記録しない");
+  assert.equal(sites.root, null, "管理者の最初の push でもルートにしない");
 });
 
 test("設定のない push は、ファイルを取り出す前に止まり、失敗はリポジトリの履歴に残る", { skip: NO_GIT }, async (t) => {

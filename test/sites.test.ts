@@ -74,7 +74,8 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
     sites.list().map((s) => s.name),
     ["blog", "shop"],
   );
-  assert.equal(sites.root, "blog", "最初のサイトがルートドメインでも配信される");
+  assert.equal(sites.root, null, "最初のサイトでも自動でルートにしない");
+  await sites.setRoot("blog");
 
   await site("blog.localhost:8080");
   await site("blog.localhost:8080");
@@ -92,41 +93,43 @@ test("サイトはサブドメインで分かれ、同じ binding 名の KV / R2
   assert.equal(((await (await site("shop.localhost:8080", "/_api/other")).json()) as { site: string }).site, "shop", "ほかの /_api/ はサイトのパス");
 });
 
-test("自動でルートになるのは Kanzume で最初にデプロイしたサイトだけ。外したり消したりしても、ほかのサイトは自動でルートにならない", async (t) => {
+test("デプロイではルートを変えない。管理者のデプロイが最初でも、ルートを外したり消したりしたあとでも", async (t) => {
   const { deploy, sites } = await start(t);
   await deploy(counter(t, "blog"));
-  assert.equal(sites.root, "blog");
+  assert.equal(sites.root, null, "最初のデプロイでもルートにしない");
+
+  await sites.setRoot("blog");
+  await deploy(counter(t, "shop"));
+  assert.equal(sites.root, "blog", "ほかのサイトのデプロイでルートは変わらない");
 
   await sites.setRoot(null);
   await deploy(counter(t, "shop"));
-  assert.equal(sites.root, null, "ルートを外した後のデプロイではルートにしない");
+  assert.equal(sites.root, null, "ルートを外した後のデプロイでもルートにしない");
 
   await sites.setRoot("shop");
   await sites.remove("shop");
   assert.equal(sites.root, null);
   await deploy(counter(t, "docs"));
   assert.equal(sites.root, null, "ルートのサイトを消した後のデプロイでもルートにしない");
-
-  // 再起動しても覚えている
-  await sites.init();
-  assert.equal(sites.rootDecided, true);
 });
 
-test("_root がなくても、ほかのサイトがデプロイ済みなら自動でルートにしない（以前から使っている環境）", async (t) => {
+test("以前の版で決まったルート（_root）は、そのまま引き継ぐ", async (t) => {
   const { deploy, sites } = await start(t);
   await deploy(counter(t, "blog"));
+  fs.writeFileSync(path.join(sites.dir, "_root"), "blog");
+  await sites.init();
+  assert.equal(sites.root, "blog");
   fs.rmSync(path.join(sites.dir, "_root"));
   await sites.init();
-  assert.equal(sites.root, null);
-  assert.equal(sites.rootDecided, true, "デプロイ済みのサイトがあれば、起動時に決めたものとして扱う");
+  assert.equal(sites.root, null, "_root がなければルートなし（デプロイ済みのサイトがあっても自動で選ばない）");
   await deploy(counter(t, "shop"));
-  assert.equal(sites.root, null);
-  await deploy(counter(t, "blog"));
   assert.equal(sites.root, null);
 });
 
 test("KANZUME_ORIGIN を設定すると、存在しないサブドメインは 404 になる", async (t) => {
-  const { deploy, site } = await start(t, { KANZUME_ORIGIN: "https://tekitou.app" });
+  const { deploy, site, sites } = await start(t, { KANZUME_ORIGIN: "https://tekitou.app" });
+  await sites.ensure("blog");
+  await sites.setRoot("blog");
   const res = await deploy(counter(t, "blog"));
   assert.equal(((await res.json()) as { url: string }).url, "https://tekitou.app/", "ルートで配信するサイトはルートの URL を返す");
   const shop = await deploy(counter(t, "shop"));
@@ -140,6 +143,7 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
   const { base, deploy, site, sites, state, history, observability } = await start(t);
   await deploy(counter(t, "blog"));
   await deploy(counter(t, "shop"));
+  await sites.setRoot("blog");
   await site("blog.localhost");
   await site("shop.localhost");
   await site("shop.localhost");
@@ -201,8 +205,10 @@ test("ルートドメインを管理画面で設定すると、サイトはそ�
   assert.equal((await setDomain("https://Tekitou.app/")).status, 200);
   assert.equal(state.domain, "tekitou.app", "スキームと末尾の / を外し、小文字にそろえる");
 
+  await sites.ensure("blog");
+  await sites.setRoot("blog");
   const res = await deploy(counter(t, "blog"));
-  assert.equal(((await res.json()) as { url: string }).url, `${base.split("://")[0]}://tekitou.app/`, "最初のサイトはルートなので、ルートドメインの URL");
+  assert.equal(((await res.json()) as { url: string }).url, `${base.split("://")[0]}://tekitou.app/`, "ルートのサイトなので、ルートドメインの URL");
   await deploy(counter(t, "shop"));
   const overview = (await (await admin("/overview")).json()) as { domain: { value: string; effective: string; current: string } };
   assert.deepEqual(overview.domain, { value: "tekitou.app", fromEnv: false, effective: "tekitou.app", current: "fa.tekitou.app" });
@@ -239,19 +245,23 @@ test("KANZUME_ORIGIN があるときは管理画面からドメインを変え�
   assert.equal(res.status, 409);
 });
 
-test("メンバーが最初にデプロイしたサイトは、あとで管理者が再デプロイしてもルートにならない", async (t) => {
+test("管理者以外のデプロイは、あとで管理者が再デプロイしても、サイトを消すまで記録に残る", async (t) => {
   const { sites, deployer } = await start(t);
   const files = (n: string) => [
     { path: "wrangler.jsonc", data: Buffer.from(JSON.stringify({ name: n, assets: { directory: "p" } })) },
     { path: "p/index.html", data: Buffer.from(n) },
   ];
   await sites.ensure("shop");
-  const ctx = (autoRoot: boolean) => ({ source: {}, log: new DeployLog("test"), buildLog: [], autoRoot, siteName: "shop" });
-  assert.equal((await deployFromFiles(files("shop"), deployer, ctx(false))).ok, true);
-  assert.equal(sites.root, null);
-  assert.equal(sites.rootDecided, true, "メンバーの最初のデプロイで「ルートなし」に決まる");
+  const ctx = (byAdmin: boolean) => ({ source: {}, log: new DeployLog("test"), buildLog: [], byAdmin, siteName: "shop" });
   assert.equal((await deployFromFiles(files("shop"), deployer, ctx(true))).ok, true);
-  assert.equal(sites.root, null, "管理者の再デプロイでもルートにならない");
+  assert.equal(sites.memberDeployed("shop"), false, "管理者のデプロイは記録しない");
+  assert.equal((await deployFromFiles(files("shop"), deployer, ctx(false))).ok, true);
+  assert.equal((await deployFromFiles(files("shop"), deployer, ctx(true))).ok, true);
+  assert.equal(sites.memberDeployed("shop"), true);
+  assert.equal(sites.root, null);
+  await sites.remove("shop");
+  await sites.ensure("shop");
+  assert.equal(sites.memberDeployed("shop"), false, "消して作り直したサイトは別のサイト");
 });
 
 test("settings.json を直接書き換えても、ほかのサイトのサブドメインや不正なサブドメインは使わない", async (t) => {

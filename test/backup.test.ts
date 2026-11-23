@@ -71,9 +71,10 @@ async function setup(app: Awaited<ReturnType<typeof boot>>) {
       { path: "index.js", data: Buffer.from(WORKER) },
     ],
     app.deployer,
-    { source: {}, log: new DeployLog("test"), buildLog: [], autoRoot: true, siteName: "app" },
+    { source: {}, log: new DeployLog("test"), buildLog: [], byAdmin: true, siteName: "app" },
   );
   assert.equal(result.ok, true, result.ok ? "" : result.error);
+  await app.sites.setRoot("app");
   await app.sites.updateSettings("app", { secrets: { TOKEN: "s" } });
   await app.repos.create("app");
   await call(app, "PUT", "/a");

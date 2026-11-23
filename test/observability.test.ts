@@ -11,6 +11,9 @@ import { Invocation, Observability } from "../src/observability/events.ts";
 async function start(t: TestContext) {
   const app = await startApp(t);
   const auth = { authorization: `Bearer ${app.token}` };
+  // ここでは app をルートで配信して確かめる（ルートは管理者が選ぶ）
+  await app.sites.ensure("app");
+  await app.sites.setRoot("app");
   return { ...app, auth };
 }
 
@@ -142,6 +145,7 @@ test("同期処理の時間超過は exceededCpu として記録される", asyn
   const app = await startApp(t, { KANZUME_CPU_TIMEOUT_MS: "100" });
   const base = app.base;
   await app.sites.ensure("app");
+  await app.sites.setRoot("app");
   await fetch(`${base}/_api/deploy`, {
     method: "POST",
     headers: { authorization: `Bearer ${app.token}`, "x-kanzume-site": "app" },

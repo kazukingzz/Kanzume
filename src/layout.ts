@@ -12,6 +12,7 @@
  *   build/                デプロイのビルドの作業ディレクトリ（起動のたびに空にする。バックアップしない）
  *   sites/_root           ルートドメインのサイト
  *   sites/_uids.json      サイトごとの uid（Worker の子プロセス用）
+ *   sites/<site>/         サイト: releases/・current・settings.json（秘密）・member-deployed・data/（KV と R2。子が書ける）
  */
 import path from "node:path";
 
@@ -28,6 +29,8 @@ export const ROOT_FILE = "_root";
 export const UIDS_FILE = "_uids.json";
 export const SETTINGS_FILE = "settings.json";
 export const SITE_DATA_DIR = "data";
+/** 管理者以外がデプロイしたことのあるサイトの印（中身は空）。ルートドメインにしてよいかを決めるのに使う */
+export const MEMBER_DEPLOYED_FILE = "member-deployed";
 
 /** SQLite の本体と一緒にできるファイル */
 export const withSqliteSidecars = (db: string) => [db, `${db}-wal`, `${db}-shm`];

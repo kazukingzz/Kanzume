@@ -169,7 +169,7 @@ export function inspectFiles(fetched: Fetched): Inspection {
   return { vars };
 }
 
-/** autoRoot: ルートのサイトがまだないとき、このサイトをルートにしてよいか（管理者のときだけ。ルートは管理画面と同じオリジンになるため） */
+/** byAdmin: 管理者のデプロイか（DeployInput.byAdmin） */
 export async function deployFromGitHub(
   input: string,
   deployer: Deployer,
@@ -180,7 +180,7 @@ export async function deployFromGitHub(
   try {
     fetched = await fetchFromGitHub(input, options, log);
   } catch (err) {
-    return recordBuildFailure(deployer, err, { source: {}, buildLog: [], log, siteName: options.siteName }, "GitHub からのデプロイ");
+    return recordBuildFailure(deployer, err, { source: {}, buildLog: [], log, siteName: options.siteName, byAdmin: options.byAdmin }, "GitHub からのデプロイ");
   }
   const { source, dir, files } = fetched;
   return deployFromFiles(files, deployer, {
@@ -188,7 +188,7 @@ export async function deployFromGitHub(
     log,
     buildLog: [],
     where: dir ? `${dir}/ ` : "リポジトリのトップ",
-    autoRoot: options.autoRoot ?? false,
+    byAdmin: options.byAdmin,
     guard: options.guard,
     siteName: options.siteName,
   });

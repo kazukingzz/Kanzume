@@ -54,7 +54,6 @@ async function deployGitHub(ctx: Ctx) {
           await sites.updateSettings(siteName, patch);
           evict();
         }
-        // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
         const result = await deployFromGitHub(url, deployer, { ...githubOptions(ctx), siteName, byAdmin: ctx.isAdmin, guard });
         if (!result.ok) {
           await rollback();
@@ -125,8 +124,7 @@ async function upload(ctx: Ctx) {
         buildLog: [],
         where: "アップロードしたファイルのトップ",
         siteName: name,
-        // メンバーのサイトを自動でルートにしない（ルートは管理画面と同じオリジンで動くため）
-        autoRoot: ctx.isAdmin,
+        byAdmin: ctx.isAdmin,
         guard,
       }).catch(async (err: unknown) => {
         await discard();

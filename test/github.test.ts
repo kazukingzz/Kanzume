@@ -70,7 +70,7 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   await app.sites.ensure("example");
   const result = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/examples/worker", app.deployer, {
     siteName: "example",
-    autoRoot: true,
+    byAdmin: true,
     fetch: fetcher,
     apiBase: "https://api.test",
     codeloadBase: "https://codeload.test",
@@ -78,7 +78,8 @@ test("このリポジトリの examples/worker を GitHub の URL からデプ�
   });
   assert.equal(result.ok, true, result.ok ? "" : result.error);
 
-  const release = app.sites.get(app.sites.root ?? "")!.get()!;
+  assert.equal(app.sites.root, null, "最初のデプロイでも、自動でルートにしない");
+  const release = app.sites.get("example")!.get()!;
   assert.equal(release.manifest.name, "example", "wrangler の name ではなく、指定したサイトにデプロイする");
   const worker = await app.runtime.get(release);
   const hello = await worker.fetch(new Request("http://x/api/hello"));
@@ -114,7 +115,7 @@ test("スラッシュを含むブランチ名とリポジトリのトップを�
   const files = { "wrangler.json": JSON.stringify({ name: "top", assets: { directory: "site" } }), "site/index.html": "top" };
   const { fetcher, requests } = fakeGitHub(repoTarball(t, files), ["feature/x", "main"]);
   await app.sites.ensure("top");
-  const opts = { siteName: "top", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
+  const opts = { siteName: "top", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024, byAdmin: true };
 
   const nested = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/feature/x", app.deployer, opts);
   assert.equal(nested.ok, true);
@@ -131,7 +132,7 @@ test("デプロイできないリポジトリは理由付きの失敗として�
   await app.sites.ensure("app");
   const opts = (tarball: Buffer) => {
     const { fetcher } = fakeGitHub(tarball);
-    return { siteName: "app", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024 };
+    return { siteName: "app", fetch: fetcher, apiBase: "https://api.test", codeloadBase: "https://codeload.test", maxBytes: 1024 * 1024, byAdmin: true };
   };
   const url = "https://github.com/kazukingzz/kanzume/tree/main/app";
 
@@ -159,7 +160,7 @@ test("デプロイできないリポジトリは理由付きの失敗として�
   const emptyResult = await deployFromGitHub("https://github.com/kazukingzz/kanzume", app.deployer, { ...opts(noConfig), fetch: empty });
   assert.match(emptyResult.ok ? "" : emptyResult.error, /空のリポジトリ/);
 
-  assert.equal(app.sites.get(app.sites.root ?? "")?.get(), undefined);
+  assert.equal(app.sites.get("app")?.get(), undefined);
   const history = app.history.list();
   assert.equal(history.length, 5);
   assert.ok(history.every((d) => d.status === "failed"));
@@ -181,6 +182,7 @@ test("リポジトリの外のファイルを import・alias するリポジト�
       apiBase: "https://api.test",
       codeloadBase: "https://codeload.test",
       maxBytes: 1024 * 1024,
+      byAdmin: true,
     });
   };
   const config = (extra: Record<string, unknown> = {}) => JSON.stringify({ name: "evil", main: "src/index.ts", ...extra });
@@ -203,7 +205,7 @@ test("リポジトリの外のファイルを import・alias するリポジト�
   });
   assert.match(aliased.ok ? "" : aliased.error, /alias/);
 
-  assert.equal(app.sites.get(app.sites.root ?? "")?.get(), undefined);
+  assert.equal(app.sites.get("evil")?.get(), undefined);
   for (const d of app.history.list()) {
     const full = app.history.get(d.id)!;
     assert.doesNotMatch(full.log + full.buildLog, /kz_secret_value/);
@@ -361,7 +363,7 @@ test("管理画面: URL を読み、サイト名・環境変数・シークレ�
   assert.equal(((await (await site("blog.localhost")).json()) as { GREETING: string }).GREETING, "changed");
 });
 
-test("メンバーが管理画面の GitHub デプロイで自分のサイトをデプロイしても、ルートにはならない", async (t) => {
+test("メンバーが管理画面の GitHub デプロイで自分のサイトをデプロイしても、ルートにはならず、メンバーのデプロイとして記録される", async (t) => {
   const { fetcher } = fakeGitHub(
     repoTarball(t, {
       "apps/hello/wrangler.jsonc": `{ "main": "index.js", "compatibility_date": "2026-10-01" }`,
@@ -385,6 +387,7 @@ test("メンバーが管理画面の GitHub デプロイで自分のサイトを
   assert.equal(res.status, 200, await res.clone().text());
   assert.equal(app.sites.deployed("blog"), true);
   assert.equal(app.sites.root, null, "ルートは管理画面と同じオリジンなので、メンバーのデプロイでは決めない");
+  assert.equal(app.sites.memberDeployed("blog"), true, "あとでルートにさせないために記録する");
 });
 
 test("既存のサイトの GitHub からの再デプロイに失敗したら、環境変数は元に戻る", async (t) => {

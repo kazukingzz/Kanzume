@@ -55,16 +55,18 @@ export interface DeployInput {
   buildLog: string;
   log: DeployLog;
   /**
-   * ルートドメインで配信するサイトがまだないとき、このサイトをルートにするか。
-   * ルートは管理画面と同じオリジンなので、管理者のデプロイのときだけ true にする（ルートにするのは、メンバーのいないサイトだけ）
+   * 管理者のデプロイか（管理者のトークン・セッション・push）。ルートのサイトは管理画面と同じオリジンで動くので、
+   * 管理者以外のデプロイはルートのサイトには断り、ほかのサイトでは記録して、あとでルートにさせない
    */
-  autoRoot?: boolean;
+  byAdmin: boolean;
   /**
    * デプロイ先のサイト（管理画面で追加済みのもの）。wrangler の name は使わない。
    * サイトはデプロイでは作らない（先に管理画面でサイトを追加する）
    */
   siteName: string;
 }
+
+export const ROOT_SITE_ADMIN_ONLY = "ルートドメインで配信しているサイトには、管理者しかデプロイできません（管理画面と同じオリジンで動くため）";
 
 export type DeployResult = { ok: true; release: Release } | { ok: false; error: string };
 
@@ -105,7 +107,6 @@ export class Deployer {
    * /tmp にしないのは、esbuild が作業ディレクトリの親をたどって package.json を読むため
    * （誰でも書ける /tmp に置かれた package.json で、すべてのサイトのビルドを壊せてしまう）
    */
-  canBeRoot: (site: string) => boolean = () => true;
   workRoot: string = os.tmpdir();
 
   constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
@@ -138,6 +139,9 @@ export class Deployer {
     const store = this.#sites.get(site);
     if (!store) return { ok: false, error: siteNotFound(site).message };
     const access = guard ? guard(store) : ({ ok: true, admin: true } as const);
+    if (access.ok && !access.admin && this.#sites.root === site) {
+      return { ok: false, error: ROOT_SITE_ADMIN_ONLY };
+    }
     return access;
   }
 
@@ -206,6 +210,11 @@ export class Deployer {
       // 待っている間に消されたサイトにはデプロイしない
       const store = this.#sites.get(manifest.name);
       if (!store) return { ok: false, error: siteNotFound(manifest.name).message } as const;
+      if (!input.byAdmin) {
+        // ルートかを見てから印を付けるまでを同期で行う（間にルートに選ばれないように。setRoot の側も同期で切り替える）
+        if (this.#sites.root === manifest.name) return { ok: false, error: ROOT_SITE_ADMIN_ONLY } as const;
+        await this.#sites.markMemberDeployed(manifest.name);
+      }
       const release = await store.createRelease(manifest, kept);
       log.add(`リリース ${release.id} を保存しました`);
       let worker = null;
@@ -237,9 +246,6 @@ export class Deployer {
         worker?.close?.();
         throw err;
       }
-      // ルートドメインのサイトは、Kanzume で最初のデプロイのときにだけ自動で決める。
-      // 管理者のデプロイならそのサイト、メンバーのデプロイなら「ルートなし」で確定させる（後からメンバーのサイトがルートにならないように）
-      if (!this.#sites.rootDecided) await this.#sites.setRoot(input.autoRoot && this.canBeRoot(manifest.name) ? manifest.name : null);
       log.add("新しいリリースに切り替えました");
       this.onChange?.();
       return { ok: true, release };

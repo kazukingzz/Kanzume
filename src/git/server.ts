@@ -272,7 +272,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
               log,
               buildLog: [],
               siteName: name,
-              autoRoot: body.scope === "global",
+              byAdmin: access.admin,
               guard,
             });
             if (result.ok) {

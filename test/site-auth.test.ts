@@ -52,6 +52,7 @@ async function setup(t: TestContext) {
     });
     assert.equal(res.status, 200);
   }
+  await app.sites.setRoot("home");
   return { app, admin, site };
 }
 

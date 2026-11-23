@@ -361,13 +361,13 @@ export class AdminState {
 
   /**
    * /_api/deploy（GitHub Actions）に使えるトークンか。sites が null ならすべてのサイト（管理者の個人トークン）、
-   * 配列ならそのサイトだけ（メンバーの個人トークン）。autoRoot は最初のサイトをルートにしてよいか
+   * 配列ならそのサイトだけ（メンバーの個人トークン）
    */
-  deployAccess(token: string): { sites: string[] | null; autoRoot: boolean } | null {
+  deployAccess(token: string): { sites: string[] | null } | null {
     if (!token) return null;
     const user = this.tokenUser(token);
     if (!user) return null;
-    return user.role === "admin" ? { sites: null, autoRoot: true } : { sites: [...user.sites], autoRoot: false };
+    return user.role === "admin" ? { sites: null } : { sites: [...user.sites] };
   }
 
   /** git の push / clone。そのリポジトリ（＝同じ名前のサイト）を扱えるユーザーの個人トークン */

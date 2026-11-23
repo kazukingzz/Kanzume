@@ -66,7 +66,8 @@ test("権限のないメンバー・存在しないサイト・上限超え・�
   const memberCookie = `kanzume_session=${await state.createSession(user.id)}`;
   assert.equal((await upload("blog", { "index.html": "x" }, memberCookie)).status, 403);
   assert.equal((await upload("shop", { "index.html": "x" }, memberCookie)).status, 200, "自分のサイトにはメンバーもデプロイできる");
-  assert.equal(sites.root, null, "メンバーのデプロイではルートにしない");
+  assert.equal(sites.memberDeployed("shop"), true, "メンバーのアップロードは記録する");
+  assert.equal(sites.memberDeployed("blog"), false, "断ったデプロイは記録しない");
   assert.equal((await upload("nope", { "index.html": "x" })).status, 404);
   assert.equal((await upload("blog", Buffer.alloc(2 * 1024 * 1024))).status, 413);
   assert.equal((await upload("blog", Buffer.from("not gzip"))).status, 400);

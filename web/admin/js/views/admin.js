@@ -185,19 +185,35 @@ export function rootSiteCard() {
     ...deployed.map((x) => h("option", { value: x.name, text: x.name })),
   );
   select.value = state.sites.root ?? "";
-  const save = h("button", { class: "primary", text: "保存" });
-  save.addEventListener("click", async () => {
+  const submit = (button) => async () => {
     error.textContent = "";
-    save.disabled = true;
+    button.disabled = true;
     try {
       await api("/root-site", { method: "POST", body: JSON.stringify({ name: select.value || null }) });
       await loadOverview();
       route();
     } catch (err) {
       error.textContent = err.message;
-      save.disabled = false;
+      button.disabled = false;
     }
+  };
+  // 外すときと変えないときは確認しない。新しくルートにするときだけ、警告を出してもう一度押させる
+  const save = h("button", { class: "primary", text: "保存" });
+  save.addEventListener("click", submit(save));
+  const confirmSave = h("button", { class: "primary" });
+  armed(confirmSave, "保存", "もう一度押すとルートにする", submit(confirmSave));
+  const warning = h("p", {
+    class: "hint warn",
+    text: "このサイトは管理画面と同じオリジンで動きます。サイトのコードはログイン中の管理者の権限で管理画面を操作できるので、自分で書いた信頼できるコードのサイトだけを選んでください。",
   });
+  const sync = () => {
+    const choosing = !!select.value && select.value !== (state.sites.root ?? "");
+    warning.hidden = !choosing;
+    save.hidden = choosing;
+    confirmSave.hidden = !choosing;
+  };
+  select.addEventListener("change", sync);
+  sync();
   const host = state.overview.domain?.effective ?? location.host;
   return h(
     "section",
@@ -205,9 +221,10 @@ export function rootSiteCard() {
     h("h2", { text: "ルートドメインのサイト" }),
     h("p", {
       class: "muted",
-      text: `${host} （サブドメインなし）で配信するサイトを 1 つ選べます。ルートのサイトは管理画面と同じオリジンで動くので、そのサイトにデプロイできる人は管理者と同等になります。選べるのはデプロイ済みのサイトだけです。`,
+      text: `${host} （サブドメインなし）で配信するサイトを 1 つ選べます。ルートのサイトは管理画面と同じオリジンで動くので、そのサイトにデプロイできる人は管理者と同等になります。選べるのはデプロイ済みのサイトだけで、メンバーがいるサイトや、メンバーがデプロイしたことのあるサイトは選べません。ルートのサイトには管理者しかデプロイできません。`,
     }),
-    h("div", { class: "row narrow" }, h("div", { class: "grow" }, select), save),
+    h("div", { class: "row narrow" }, h("div", { class: "grow" }, select), save, confirmSave),
+    warning,
     error,
   );
 }

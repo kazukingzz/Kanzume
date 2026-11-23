@@ -97,7 +97,6 @@ export async function createServer(config: Config, options: { github?: Partial<G
   const resources = new ResourceMonitor();
 
   const deployer = new Deployer(sites, runtime, history);
-  deployer.canBeRoot = (site) => !state.siteHasMembers(site);
   // 前回の起動で残ったビルドの作業ディレクトリ（途中で止まったデプロイ）は消す
   deployer.workRoot = path.join(config.dataDir, BUILD_DIR);
   await fs.rm(deployer.workRoot, { recursive: true, force: true });
