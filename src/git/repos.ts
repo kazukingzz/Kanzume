@@ -1,10 +1,11 @@
-import { execFile } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
 import os from "node:os";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { PROJECT_NAME, type UploadedFile } from "../store.ts";
-import { UserFacingError } from "../errors.ts";
+import { mib, UserFacingError } from "../errors.ts";
+import { MAX_FILES } from "../deploy/tar.ts";
 import { isInside } from "../paths.ts";
 import { REPOS_DIR } from "../layout.ts";
 
@@ -172,20 +173,88 @@ export class Repos {
     return { sha: full, author, subject };
   }
 
-  /** ファイルの一覧（ディレクトリをたどった全ファイル） */
-  async tree(name: string, ref: string) {
-    const { stdout } = await this.git(name, ["ls-tree", "-r", "-l", "--full-tree", "-z", safeRef(ref)]).catch(() => ({ stdout: "" }));
-    return String(stdout)
-      .split("\0")
-      .filter(Boolean)
-      .map(parseTreeEntry)
-      .filter((f) => f.type === "blob")
-      .map(({ path: p, type, size }) => ({ path: p, type, size }));
+  /**
+   * `ls-tree -r -l -z` の出力を流しながら 1 件ずつ onEntry に渡す。onEntry が false を返したら git を止めて打ち切る。
+   * execFile で全部受け取らないのは、同じ tree を何度も参照する小さな push（tree bomb）で出力がいくらでも大きくなるため
+   */
+  #walkTree(name: string, ref: string, onEntry: (entry: ReturnType<typeof parseTreeEntry>) => boolean): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const child = spawn("git", ["--git-dir", path.resolve(this.path(name)), "ls-tree", "-r", "-l", "--full-tree", "-z", safeRef(ref)], {
+        env: { ...process.env, GIT_CONFIG_NOSYSTEM: "1", GIT_TERMINAL_PROMPT: "0" },
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      let rest = "";
+      let stderr = "";
+      let stopped = false;
+      const stop = (err?: Error) => {
+        if (stopped) return;
+        stopped = true;
+        child.kill();
+        if (err) reject(err);
+        else resolve();
+      };
+      child.stdout.setEncoding("utf8");
+      child.stdout.on("data", (chunk: string) => {
+        if (stopped) return;
+        const parts = (rest + chunk).split("\0");
+        rest = parts.pop() ?? "";
+        // 区切りのない 1 件がいつまでも続く出力は、ファイル一覧として読まない
+        if (rest.length > 1024 * 1024) return stop(new RepoError("ファイルの一覧を読めません"));
+        for (const part of parts) if (part && !onEntry(parseTreeEntry(part))) return stop();
+      });
+      child.stderr.on("data", (d: Buffer) => {
+        if (stderr.length < 4096) stderr += d.toString();
+      });
+      child.on("error", (err) => stop(err));
+      child.on("close", (code) => {
+        if (stopped) return;
+        if (code !== 0) return stop(new RepoError(`ファイルの一覧を読めません: ${stderr.trim() || `終了コード ${code}`}`));
+        if (rest && !onEntry(parseTreeEntry(rest))) return stop();
+        stop();
+      });
+    });
   }
 
-  /** あるコミットの全ファイルの合計サイズ */
-  async treeSize(name: string, ref: string): Promise<number> {
-    return (await this.tree(name, ref)).reduce((n, f) => n + f.size, 0);
+  /** ファイルの一覧（ディレクトリをたどった全ファイル）。まだコミットのないブランチなら空 */
+  async tree(name: string, ref: string) {
+    const exists = await this.git(name, ["rev-parse", "--verify", "--quiet", `${safeRef(ref)}^{tree}`])
+      .then(() => true)
+      .catch(() => false);
+    if (!exists) return [];
+    const files: { path: string; type: string; size: number }[] = [];
+    let tooMany = false;
+    await this.#walkTree(name, ref, ({ path: p, type, size }) => {
+      if (type !== "blob") return true;
+      if (files.length >= MAX_FILES) {
+        tooMany = true;
+        return false;
+      }
+      files.push({ path: p, type, size });
+      return true;
+    });
+    if (tooMany) throw new RepoError(`ファイルが多すぎて一覧を出せません（上限 ${MAX_FILES}）`);
+    return files;
+  }
+
+  /**
+   * あるコミットのファイル数と合計サイズを、取り出す前に確かめる。上限を超えたらその時点で読むのをやめて例外にする
+   * （git が書き出す量とビルドで読む量を、取り出す前に抑えるため）。一覧を読めないときも例外
+   */
+  async checkTreeLimits(name: string, ref: string, limits: { maxBytes: number; maxFiles: number }): Promise<{ bytes: number; files: number }> {
+    let bytes = 0;
+    let files = 0;
+    let over: string | null = null;
+    await this.#walkTree(name, ref, ({ type, size }) => {
+      // サブモジュール（commit）は取り出されない
+      if (type !== "blob") return true;
+      files++;
+      bytes += size;
+      if (files > limits.maxFiles) over = `ファイル数が上限（${limits.maxFiles}）を超えています`;
+      else if (bytes > limits.maxBytes) over = `ファイルの合計が上限（${mib(limits.maxBytes)}）を超えています`;
+      return over === null;
+    });
+    if (over) throw new RepoError(over);
+    return { bytes, files };
   }
 
   async blob(name: string, ref: string, file: string): Promise<{ path: string; size: number; text: string | null; binary: boolean } | null> {

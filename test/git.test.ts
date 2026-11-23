@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync } from "node:fs";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { tmpDir, until, writeTree } from "./helpers.ts";
@@ -412,3 +412,51 @@ test("壊れた .git があっても一覧は返り、service を 2 つ付けた
   // デプロイ済みのサイトにも、確認なしでリポジトリを作れる（リポジトリはそのサイトのもの）
   assert.equal((await api("/repos", { method: "POST", body: JSON.stringify({ name: "shop" }) })).status, 200);
 });
+
+/**
+ * 同じ tree を何度も参照して、展開すると width^depth 個のファイルになるコミットを作る（push する量は数 KB）。
+ * public/ の下に置き、トップには wrangler.jsonc だけを置く
+ */
+function treeBomb(t: TestContext, options: { width: number; depth: number; blobBytes: number }) {
+  const dir = tmpDir(t);
+  const run = (args: string[], input?: string) => execFileSync("git", args, { cwd: dir, env: GIT_ENV, input, encoding: "utf8" }).trim();
+  run(["init", "-q", "-b", "main"]);
+  const blob = run(["hash-object", "-w", "--stdin"], "a".repeat(options.blobBytes));
+  const entries = (mode: string, type: string, sha: string, prefix: string) =>
+    Array.from({ length: options.width }, (_, i) => `${mode} ${type} ${sha}\t${prefix}${i}`).join("\n");
+  let tree = run(["mktree"], entries("100644", "blob", blob, "f"));
+  for (let i = 1; i < options.depth; i++) tree = run(["mktree"], entries("040000", "tree", tree, "d"));
+  const config = run(["hash-object", "-w", "--stdin"], JSON.stringify({ name: "bomb", assets: { directory: "public" } }));
+  const top = run(["mktree"], `100644 blob ${config}\twrangler.jsonc\n040000 tree ${tree}\tpublic`);
+  run(["update-ref", "refs/heads/main", run(["commit-tree", top, "-m", "tree bomb"])]);
+  return dir;
+}
+
+test("同じ tree を何度も参照する push は、ファイル数の上限で取り出す前に止まり、一覧も空にはならない", { skip: NO_GIT }, async (t) => {
+  const { remote, repos, sites, deployer, history, createRepo } = await start(t);
+  await createRepo("bomb");
+  const push = await git(treeBomb(t, { width: 16, depth: 4, blobBytes: 1024 }), ["push", remote("bomb"), "main"]);
+  assert.equal(push.status, 0, push.output);
+  assert.match(push.output, /remote: デプロイに失敗しました: ファイル数が上限（20000）を超えています/);
+  assert.equal(sites.get("bomb")!.get(), undefined);
+  assert.doesNotMatch(history.get(history.list("bomb")[0].id)!.log, /取り出し/, "ファイルを取り出していない");
+  assert.deepEqual(readdirSync(deployer.workRoot), [], "作業ディレクトリに何も残らない");
+  await assert.rejects(repos.tree("bomb", "main"), /ファイルが多すぎて一覧を出せません/);
+});
+
+test("展開後の合計サイズが上限を超える push は、取り出す前に止まる", { skip: NO_GIT }, async (t) => {
+  // 上限は KANZUME_MAX_UPLOAD_MB の 4 倍（0.4 MB）。同じ 4 KiB のファイルを 256 個（1 MiB）で超える
+  const app = await startApp(t, { KANZUME_MAX_UPLOAD_MB: "0.1" });
+  await app.sites.ensure("bomb");
+  await app.repos.create("bomb");
+  const push = await git(treeBomb(t, { width: 16, depth: 2, blobBytes: 4096 }), [
+    "push",
+    `${app.base.replace("://", `://x:${app.token}@`)}/_git/bomb.git`,
+    "main",
+  ]);
+  assert.equal(push.status, 0, push.output);
+  assert.match(push.output, /remote: デプロイに失敗しました: ファイルの合計が上限（0\.4 MB）を超えています/);
+  assert.equal(app.sites.get("bomb")!.get(), undefined);
+});
+
+test("push のデプロイは、順番を待つ間にトークンを取り消すと反映されない", { skip: NO_GIT }, async (t) => {

@@ -6,7 +6,8 @@ import { UserFacingError } from "../errors.ts";
 export class TarError extends UserFacingError {}
 
 const BLOCK = 512;
-const MAX_FILES = 20_000;
+/** 1 回のデプロイのファイル数の上限（tar の展開と git push の取り出しで共通） */
+export const MAX_FILES = 20_000;
 
 function readString(buf: Buffer, offset: number, length: number): string {
   const end = buf.indexOf(0, offset);

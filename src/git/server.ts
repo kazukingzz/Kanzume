@@ -8,8 +8,8 @@ import { pipeline } from "node:stream/promises";
 import { safeEqual, type AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
-import { EXTRACT_RATIO } from "../deploy/tar.ts";
 import { BuildError, deployFromDirectory, makeWorkDir } from "../deploy/build.ts";
+import { EXTRACT_RATIO, MAX_FILES } from "../deploy/tar.ts";
 import { findConfigFile } from "../deploy/wrangler.ts";
 import { mib, UserFacingError } from "../errors.ts";
 import { readJson, requestToken, rootOrigin, sendText } from "../http.ts";
@@ -240,17 +240,15 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
           }
           Object.assign(source, { commitMessage: head.subject, actor: head.author });
 
-          // 取り出す前に、設定があるかと大きさだけを確かめる（デプロイできない push で全体を書き出さない）。
+          // 取り出す前に、設定があるかと大きさ・ファイル数だけを確かめる（デプロイできない push で全体を書き出さない）。
           // リポジトリはサイトのものなので、wrangler の name にかかわらずこのサイトにデプロイする
           await findConfigFile(async (c) => (await repos.readFile(name, head.sha, c)) !== null, "リポジトリのトップ");
-          const size = await repos.treeSize(name, head.sha);
-          const limit = config.maxUploadBytes * EXTRACT_RATIO;
-          if (size > limit) throw new BuildError(`ファイルの合計（${mib(size)}）が上限（${mib(limit)}）を超えています`);
+          const { bytes } = await repos.checkTreeLimits(name, head.sha, { maxBytes: config.maxUploadBytes * EXTRACT_RATIO, maxFiles: MAX_FILES });
 
           const work = await makeWorkDir(deployer, "kanzume-push-");
           try {
             await repos.checkout(name, head.sha, work);
-            log.add(`取り出し: ${(size / 1024).toFixed(1)} KiB`);
+            log.add(`取り出し: ${(bytes / 1024).toFixed(1)} KiB`);
             const result = await deployFromDirectory(work, deployer, {
               source,
               log,
