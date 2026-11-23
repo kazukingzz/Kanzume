@@ -33,6 +33,30 @@ test("上限を超えたら 1 世代前に回し、読むときは 2 世代を�
   assert.deepEqual(readServerLog(dataDir, 2).lines, lines.slice(-2));
 });
 
+test("1 秒あたりの行数を超えた分は書かずに「N 行を省略」とまとめ、長すぎる行は切る。落ちる直前の例外は必ず書く", (t) => {
+  const dataDir = tmpDir(t);
+  const log = new ServerLog(1024 * 1024, 3);
+  log.open(dataDir);
+  const t0 = 1_800_000_000_000;
+  for (let i = 0; i < 1000; i++) log.write("log", `flood ${i}`, false, t0 + 10);
+  log.write("error", "crash", true, t0 + 20);
+  log.write("log", "x".repeat(100_000), false, t0 + 1000);
+  const { lines } = readServerLog(dataDir);
+  assert.deepEqual(
+    lines.map((l) => l.replace(/^\S+ /, "").slice(0, 60)),
+    [
+      "LOG   flood 0",
+      "LOG   flood 1",
+      "LOG   flood 2",
+      "ERROR crash",
+      "WARN  [kanzume] ログが多すぎるため 997 行を省略しました（1 秒あたり 3 行まで）",
+      `LOG   ${"x".repeat(54)}`,
+    ],
+  );
+  assert.ok(lines[5].length < 9000);
+  assert.match(lines[5], /…（91808 文字を省略）$/);
+});
+
 test("ログがなければ空を返す", (t) => {
   assert.deepEqual(readServerLog(tmpDir(t)), { lines: [], bytes: 0 });
 });

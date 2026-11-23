@@ -13,14 +13,26 @@ type Level = (typeof LEVELS)[number];
 
 export const serverLogFile = (dataDir: string) => path.join(dataDir, LOGS_DIR, SERVER_LOG);
 
+/** 1 行（1 回の出力）の長さの上限。訪問者が送った値などを含む長い出力で、ログがすぐに回ってしまわないように */
+const MAX_LINE = 8 * 1024;
+/** 復元が終わるまでメモリにためる行数の上限 */
+const MAX_PENDING = 1000;
+
 export class ServerLog {
   #file: string | null = null;
   // 復元が終わるまで /data に書けない（先に書くと復元したファイルとぶつかる）ので、それまではメモリにためる
   #pending: string[] = [];
   readonly maxBytes: number;
+  readonly maxLinesPerSecond: number;
+  // 1 秒ごとに数え直す。超えた分は書かずに数え、次の秒の最初に「N 行を省略」と書く
+  // （同期で書くので、大量の出力を全部書くと本体が止まり、残したい古い行もすぐに回って消える）
+  #window = 0;
+  #lines = 0;
+  #dropped = 0;
 
-  constructor(maxBytes = 1024 * 1024) {
+  constructor(maxBytes = 1024 * 1024, maxLinesPerSecond = 100) {
     this.maxBytes = maxBytes;
+    this.maxLinesPerSecond = maxLinesPerSecond;
   }
 
   /** console.log / info / warn / error と、落ちる直前の例外を取り込む。元の出力（標準出力・標準エラー）はそのまま */
@@ -33,7 +45,7 @@ export class ServerLog {
       };
     }
     // 例外で落ちるときの出力は console を通らない。monitor は落ちる動きを変えない
-    process.on("uncaughtExceptionMonitor", (err, origin) => this.write("error", `[kanzume] ${origin}: ${format(err)}`));
+    process.on("uncaughtExceptionMonitor", (err, origin) => this.write("error", `[kanzume] ${origin}: ${format(err)}`, true));
     return this;
   }
 
@@ -47,10 +59,30 @@ export class ServerLog {
     for (const line of pending) this.#append(line);
   }
 
-  write(level: Level, message: string): void {
-    const line = `${new Date().toISOString()} ${level.toUpperCase().padEnd(5)} ${message.replace(/\n/g, "\n    ")}\n`;
+  /** force は落ちる直前の例外など、数の上限にかかわらず書くもの */
+  write(level: Level, message: string, force = false, now = Date.now()): void {
+    const window = Math.floor(now / 1000);
+    if (window !== this.#window) {
+      this.#window = window;
+      this.#lines = 0;
+      if (this.#dropped) {
+        const dropped = this.#dropped;
+        this.#dropped = 0;
+        this.#emit(now, "warn", `[kanzume] ログが多すぎるため ${dropped} 行を省略しました（1 秒あたり ${this.maxLinesPerSecond} 行まで）`);
+      }
+    }
+    if (!force && ++this.#lines > this.maxLinesPerSecond) {
+      this.#dropped++;
+      return;
+    }
+    const text = message.length > MAX_LINE ? `${message.slice(0, MAX_LINE)}…（${message.length - MAX_LINE} 文字を省略）` : message;
+    this.#emit(now, level, text);
+  }
+
+  #emit(now: number, level: Level, message: string): void {
+    const line = `${new Date(now).toISOString()} ${level.toUpperCase().padEnd(5)} ${message.replace(/\n/g, "\n    ")}\n`;
     if (this.#file) this.#append(line);
-    else this.#pending.push(line);
+    else if (this.#pending.length < MAX_PENDING) this.#pending.push(line);
   }
 
   #append(line: string): void {
