@@ -203,7 +203,7 @@ export async function viewStorage(main) {
     ),
     h("p", {
       class: "muted data-summary",
-      text: `バケット ${bucket.name}${bucket.binding ? `（binding: ${bucket.binding}）` : "（今の wrangler の設定にはないバケットです。データだけが残っています）"}・${bucket.count} 件・${fmtBytes(bucket.size)}`,
+      text: `バケット ${bucket.name}${bucket.binding ? `（binding: ${bucket.binding}）` : "（今の wrangler の設定にはないバケットです。データだけが残っています）"}・${bucket.count}${bucket.countCapped ? " 件以上" : " 件"}・${fmtBytes(bucket.size)}`,
     }),
     list,
     more,

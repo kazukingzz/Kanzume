@@ -2,9 +2,10 @@
 import { R2_BUCKET_NAME } from "../../bindings/r2.ts";
 import { BINDING_NAME } from "../../deploy/wrangler.ts";
 import { tooLarge } from "../../errors.ts";
+import { pipeline } from "node:stream/promises";
 import { readBody } from "../../http.ts";
 import { type Ctx, fail, type Route } from "../context.ts";
-import { asText, kvDelete, kvKeys, kvNamespaces, kvPut, kvValue, PREVIEW_BYTES, r2Bucket, r2Buckets, r2List } from "../data.ts";
+import { kvDelete, kvKeys, kvNamespaces, kvPut, kvValue, r2Buckets, r2Delete, r2Download, r2List, r2Preview, r2Put } from "../data.ts";
 
 /** KV / R2 の入力の誤り（キーが長すぎる・範囲がおかしいなど）は、バインディングが TypeError / RangeError で知らせる */
 async function asInputError<T>(fn: () => Promise<T>): Promise<T> {
@@ -22,10 +23,9 @@ function namespaceOf(ctx: Ctx): string {
 }
 
 /** バケット名はファイルのディレクトリ名になるので、wrangler と同じ規則で確かめる（../ などでサイトの外に出させない） */
-function bucketOf(ctx: Ctx) {
+function bucketOf(ctx: Ctx): string {
   const name = ctx.params.bucket;
-  if (!R2_BUCKET_NAME.test(name)) return fail(400, "バケット名が不正です");
-  return { name, bucket: r2Bucket(ctx.site.store.siteDir, name) };
+  return R2_BUCKET_NAME.test(name) ? name : fail(400, "バケット名が不正です");
 }
 
 const key = (ctx: Ctx) => ctx.query.get("key") ?? "";
@@ -84,22 +84,15 @@ export const dataRoutes: Route[] = [
     path: "/api/sites/:site/r2/:bucket/objects",
     auth: "site",
     handle: (ctx) => {
-      const { name } = bucketOf(ctx);
-      return asInputError(() => r2List(ctx.site.store.siteDir, name, ctx.query.get("prefix") ?? "", ctx.query.get("cursor") || undefined));
+      const name = bucketOf(ctx);
+      return asInputError(async () => r2List(ctx.site.store.siteDir, name, ctx.query.get("prefix") ?? "", ctx.query.get("cursor") || undefined));
     },
   },
   {
     method: "GET",
     path: "/api/sites/:site/r2/:bucket/preview",
     auth: "site",
-    handle: (ctx) =>
-      asInputError(async () => {
-        const { bucket } = bucketOf(ctx);
-        const obj = (await bucket.get(key(ctx), { range: { offset: 0, length: PREVIEW_BYTES } })) as { arrayBuffer?: () => Promise<ArrayBuffer> } | null;
-        if (!obj?.arrayBuffer) return fail(404, "オブジェクトが見つかりません");
-        const size = (await bucket.head(key(ctx)))?.size ?? 0;
-        return { text: asText(new Uint8Array(await obj.arrayBuffer()), size > PREVIEW_BYTES), size, truncated: size > PREVIEW_BYTES };
-      }),
+    handle: (ctx) => asInputError(async () => (await r2Preview(ctx.site.store.siteDir, bucketOf(ctx), key(ctx))) ?? fail(404, "オブジェクトが見つかりません")),
   },
   {
     method: "GET",
@@ -107,9 +100,8 @@ export const dataRoutes: Route[] = [
     auth: "site",
     handle: (ctx) =>
       asInputError(async () => {
-        const { bucket } = bucketOf(ctx);
-        const obj = (await bucket.get(key(ctx))) as { size: number; body?: ReadableStream<Uint8Array> } | null;
-        if (!obj?.body) return fail(404, "オブジェクトが見つかりません");
+        const obj = await r2Download(ctx.site.store.siteDir, bucketOf(ctx), key(ctx));
+        if (!obj) return fail(404, "オブジェクトが見つかりません");
         // 管理画面と同じオリジンで開かれないよう、必ずダウンロードにする
         const filename = encodeURIComponent(key(ctx).split("/").pop() || "object");
         ctx.res.writeHead(200, {
@@ -119,8 +111,9 @@ export const dataRoutes: Route[] = [
           "x-content-type-options": "nosniff",
           "cache-control": "no-store",
         });
-        for await (const chunk of obj.body) ctx.res.write(chunk);
-        ctx.res.end();
+        if (!obj.stream) return void ctx.res.end();
+        // 受け手が遅くても読み進めない（pipeline が書き込みの詰まりを待つ）。途中で切れたら接続ごと閉じる
+        await pipeline(obj.stream, ctx.res).catch(() => ctx.res.destroy());
       }),
   },
   {
@@ -129,12 +122,12 @@ export const dataRoutes: Route[] = [
     auth: "site",
     handle: (ctx) =>
       asInputError(async () => {
-        const { bucket } = bucketOf(ctx);
+        const bucket = bucketOf(ctx);
         const max = ctx.deps.config.maxUploadBytes;
         const body = await readBody(ctx.req, max);
         if (!body) throw tooLarge(max);
         const contentType = String(ctx.req.headers["x-object-content-type"] ?? "") || undefined;
-        await bucket.put(key(ctx), body, { httpMetadata: contentType ? { contentType } : undefined });
+        await r2Put(ctx.site.store.siteDir, bucket, key(ctx), body, contentType);
         return { ok: true };
       }),
   },
@@ -144,7 +137,7 @@ export const dataRoutes: Route[] = [
     auth: "site",
     handle: (ctx) =>
       asInputError(async () => {
-        await bucketOf(ctx).bucket.delete(key(ctx));
+        await r2Delete(ctx.site.store.siteDir, bucketOf(ctx), key(ctx));
         return { ok: true };
       }),
   },

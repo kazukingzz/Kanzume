@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import type { AddressInfo } from "node:net";
 import path from "node:path";
+import type { SQLInputValue } from "node:sqlite";
 import { gzipSync } from "node:zlib";
 import { test, type TestContext } from "node:test";
 import { AdminState } from "../src/admin/state.ts";
@@ -579,6 +580,82 @@ test("KV / R2 のプレビューは、途中で切れた日本語もテキスト
   assert.ok(kv.text?.startsWith("ああ"));
   const r2 = (await (await app.admin("/sites/blog/r2/files/preview?key=long.txt")).json()) as { text: string | null };
   assert.ok(r2.text?.startsWith("ああ"));
+});
+
+/** Worker の子プロセスが vm から抜けて data.sqlite を直接書き換えた状態を作る（本体とは別の接続で） */
+async function tamper(dir: string, sql: string, ...params: SQLInputValue[]) {
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(path.join(dir, "data", "data.sqlite"));
+  try {
+    if (params.length) db.prepare(sql).run(...params);
+    else db.exec(sql);
+  } finally {
+    db.close();
+  }
+}
+
+test("data.sqlite の kv / r2 が終わらないビューやトリガーに差し替えられていたら、管理画面は問い合わせずにエラーにする", async (t) => {
+  const app = await start(t);
+  await app.admin("/sites", "POST", { name: "blog" });
+  const dir = app.sites.get("blog")!.siteDir;
+  const { closeSiteDb, siteDb } = await import("../src/bindings/db.ts");
+  const { KVNamespace } = await import("../src/bindings/kv.ts");
+  await new KVNamespace(siteDb(dir), "KV").put("a", "1");
+  closeSiteDb(dir);
+
+  const loop = "WITH RECURSIVE c(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM c)";
+  await tamper(dir, `DROP TABLE kv; CREATE VIEW kv (namespace, key, value, metadata, expiration) AS ${loop} SELECT 'KV', x, x, NULL, NULL FROM c;`);
+  const started = performance.now();
+  const res = await app.admin("/sites/blog/kv");
+  assert.equal(res.status, 409);
+  assert.match(((await res.json()) as { error: string }).error, /data\.sqlite）の形が想定と違う/);
+  assert.equal((await app.admin("/sites/blog/kv/KV/keys")).status, 409);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value?key=1")).status, 409);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value", "PUT", { key: "b", value: "2" })).status, 409);
+  assert.ok(performance.now() - started < 5000, "ビューを読まない");
+  assert.throws(() => siteDb(dir), /形が想定と違う/, "バインディングの接続も、ビューをテーブルの代わりに使わない");
+
+  // 本体の書き込みで動くトリガー
+  await tamper(dir, "DROP VIEW kv;");
+  await tamper(
+    dir,
+    "CREATE TABLE kv (\n  namespace TEXT NOT NULL,\n  key TEXT NOT NULL,\n  value BLOB NOT NULL,\n  metadata TEXT,\n  expiration INTEGER,\n  PRIMARY KEY (namespace, key)\n) WITHOUT ROWID;",
+  );
+  assert.equal((await app.admin("/sites/blog/kv")).status, 200, "元の形に戻れば読める");
+  await tamper(dir, `CREATE TRIGGER t AFTER INSERT ON kv BEGIN ${loop} SELECT count(*) FROM c; END;`);
+  assert.equal((await app.admin("/sites/blog/kv/KV/value", "PUT", { key: "b", value: "2" })).status, 409);
+  assert.equal((await app.admin("/sites/blog/r2/files/object?key=x", "DELETE")).status, 409);
+});
+
+test("data.sqlite に子が直接書いた大きな値・メタデータ・食い違う大きさは、管理画面で丸ごと読まない", async (t) => {
+  const app = await start(t);
+  await app.admin("/sites", "POST", { name: "blog" });
+  const dir = app.sites.get("blog")!.siteDir;
+  const { closeSiteDb, siteDb } = await import("../src/bindings/db.ts");
+  const { R2Bucket } = await import("../src/bindings/r2.ts");
+  await new R2Bucket(siteDb(dir), dir, "files").put("a.txt", "abc");
+  closeSiteDb(dir);
+
+  const big = 40 * 1024 * 1024;
+  await tamper(dir, "INSERT INTO kv VALUES ('KV', 'big', zeroblob(?), printf('%.*c', ?, 'x'), NULL)", big, 2 * 1024 * 1024);
+  await tamper(dir, `UPDATE r2 SET size = 999999999, custom_metadata = printf('{"a":"%.*c"}', ?, 'x') WHERE key = 'a.txt'`, 2 * 1024 * 1024);
+
+  const keys = (await (await app.admin("/sites/blog/kv/KV/keys")).json()) as { keys: { key: string; size: number; metadata: unknown }[] };
+  assert.deepEqual(keys.keys, [{ key: "big", size: big, metadata: null, expiration: null }]);
+  const value = (await (await app.admin("/sites/blog/kv/KV/value?key=big")).json()) as { size: number; text: string | null; metadata: unknown };
+  assert.equal(value.size, big);
+  assert.equal(value.text, null, "バインディングの上限を超える値は読み込まない");
+  assert.equal(value.metadata, null);
+
+  const list = (await (await app.admin("/sites/blog/r2/files/objects")).json()) as { objects: { key: string; customMetadata: unknown }[] };
+  assert.deepEqual(
+    list.objects.map((o) => [o.key, o.customMetadata]),
+    [["a.txt", {}]],
+  );
+  const download = await app.admin("/sites/blog/r2/files/object?key=a.txt");
+  assert.equal(download.headers.get("content-length"), "3", "Content-Length は DB の値ではなく、ファイルの大きさ");
+  assert.equal(await download.text(), "abc");
+  assert.deepEqual(await (await app.admin("/sites/blog/r2/files/preview?key=a.txt")).json(), { text: "abc", size: 3, truncated: false });
 });
 
 test("管理者はメンバーに扱えるサイトを足せる（未デプロイのサイトも）。ルートのサイトは管理者が選ぶ", async (t) => {

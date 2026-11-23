@@ -173,7 +173,7 @@ export async function viewDatabase(main) {
     ),
     h("p", {
       class: "muted data-summary",
-      text: `名前空間（binding）${ns.name}・${ns.count} 件${ns.bound ? "" : "（今の wrangler の設定にはない名前空間です。データだけが残っています）"}`,
+      text: `名前空間（binding）${ns.name}・${ns.count}${ns.countCapped ? " 件以上" : " 件"}${ns.bound ? "" : "（今の wrangler の設定にはない名前空間です。データだけが残っています）"}`,
     }),
     addBox,
     list,
