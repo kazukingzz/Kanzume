@@ -10,7 +10,9 @@ import { SerialQueue } from "../serial.ts";
 import { type Dek, decrypt, encrypt, KeyMismatchError, loadDek } from "./crypto.ts";
 import { BackupStoreError, LocalStore, S3Store, type BackupStore } from "./store.ts";
 import type { BackupConfig } from "./url.ts";
-import { ADMIN_FILE, META_DB, NOT_BACKED_UP, REPOS_DIR, SITES_DIR } from "../layout.ts";
+import { ADMIN_FILE, LOGS_DIR, META_DB, NOT_BACKED_UP, REPOS_DIR, SITE_DATA_DIR, SITES_DIR, UIDS_FILE } from "../layout.ts";
+import { isInside } from "../paths.ts";
+import { FIRST_UID } from "../runtime/process.ts";
 
 const gzip = promisify(gzipCb);
 const gunzip = promisify(gunzipCb);
@@ -36,6 +38,85 @@ function skipped(rel: string, isDir: boolean): boolean {
 }
 const DEBOUNCE_MS = 30_000;
 const PARALLEL = 4;
+
+/**
+ * Worker の子プロセスが書けるところ（サイトの KV / R2）。中身も大きさも子が決められるので、1 つのファイルやサイトのせいで
+ * 世代全体を作れなくならないように、大きさに上限を設け、読めないものは警告にしてほかのサイトのバックアップを続ける
+ */
+const CHILD_AREA = /^sites\/([^/]+)\/data\//;
+const MAX_CHILD_FILE = 256 * 1024 * 1024;
+const MAX_CHILD_SITE = 4 * 1024 * 1024 * 1024;
+/** 同時に読み込んで圧縮・暗号化するファイルの大きさの合計。これより大きいファイルは 1 つずつ */
+const MEMORY_BUDGET = 256 * 1024 * 1024;
+const MAX_WARNINGS = 50;
+
+/** 世代に入れてよいトップレベル（layout.ts）。バックアップもこれだけを取る */
+const TOP_FILES = new Set([ADMIN_FILE, META_DB]);
+const TOP_DIRS = new Set([LOGS_DIR, REPOS_DIR, SITES_DIR]);
+
+/** バックアップに含めなかった（読めない・大きすぎる）ファイル。世代は作り、警告として残す */
+class SkipFile extends Error {}
+
+/** 読み込み中のファイルの大きさの合計を limit までにする（1 つで limit を超えるファイルは、ほかが終わってから 1 つだけ） */
+class MemoryBudget {
+  #used = 0;
+  #waiting: (() => void)[] = [];
+  readonly limit: number;
+
+  constructor(limit: number) {
+    this.limit = limit;
+  }
+
+  async acquire(bytes: number): Promise<() => void> {
+    while (this.#used > 0 && this.#used + bytes > this.limit) await new Promise<void>((r) => this.#waiting.push(r));
+    this.#used += bytes;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.#used -= bytes;
+      for (const wake of this.#waiting.splice(0)) wake();
+    };
+  }
+}
+
+/** 開いた fd の実際のパス（Linux）。読めない環境では null */
+async function openedPath(fd: number): Promise<string | null> {
+  return fs.readlink(`/proc/self/fd/${fd}`).catch(() => null);
+}
+
+/**
+ * root の中の普通のファイルを、max バイトまで読む。シンボリックリンク・FIFO などは読まない
+ * （子が data/ の中身を差し替えて、root の本体にほかの場所を読ませないため。途中のディレクトリの差し替えは、開いた fd の実際のパスで確かめる）
+ */
+async function readContained(abs: string, root: string, max: number): Promise<Buffer> {
+  let handle: fs.FileHandle;
+  try {
+    handle = await fs.open(abs, fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW | fsSync.constants.O_NONBLOCK);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException).code;
+    if (code === "ELOOP" || code === "EMLINK") throw new SkipFile("シンボリックリンクです");
+    throw err;
+  }
+  try {
+    const st = await handle.stat();
+    if (!st.isFile()) throw new SkipFile("普通のファイルではありません");
+    if (st.size > max) throw new SkipFile(`大きすぎます（${(st.size / 1024 / 1024).toFixed(1)} MiB。上限は ${max / 1024 / 1024} MiB）`);
+    const real = (await openedPath(handle.fd)) ?? (await fs.realpath(abs));
+    if (!isInside(root, real)) throw new SkipFile("データのディレクトリの外を指しています");
+    // 読んでいる間に伸ばされても、開いたときの大きさまでしか読まない
+    const buf = Buffer.allocUnsafe(st.size);
+    let offset = 0;
+    while (offset < st.size) {
+      const { bytesRead } = await handle.read(buf, offset, st.size - offset, offset);
+      if (!bytesRead) break;
+      offset += bytesRead;
+    }
+    return buf.subarray(0, offset);
+  } finally {
+    await handle.close();
+  }
+}
 
 interface FileEntry {
   path: string;
@@ -63,6 +144,8 @@ export interface BackupRun {
   files?: number;
   uploadedFiles?: number;
   uploadedBytes?: number;
+  /** 含めなかった・前の世代のものを使ったファイル（サイトの KV / R2 が読めない・大きすぎるなど） */
+  warnings?: string[];
 }
 
 export interface RestoreRun {
@@ -363,63 +446,130 @@ export class Backup {
       let uploadedFiles = 0;
       let uploadedBytes = 0;
       const seen = new Set<string>();
+      const warnings: string[] = [];
+      const warn = (message: string) => {
+        console.warn(`[backup] ${message}`);
+        if (warnings.length < MAX_WARNINGS) warnings.push(message);
+      };
+      const budget = new MemoryBudget(MEMORY_BUDGET);
+      const dataRoot = await fs.realpath(this.dataDir);
+      const tmpRoot = await fs.realpath(tmpDir);
+      /** サイトごとの、子が書けるところから読んだ大きさの合計 */
+      const childBytes = new Map<string, number>();
 
       const inflight = new Map<string, Promise<void>>();
-      const upload = async (rel: string, sig: string, read: () => Promise<Buffer>) => {
+      /** estimate: 読む前に分かる大きさ（メモリの見積もり） */
+      const upload = async (rel: string, sig: string, estimate: number, read: () => Promise<Buffer>) => {
         const cached = this.#cache.get(rel);
         if (cached && cached.sig === sig && blobs.has(cached.blob)) {
           files.push({ path: rel, size: cached.size, blob: cached.blob });
           return;
         }
-        const plain = await read();
-        const blob = dek.blobName(plain);
-        if (!blobs.has(blob)) {
-          // 同じ中身のファイルが並んで処理されても、送るのは 1 回だけ
-          let sending = inflight.get(blob);
-          if (!sending) {
-            sending = (async () => {
-              const body = encrypt(dek.key, await gzip(plain), `blob:${blob}`);
-              await this.store.put(`blobs/${blob}`, body);
-              blobs.add(blob);
-              uploadedFiles++;
-              uploadedBytes += body.length;
-            })().finally(() => inflight.delete(blob));
-            inflight.set(blob, sending);
+        const release = await budget.acquire(estimate);
+        try {
+          const plain = await read();
+          const blob = dek.blobName(plain);
+          if (!blobs.has(blob)) {
+            // 同じ中身のファイルが並んで処理されても、送るのは 1 回だけ
+            let sending = inflight.get(blob);
+            if (!sending) {
+              sending = (async () => {
+                const body = encrypt(dek.key, await gzip(plain), `blob:${blob}`);
+                await this.store.put(`blobs/${blob}`, body);
+                blobs.add(blob);
+                uploadedFiles++;
+                uploadedBytes += body.length;
+              })().finally(() => inflight.delete(blob));
+              inflight.set(blob, sending);
+            }
+            await sending;
           }
-          await sending;
+          this.#cache.set(rel, { sig, blob, size: plain.length });
+          files.push({ path: rel, size: plain.length, blob });
+        } finally {
+          release();
         }
-        this.#cache.set(rel, { sig, blob, size: plain.length });
-        files.push({ path: rel, size: plain.length, blob });
       };
 
-      const statSig = async (p: string) => {
-        const st = await fs.stat(p).catch(() => null);
-        return st ? `${st.size}:${st.mtimeMs}` : "-";
+      // 読めなかったサイトの DB は、前の世代のものを入れておく（消えたことにすると、復元したときに KV / R2 が空になる）
+      let previous: SnapshotManifest | null | undefined;
+      const keepPrevious = async (rel: string): Promise<boolean> => {
+        const cached = this.#cache.get(rel);
+        let entry: FileEntry | undefined = cached && { path: rel, size: cached.size, blob: cached.blob };
+        if (!entry) {
+          if (previous === undefined) {
+            const latest = (await this.snapshots()).at(-1);
+            previous = latest ? await this.#readManifest(latest).catch(() => null) : null;
+          }
+          entry = previous?.files.find((f) => f.path === rel);
+        }
+        if (!entry || !blobs.has(entry.blob)) return false;
+        files.push({ ...entry });
+        return true;
       };
+
+      const statOf = (p: string) => fs.lstat(p).catch(() => null);
+      const sigOf = (st: fsSync.Stats | null) => (st ? `${st.size}:${st.mtimeMs}` : "-");
 
       const snapshotDb = async (rel: string, abs: string) => {
-        const sig = `${await statSig(abs)}|${await statSig(`${abs}-wal`)}`;
-        await upload(rel, sig, async () => {
+        const st = await statOf(abs);
+        // 子が DB をシンボリックリンクに差し替えても、ほかの DB を読まない
+        if (st && !st.isFile()) throw new SkipFile("普通のファイルではありません");
+        const sig = `${sigOf(st)}|${sigOf(await statOf(`${abs}-wal`))}`;
+        const child = CHILD_AREA.test(rel);
+        await upload(rel, sig, Math.min(st?.size ?? 0, MAX_CHILD_FILE), async () => {
           const tmp = path.join(tmpDir, `${randomBytes(6).toString("hex")}.sqlite`);
           const quoted = tmp.replace(/'/g, "''");
           // 動いている接続があればそれで取る。なければそのファイルだけを読み取り専用で開いて閉じる
           // （接続を開きっぱなしにせず、消されたサイトの DB を作り直さない）
           const live = rel === META_DB ? this.#metaDb : openedSiteDb(path.dirname(path.dirname(abs)));
-          if (live) live.exec(`VACUUM INTO '${quoted}'`);
-          else {
-            const db = new DatabaseSync(abs, { readOnly: true });
-            try {
-              db.exec(`VACUUM INTO '${quoted}'`);
-            } finally {
-              db.close();
-            }
-          }
           try {
-            return await fs.readFile(tmp);
+            if (live) live.exec(`VACUUM INTO '${quoted}'`);
+            else {
+              const db = new DatabaseSync(abs, { readOnly: true });
+              try {
+                db.exec(`VACUUM INTO '${quoted}'`);
+              } finally {
+                db.close();
+              }
+            }
+            return await readContained(tmp, tmpRoot, child ? MAX_CHILD_FILE : Number.MAX_SAFE_INTEGER);
           } finally {
             await fs.rm(tmp, { force: true });
           }
         });
+      };
+
+      const plainFile = async (r: string) => {
+        const p = path.join(this.dataDir, r);
+        const st = await statOf(p);
+        if (!st) return; // 読む前に消えた
+        const site = CHILD_AREA.exec(r)?.[1];
+        if (site !== undefined) {
+          const used = childBytes.get(site) ?? 0;
+          if (st.size <= MAX_CHILD_FILE && used + st.size > MAX_CHILD_SITE) {
+            throw new SkipFile(`サイト ${site} の KV / R2 の合計が上限（${MAX_CHILD_SITE / 1024 / 1024 / 1024} GiB）を超えます`);
+          }
+          if (st.size <= MAX_CHILD_FILE) childBytes.set(site, used + st.size);
+        }
+        const root = site !== undefined ? path.join(dataRoot, SITES_DIR, site, SITE_DATA_DIR) : dataRoot;
+        const max = site !== undefined ? MAX_CHILD_FILE : Number.MAX_SAFE_INTEGER;
+        await upload(r, sigOf(st), Math.min(st.size, MAX_CHILD_FILE), () => readContained(p, root, max));
+      };
+
+      /** 1 つのファイルを取る。子が書けるところや、読めずに飛ばしたファイルは警告にして続ける（世代全体を止めない） */
+      const take = async (r: string, fn: () => Promise<void>) => {
+        try {
+          await fn();
+        } catch (err) {
+          // 読む前に消えた（サイトの削除と重なった）。SQLite は ENOENT ではなく開けないというエラーになる
+          if ((err as NodeJS.ErrnoException).code === "ENOENT" || !(await statOf(path.join(this.dataDir, r)))) return;
+          const child = CHILD_AREA.test(r);
+          if (!child && !(err instanceof SkipFile)) throw err;
+          const why = (err as Error)?.message ?? String(err);
+          if (MANAGED_DB.test(r) && (await keepPrevious(r))) warn(`${r} を読めないので、前の世代のものを使います（${why}）`);
+          else warn(`${r} を含めませんでした（${why}）`);
+        }
       };
 
       const walk = async (rel: string) => {
@@ -431,32 +581,19 @@ export class Backup {
         const plain: string[] = [];
         for (const e of entries) {
           const r = rel ? `${rel}/${e.name}` : e.name;
-          if (!rel && SKIP_TOP.has(e.name)) continue;
+          if (!rel && (SKIP_TOP.has(e.name) || !(e.isDirectory() ? TOP_DIRS : TOP_FILES).has(e.name))) continue;
           if (skipped(r, e.isDirectory())) continue;
           if (e.isDirectory()) {
+            // 一覧を読んだあとにシンボリックリンクに差し替えられたディレクトリはたどらない
+            if (!(await statOf(path.join(abs, e.name)))?.isDirectory()) continue;
             dirs.push(r);
             await walk(r);
           } else if (e.isFile()) {
-            if (MANAGED_DB.test(r)) {
-              try {
-                await snapshotDb(r, path.join(abs, e.name));
-              } catch (err) {
-                // 読む前に消えた（サイトの削除と重なった）
-                if (fsSync.existsSync(path.join(abs, e.name))) throw err;
-              }
-            } else plain.push(r);
+            if (MANAGED_DB.test(r)) await take(r, () => snapshotDb(r, path.join(abs, e.name)));
+            else plain.push(r);
           }
         }
-        await pool(plain, PARALLEL, async (r) => {
-          const p = path.join(this.dataDir, r);
-          const sig = await statSig(p);
-          if (sig === "-") return; // 読む前に消えた
-          try {
-            await upload(r, sig, () => fs.readFile(p));
-          } catch (err) {
-            if ((err as NodeJS.ErrnoException).code !== "ENOENT") throw err;
-          }
-        });
+        await pool(plain, PARALLEL, (r) => take(r, () => plainFile(r)));
       };
       try {
         await walk("");
@@ -476,7 +613,15 @@ export class Backup {
         if (prev && JSON.stringify(prev.dirs) === JSON.stringify(dirs) && JSON.stringify(prev.files) === JSON.stringify(files)) {
           this.snapshotCount = names.length;
           this.latestSnapshot = latest;
-          return done({ ok: true, skipped: "前回から変更がありません", snapshot: latest, files: files.length, uploadedFiles, uploadedBytes });
+          return done({
+            ok: true,
+            skipped: "前回から変更がありません",
+            snapshot: latest,
+            files: files.length,
+            uploadedFiles,
+            uploadedBytes,
+            ...(warnings.length && { warnings }),
+          });
         }
       }
 
@@ -490,7 +635,7 @@ export class Backup {
       console.log(
         `[backup] ${this.target} に世代 ${name} を保存しました（${files.length} ファイル、送信 ${uploadedFiles} 件 ${(uploadedBytes / 1024).toFixed(1)} KiB）`,
       );
-      return done({ ok: true, snapshot: name, files: files.length, uploadedFiles, uploadedBytes });
+      return done({ ok: true, snapshot: name, files: files.length, uploadedFiles, uploadedBytes, ...(warnings.length && { warnings }) });
     } catch (err) {
       const message = (err as Error)?.message ?? String(err);
       console.error(`[backup] ${this.target} へのバックアップに失敗しました: ${message}`);

@@ -5,6 +5,7 @@ import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { Backup } from "../src/backup/backup.ts";
 import { KeyMismatchError } from "../src/backup/crypto.ts";
+import { DatabaseSync } from "node:sqlite";
 import { LocalStore, S3Store, signV4 } from "../src/backup/store.ts";
 import { BackupUrlError, parseBackupUrl } from "../src/backup/url.ts";
 import { loadConfig, type Config } from "../src/config.ts";
@@ -443,3 +444,54 @@ test("ログインやセッションの更新ではバックアップを予約�
   await app.state.removeSession(id);
   assert.equal(calls, 1);
 });
+
+test("サイトの KV / R2 に上限を超えるファイルや壊れた DB があっても、ほかは世代に入り、DB は前の世代のものを使い、警告が残る", async (t) => {
+  const { make } = configs(t);
+  const config = make();
+  const app = await boot(t, config);
+  await setup(app);
+  const broken = path.join((await app.sites.ensure("broken")).siteDir, "data");
+  fs.mkdirSync(broken, { recursive: true });
+  const db = new DatabaseSync(path.join(broken, "data.sqlite"));
+  db.exec("CREATE TABLE t (x); INSERT INTO t VALUES (42)");
+  db.close();
+  assert.equal((await app.backup.backupNow("test")).ok, true);
+
+  // Worker の子プロセスが data/ に書けるもの: 巨大な（疎な）ファイル・壊した DB・ほかの場所へのリンク
+  fs.writeFileSync(path.join(broken, "data.sqlite"), Buffer.alloc(8192, 1));
+  const big = path.join((await app.sites.ensure("big")).siteDir, "data");
+  fs.mkdirSync(path.join(big, "r2"), { recursive: true });
+  const fd = fs.openSync(path.join(big, "r2", "huge"), "w");
+  fs.ftruncateSync(fd, 3 * 1024 * 1024 * 1024);
+  fs.closeSync(fd);
+  fs.writeFileSync(path.join(big, "r2", "small"), "ok");
+  fs.symlinkSync(path.join(config.dataDir, "admin.json"), path.join(big, "r2", "link"));
+  await call(app, "PUT", "/after");
+
+  const run = await app.backup.backupNow("test");
+  assert.equal(run.ok, true, run.error);
+  assert.ok(run.snapshot);
+  assert.ok(
+    run.warnings?.some((w) => /sites\/big\/data\/r2\/huge.*大きすぎます/.test(w)),
+    JSON.stringify(run.warnings),
+  );
+  assert.ok(
+    run.warnings?.some((w) => /sites\/broken\/data\/data\.sqlite.*前の世代/.test(w)),
+    JSON.stringify(run.warnings),
+  );
+  assert.deepEqual(app.backup.status().lastBackup?.warnings, run.warnings, "管理画面のバックアップの状態にも出す");
+
+  await app.close();
+  fs.rmSync(config.dataDir, { recursive: true, force: true });
+  const restored = await boot(t, config);
+  assert.equal(restored.backup.lastRestore?.snapshot, run.snapshot);
+  assert.deepEqual(await (await call(restored, "GET", "/after")).json(), { kv: "kv/after", r2: "r2/after" }, "ほかのサイトは最新");
+  const bigData = path.join(restored.sites.get("big")!.siteDir, "data", "r2");
+  assert.equal(fs.readFileSync(path.join(bigData, "small"), "utf8"), "ok");
+  assert.equal(fs.existsSync(path.join(bigData, "huge")), false);
+  assert.equal(fs.existsSync(path.join(bigData, "link")), false, "リンクの先（admin.json）を中身として持ち込まない");
+  const back = new DatabaseSync(path.join(restored.sites.get("broken")!.siteDir, "data", "data.sqlite"), { readOnly: true });
+  assert.deepEqual({ ...(back.prepare("SELECT x FROM t").get() as object) }, { x: 42 });
+  back.close();
+});
+
