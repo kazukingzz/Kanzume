@@ -43,6 +43,8 @@ export interface RuntimeOptions {
   stallMs?: number;
   /** 起動してからこの時間が過ぎた Worker を作り直す。0 なら作り直さない */
   maxAgeMs?: number;
+  /** Worker の fetch / WebSocket で確かめずに接続を許す「IP アドレス:ポート」（テスト専用。ループバックのテスト用サーバーに届くように） */
+  egressAllow?: string[];
 }
 
 const SWEEP_INTERVAL_MS = 15_000;
@@ -140,9 +142,14 @@ export class Runtime {
   preload(release: Release): Promise<WorkerHandle> {
     if (this.#options.isolation === "process") {
       if (!this.#options.dataDir) return Promise.reject(new Error("子プロセスで動かすには dataDir が要ります"));
-      return ChildWorker.start(release, { dataDir: this.#options.dataDir, timeout: this.#options.cpuTimeoutMs, stallMs: this.#options.stallMs });
+      return ChildWorker.start(release, {
+        dataDir: this.#options.dataDir,
+        timeout: this.#options.cpuTimeoutMs,
+        stallMs: this.#options.stallMs,
+        egressAllow: this.#options.egressAllow,
+      });
     }
-    return loadWorker(release, release.siteDir, this.#options.cpuTimeoutMs);
+    return loadWorker(release, release.siteDir, this.#options.cpuTimeoutMs, undefined, { allow: this.#options.egressAllow });
   }
 
   install(worker: WorkerHandle): void {

@@ -19,6 +19,8 @@ export interface ChildInit {
   timeout: number;
   vars: Record<string, unknown>;
   socket: string;
+  /** Worker の fetch / WebSocket で確かめずに接続を許す宛先（テスト専用。egress.ts の EgressOptions.allow） */
+  egressAllow?: string[];
 }
 
 /** 応答を送り終えたあと、waitUntil を待つ上限（Cloudflare と同じ 30 秒） */

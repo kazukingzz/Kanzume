@@ -71,7 +71,7 @@ test("読み込みに失敗したデプロイとビルド失敗の報告は失�
   assert.equal(loadFailed.release, null);
 });
 
-test("Worker へのリクエストが console ログ・例外・サブリクエスト付きでイベントとして記録される", async (t) => {
+test("Worker へのリクエストが console ログ・例外・サブリクエスト（断った宛先も）付きでイベントとして記録される", async (t) => {
   const { base, deploy, observability } = await start(t);
   const target = http.createServer((_, res) => res.end("upstream")).listen(0, "127.0.0.1");
   t.after(() => target.close());
@@ -83,7 +83,7 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
       const url = new URL(request.url);
       console.log("path is", url.pathname, { n: 1 });
       if (url.pathname === "/boom") throw new TypeError("壊れた");
-      if (url.pathname === "/sub") { await (await fetch(${JSON.stringify(upstream)})).text(); console.warn("fetched"); }
+      if (url.pathname === "/sub") { await fetch(${JSON.stringify(upstream)}).catch((e) => console.warn("fetched", e.name)); }
       ctx.waitUntil(new Promise((r) => setTimeout(r, 20)).then(() => console.log("after response")));
       return new Response("ok");
     }
@@ -114,7 +114,8 @@ test("Worker へのリクエストが console ログ・例外・サブリクエ�
   const subDetail = observability.event("app", sub.id)!.detail;
   assert.equal(subDetail.subrequests.length, 1);
   assert.equal(subDetail.subrequests[0].url, upstream);
-  assert.equal(subDetail.subrequests[0].status, 200);
+  assert.equal(subDetail.subrequests[0].status, null, "ループバックのアドレスには接続しない");
+  assert.match(String(subDetail.subrequests[0].error), /インターネットのアドレスでない/);
   assert.deepEqual(
     subDetail.logs.map((l) => l.level),
     ["log", "warn", "log"],

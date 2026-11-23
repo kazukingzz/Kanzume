@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import http from "node:http";
+import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { test, type TestContext } from "node:test";
 import { isRoot, type ChildWorker } from "../src/runtime/process.ts";
@@ -65,7 +67,10 @@ async function site(dataDir: string, name: string, source = PROBE): Promise<Rele
   return r;
 }
 
-function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; stallMs?: number; maxAgeMs?: number } = {}) {
+function setup(
+  t: TestContext,
+  options: { maxWorkers?: number; idleMs?: number; stallMs?: number; maxAgeMs?: number; responseTimeoutMs?: number; egressAllow?: string[] } = {},
+) {
   // 後片付けは登録した順に動くので、子を止めるのをデータのディレクトリを消すより先に登録する
   let runtime: Runtime | undefined;
   t.after(() => runtime?.close());
@@ -77,6 +82,7 @@ function setup(t: TestContext, options: { maxWorkers?: number; idleMs?: number; 
     maxWorkers: options.maxWorkers,
     stallMs: options.stallMs,
     maxAgeMs: options.maxAgeMs,
+    egressAllow: options.egressAllow,
     isolation: "process",
     dataDir,
   });
@@ -247,6 +253,18 @@ module.exports = {
       await env.KV.get("x");
       while (true) {}
     }
+    if (url.pathname === "/egress") {
+      try {
+        const r = await fetch(url.searchParams.get("url"));
+        return Response.json({ status: r.status, body: await r.text() });
+      } catch (e) {
+        return Response.json({ error: e.name + ": " + e.message });
+      }
+    }
+    if (url.pathname === "/ws") {
+      const ws = new WebSocket(url.searchParams.get("url"));
+      return Response.json({ result: await new Promise((r) => { ws.onopen = () => r("open"); ws.onclose = () => r("closed"); }) });
+    }
     if (url.pathname === "/huge-error") {
       ctx.waitUntil(Promise.reject(new Error("x".repeat(3_000_000))));
       return new Response("ok");
@@ -410,3 +428,43 @@ test("止める途中の子もリソースに出て、サイトの削除（now�
   await waitClosed(w2);
   assert.deepEqual(runtime.processes(), []);
 });
+
+test("子の Worker の fetch / WebSocket は、許可していないループバックのアドレスに接続しない", async (t) => {
+  let connections = 0;
+  const target = http.createServer((_, res) => res.end("upstream"));
+  target.on("connection", () => connections++);
+  const allowed = http.createServer((_, res) => {
+    res.writeHead(302, { location: `http://127.0.0.1:${(target.address() as AddressInfo).port}/` });
+    res.end();
+  });
+  for (const s of [target, allowed]) await new Promise<void>((resolve) => s.listen(0, "127.0.0.1", resolve));
+  t.after(() => {
+    for (const s of [target, allowed]) {
+      s.closeAllConnections();
+      s.close();
+    }
+  });
+  const port = (target.address() as AddressInfo).port;
+  const { dataDir, runtime } = setup(t, { egressAllow: [`127.0.0.1:${(allowed.address() as AddressInfo).port}`] });
+  const r = await site(dataDir, "a", EDGE);
+  const w = (await runtime.get(r)) as ChildWorker;
+  const call = async (p: string, u: string) => {
+    const res = await w.fetch(new Request(`http://x${p}?url=${encodeURIComponent(u)}`));
+    await Promise.all(res.waitUntil);
+    return (await res.response!.json()) as Record<string, unknown>;
+  };
+  assert.deepEqual(await call("/egress", `http://127.0.0.1:${port}/`), {
+    error: "TypeError: 127.0.0.1 はインターネットのアドレスでないので、Worker からは接続できません",
+  });
+  assert.match(String((await call("/egress", `http://localhost:${port}/`)).error), /^TypeError: localhost には接続できません/);
+  assert.match(String((await call("/egress", `http://[::1]:${port}/`)).error), /^TypeError: ::1 はインターネットのアドレスでない/);
+  assert.match(String((await call("/egress", "http://169.254.169.254/")).error), /^TypeError: 169\.254\.169\.254 はインターネットのアドレスでない/);
+  assert.match(
+    String((await call("/egress", `http://127.0.0.1:${(allowed.address() as AddressInfo).port}/`)).error),
+    /^TypeError: 127\.0\.0\.1 はインターネットのアドレスでない/,
+    "許可した宛先からのリダイレクトでも、その先は確かめる",
+  );
+  assert.deepEqual(await call("/ws", `ws://127.0.0.1:${port}/`), { result: "closed" });
+  assert.equal(connections, 0, "許可していないサーバーには 1 度も接続していない");
+});
+

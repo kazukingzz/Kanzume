@@ -1,5 +1,6 @@
 import { Buffer } from "node:buffer";
 import { currentInvocation, type LogLevel } from "../observability/events.ts";
+import type { Egress } from "./egress.ts";
 
 const SHARED_GLOBALS = [
   "Request",
@@ -88,7 +89,7 @@ function workerConsole(name: string): Console {
   };
 }
 
-function trackedFetch(name: string): typeof fetch {
+function trackedFetch(name: string, fetch: typeof globalThis.fetch): typeof globalThis.fetch {
   return (input, init) => {
     const invocation = currentInvocation();
     const promise = fetch(input, init);
@@ -117,14 +118,16 @@ export function hasNodejsCompat(flags: string[]): boolean {
   return flags.some((f) => f === "nodejs_compat" || f === "nodejs_compat_v2");
 }
 
-export function createGlobals(name: string, flags: string[], vars: Record<string, unknown>): Record<string, unknown> {
+/** egress: 宛先を制限した fetch と WebSocket（本体の fetch / WebSocket はループバックやプライベートネットワークに届くので見せない） */
+export function createGlobals(name: string, flags: string[], vars: Record<string, unknown>, egress: Egress): Record<string, unknown> {
   const g: Record<string, unknown> = {};
   for (const key of SHARED_GLOBALS) {
     const value = (globalThis as Record<string, unknown>)[key];
     if (value !== undefined) g[key] = value;
   }
   g.console = workerConsole(name);
-  g.fetch = trackedFetch(name);
+  g.fetch = trackedFetch(name, egress.fetch);
+  g.WebSocket = egress.WebSocket;
   g.navigator = { userAgent: "Cloudflare-Workers", language: "en" };
   g.caches = { default: noopCache, open: async () => noopCache };
 

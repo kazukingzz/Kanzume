@@ -136,7 +136,7 @@ function serve(worker: LoadedWorker, socket: string): Promise<void> {
 
 async function start(init: ChildInit): Promise<void> {
   try {
-    const worker = await loadWorker(init.release, init.siteDir, init.timeout, init.vars);
+    const worker = await loadWorker(init.release, init.siteDir, init.timeout, init.vars, { allow: init.egressAllow });
     if (fs.existsSync(init.socket)) fs.rmSync(init.socket);
     await serve(worker, init.socket);
     send({ type: "ready" });

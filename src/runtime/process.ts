@@ -189,6 +189,8 @@ export interface ChildOptions {
   timeout: number;
   /** イベントループが止まったとみなすまでの時間（省略時は timeout + STALL_GRACE_MS） */
   stallMs?: number;
+  /** Worker の fetch / WebSocket で確かめずに接続を許す宛先（テスト専用） */
+  egressAllow?: string[];
 }
 
 /** 子の V8 のヒープの上限（MB） */
@@ -340,7 +342,9 @@ export class ChildWorker {
           reject(new WorkerError(`Worker のプロセスが終了しました（${signal ?? code}）`));
         });
         // 設定は stdin の 1 行目で渡す。stdin は開けたままにし、本体がいなくなったら子も終わる
-        child.stdin?.write(`${JSON.stringify({ release, siteDir, timeout: options.timeout, vars: siteVars(release, siteDir), socket })}\n`);
+        child.stdin?.write(
+          `${JSON.stringify({ release, siteDir, timeout: options.timeout, vars: siteVars(release, siteDir), socket, egressAllow: options.egressAllow })}\n`,
+        );
       });
     } catch (err) {
       worker.close();

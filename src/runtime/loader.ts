@@ -9,6 +9,7 @@ import { KVNamespace } from "../bindings/kv.ts";
 import { R2Bucket } from "../bindings/r2.ts";
 import { currentInvocation } from "../observability/events.ts";
 import type { Release } from "../store.ts";
+import { createEgress, type EgressOptions } from "./egress.ts";
 import { createGlobals, hasNodejsCompat } from "./globals.ts";
 import { UserFacingError } from "../errors.ts";
 import { isInside } from "../paths.ts";
@@ -167,13 +168,20 @@ function message(err: unknown): string {
  * vm.Script で読み込む。
  */
 /** vars を渡すとそれを使う（子プロセスは settings.json を読めないので、本体が読んで渡す） */
-export async function loadWorker(release: Release, siteDir: string, timeout: number, givenVars?: Record<string, unknown>): Promise<LoadedWorker> {
+export async function loadWorker(
+  release: Release,
+  siteDir: string,
+  timeout: number,
+  givenVars?: Record<string, unknown>,
+  egressOptions: EgressOptions = {},
+): Promise<LoadedWorker> {
   const { manifest } = release;
   if (!manifest.main) throw new WorkerError("Worker がありません");
   const workerDir = path.join(release.dir, "worker");
   const vars = givenVars ?? siteVars(release, siteDir);
   const env = buildEnv(release, siteDir, vars);
-  const context = vm.createContext(createGlobals(manifest.name, manifest.compatibilityFlags, vars), {
+  const egress = await createEgress(egressOptions);
+  const context = vm.createContext(createGlobals(manifest.name, manifest.compatibilityFlags, vars, egress), {
     name: `kanzume:${manifest.name}`,
   });
   vm.runInContext("globalThis.self = globalThis", context);
