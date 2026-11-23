@@ -210,6 +210,42 @@ test("リポジトリの外のファイルを import・alias するリポジト�
   }
 });
 
+test("変数入りの require・import でリポジトリの外のファイルを指すリポジトリは、バンドルせずに失敗し中身も残らない", async (t) => {
+  const app = await start(t);
+  const secretDir = tmpDir(t);
+  fs.mkdirSync(path.join(secretDir, "site-a"));
+  fs.writeFileSync(path.join(secretDir, "site-a", "settings.json"), JSON.stringify({ secrets: { API_KEY: "kz_glob_secret" } }));
+  fs.writeFileSync(path.join(secretDir, "environ"), "KANZUME_BACKUP_URL=s3://kz_glob_secret");
+  await app.sites.ensure("evil");
+  const up = "../".repeat(16) + secretDir.slice(1);
+  const run = async (source: string) => {
+    const { fetcher } = fakeGitHub(repoTarball(t, { "app/wrangler.jsonc": JSON.stringify({ main: "src/index.js" }), "app/src/index.js": source }));
+    return deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/app", app.deployer, {
+      siteName: "evil",
+      fetch: fetcher,
+      apiBase: "https://api.test",
+      codeloadBase: "https://codeload.test",
+      maxBytes: 1024 * 1024,
+      byAdmin: true,
+    });
+  };
+  const sources = [
+    `const s = require(\`${up}/\${globalThis.x}/settings.json\`); export default { fetch() { return Response.json(s); } };`,
+    `const s = require("${up}/" + globalThis.x + "/settings.json"); export default { fetch() { return Response.json(s); } };`,
+    `export default { async fetch() { return new Response((await import(\`${up}/env\${globalThis.x}\`, { with: { type: "text" } })).default); } };`,
+  ];
+  for (const source of sources) {
+    const result = await run(source);
+    assert.equal(result.ok, false, source);
+    assert.match(result.ok ? "" : result.error, /リポジトリの外のファイルは import できません/);
+  }
+  assert.equal(app.sites.get("evil")!.get(), undefined, "リリースを作らない");
+  for (const d of app.history.list()) {
+    const full = app.history.get(d.id)!;
+    assert.doesNotMatch(full.log + full.buildLog + (full.error ?? ""), /kz_glob_secret|site-a|environ/, "外のファイルの中身も名前も出さない");
+  }
+});
+
 test("管理画面: URL を読み、サイト名・環境変数・シークレットを決めてデプロイし、デプロイ後も設定を変えられる", async (t) => {
   const worker = `export default { async fetch(request, env) { return Response.json({ GREETING: env.GREETING, API_KEY: env.API_KEY ?? null, LEVEL: env.LEVEL ?? null }); } };`;
   const { fetcher } = fakeGitHub(
