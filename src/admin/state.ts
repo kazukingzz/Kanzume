@@ -19,6 +19,8 @@ export interface StoredCredential {
   /** 登録したブラウザ（「Mac・Chrome」など） */
   device?: string;
   lastUsedAt?: string;
+  /** ID を渡さなくても使えるパスキーか（登録したときの credProps）。ブラウザが答えなければ未設定 */
+  discoverable?: boolean;
   /** パスキーの持ち主。古い admin.json では未設定（読み込むときに最初の管理者にする） */
   userId?: string;
 }
@@ -384,9 +386,14 @@ export class AdminState {
     return !!access && (access.sites === null || access.sites.includes(repo));
   }
 
+  /**
+   * パスキーを足す。ID はすべてのユーザーで重ならないようにする（ログインは ID だけで引くので、ほかの人のパスキーと同じ ID を
+   * 登録できると、削除・名前の変更・ログインで取り違える）。持ち主がもういなければ足さない
+   */
   async addCredential(credential: StoredCredential): Promise<void> {
     const userId = credential.userId ?? this.#primaryAdmin();
     if (!this.user(userId)) throw new UserError("ユーザーが見つかりません");
+    if (this.#state.credentials.some((c) => c.id === credential.id)) throw new UserError("このパスキーはすでに登録されています");
     this.#state.credentials.push({ ...credential, userId });
     await this.#save();
   }
@@ -527,7 +534,8 @@ export class AdminState {
     const mine = this.credentialsOf(userId);
     if (!mine.some((c) => c.id === id)) throw new UserError("パスキーが見つかりません");
     if (mine.length <= 1) throw new UserError("最後のパスキーは削除できません");
-    this.#state.credentials = this.#state.credentials.filter((c) => c.id !== id);
+    // ID が重なったパスキー（重なりを止める前に登録されたもの）があっても、ほかの人のものは消さない
+    this.#state.credentials = this.#state.credentials.filter((c) => !(c.id === id && c.userId === userId));
     await this.#save();
   }
 
@@ -628,16 +636,16 @@ export class AdminState {
     return true;
   }
 
-  async updateCounter(id: string, counter: number): Promise<void> {
-    const credential = this.#state.credentials.find((c) => c.id === id);
+  async updateCounter(id: string, userId: string, counter: number): Promise<void> {
+    const credential = this.#state.credentials.find((c) => c.id === id && c.userId === userId);
     if (!credential) return;
     credential.counter = counter;
     credential.lastUsedAt = new Date().toISOString();
     await this.#save({ backup: false });
   }
 
-  async renameCredential(id: string, name: string): Promise<boolean> {
-    const credential = this.#state.credentials.find((c) => c.id === id);
+  async renameCredential(id: string, userId: string, name: string): Promise<boolean> {
+    const credential = this.#state.credentials.find((c) => c.id === id && c.userId === userId);
     if (!credential) return false;
     const before = credential.name;
     credential.name = name;

@@ -398,3 +398,55 @@ test("持ち主のいないパスキーは起動時に捨て、最初の管理�
   );
 });
 
+test("ほかの人のパスキーと同じ ID は登録できず、ほかの人のパスキーを削除・名前の変更できない", async (t) => {
+  const app = await start(t);
+  const victim = new SoftAuthenticator();
+  await app.state.addCredential({ ...fakeCredential, id: victim.credentialId, transports: ["internal"] });
+  const adminId = app.state.setupUserId;
+  const member = await app.state.createUser("参加者", "member", []);
+  await app.state.addCredential({ ...fakeCredential, id: "member-own", userId: member.id });
+  const api = caller(app.base, `kanzume_session=${await app.state.createSession(member.id)}`);
+
+  // 管理者のパスキーの ID を名乗る（attestation は none なので、ID は認証器が自由に決められる）
+  const forged = new SoftAuthenticator(victim.id);
+  const options = await (await api("/register/options", "POST", {})).json();
+  const res = await api("/register/verify", "POST", { response: forged.create(options, app.base) });
+  assert.equal(res.status, 400);
+  assert.match(((await res.json()) as { error: string }).error, /すでに登録/);
+  assert.deepEqual(
+    app.state.credentials.map((c) => [c.id, c.userId]),
+    [
+      [victim.credentialId, adminId],
+      ["member-own", member.id],
+    ],
+  );
+
+  // 招待からの登録でも断り、使えないメンバーを作らない
+  const { token } = await app.state.createInvite("blog", adminId);
+  const inviteOptions = await (await caller(app.base, null)("/register/options", "POST", { inviteToken: token })).json();
+  const invited = await caller(app.base, null)("/register/verify", "POST", { inviteToken: token, response: forged.create(inviteOptions, app.base) });
+  assert.equal(invited.status, 400);
+  assert.equal(app.state.users.length, 2);
+  assert.notEqual(app.state.checkInvite(token), null, "招待は使われていない");
+
+  assert.equal((await api(`/passkeys/${victim.credentialId}`, "DELETE")).status, 400);
+  assert.equal((await api("/passkeys/rename", "POST", { id: victim.credentialId, name: "x" })).status, 404);
+  assert.equal(await app.state.renameCredential(victim.credentialId, member.id, "x"), false);
+  await assert.rejects(app.state.removeCredential(victim.credentialId, member.id), /見つかりません/);
+  assert.deepEqual(
+    app.state.credentialsOf(adminId).map((c) => [c.id, c.name]),
+    [[victim.credentialId, undefined]],
+  );
+  await assert.rejects(app.state.addCredential({ ...fakeCredential, id: victim.credentialId, userId: member.id }), /すでに登録/);
+});
+
+test("ログインの選択肢にはパスキーの ID を出さず、ID を渡さないと使えないパスキーがありそうなときだけすべて出す", async (t) => {
+  const { post, state } = await start(t);
+  await state.addCredential({ ...fakeCredential, id: "phone", transports: ["hybrid", "internal"] });
+  await state.addCredential({ ...fakeCredential, id: "synced", transports: ["usb"], discoverable: true });
+  const allowed = async () => ((await (await post("/login/options", {})).json()) as { allowCredentials: { id: string }[] }).allowCredentials.map((c) => c.id);
+  assert.deepEqual(await allowed(), []);
+  await state.addCredential({ ...fakeCredential, id: "old-key", transports: ["usb"] });
+  assert.deepEqual(await allowed(), ["phone", "synced", "old-key"], "一部だけ渡すと、渡していないパスキーが使えなくなる");
+});
+

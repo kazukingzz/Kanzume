@@ -2,7 +2,7 @@
 import { randomBytes } from "node:crypto";
 import { newSiteAccessSecret, siteRpId, usableOn } from "../../site-auth.ts";
 import { type Ctx, fail, type Route } from "../context.ts";
-import { describeDevice, providerName } from "../passkeys.ts";
+import { describeDevice, discoverableOf, providerName } from "../passkeys.ts";
 
 const webauthn = () => import("@simplewebauthn/server");
 
@@ -89,11 +89,17 @@ export const siteAccessRoutes: Route[] = [
         transports: credential.transports,
         createdAt: new Date().toISOString(),
         name: providerName(aaguid) ?? describeDevice(ctx.req.headers["user-agent"]) ?? "",
+        discoverable: discoverableOf(body.response),
       };
-      await sites.updateAccess(name, (current) => ({
-        secret: current?.secret ?? newSiteAccessSecret(),
-        passkeys: [...(current?.passkeys ?? []).filter((p) => p.id !== passkey.id), passkey],
-      }));
+      // 同じ ID のパスキーは置き換えずに断る（置き換えると、ほかの人が登録したパスキーの公開鍵を差し替えられる）
+      if (sites.settings(name).access?.passkeys.some((p) => p.id === passkey.id)) return fail(400, "このパスキーはすでに登録されています");
+      let duplicate = false;
+      await sites.updateAccess(name, (current) => {
+        duplicate = !!current?.passkeys.some((p) => p.id === passkey.id);
+        if (duplicate) return current;
+        return { secret: current?.secret ?? newSiteAccessSecret(), passkeys: [...(current?.passkeys ?? []), passkey] };
+      });
+      if (duplicate) return fail(400, "このパスキーはすでに登録されています");
       return { ok: true };
     },
   },

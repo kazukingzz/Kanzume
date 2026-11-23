@@ -176,3 +176,17 @@ test("サイトのパスキーは、そのサイトを扱えるユーザーだ�
   assert.equal((await api("/sites/blog/access/register/options", "POST", {})).status, 403);
   assert.equal((await api("/sites/blog/access/passkeys/x", "DELETE")).status, 403);
 });
+
+test("同じサイトに同じ ID のパスキーは登録できず、登録済みのパスキーの公開鍵を差し替えられない", async (t) => {
+  const { app, admin } = await setup(t);
+  const key = new SoftAuthenticator();
+  assert.equal((await register(admin, key)).status, 200);
+  const forged = await register(admin, new SoftAuthenticator(key.id));
+  assert.equal(forged.status, 400);
+  assert.match(((await forged.json()) as { error: string }).error, /すでに登録/);
+  assert.equal((await accessOf(admin)).passkeys.length, 1);
+  assert.equal((await login(app, key)).status, 200, "元のパスキーでそのままログインできる");
+  // ほかのサイトには同じパスキーを登録できる
+  assert.equal((await register(admin, key, ROOT, "home")).status, 200);
+});
+

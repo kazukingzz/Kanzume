@@ -1,8 +1,8 @@
 /** ログイン（パスキーの登録・サインイン）・ログアウト・招待リンクの確認 */
 import { randomBytes } from "node:crypto";
 import { ADMIN_PATH, type Ctx, fail, reply, type Route } from "../context.ts";
-import { describeDevice, providerName } from "../passkeys.ts";
 import { type ChallengePurpose, SESSION_COOKIE_MAX_AGE, SESSION_COOKIE } from "../session.ts";
+import { allowCredentialsFor, describeDevice, discoverableOf, providerName } from "../passkeys.ts";
 import { normalizeName, safeEqual, type User } from "../state.ts";
 
 export const ROOT_SITE_MEMBERS = "ルートドメインで配信しているサイトには、メンバーを追加できません（管理画面と同じオリジンで動くため）";
@@ -141,6 +141,8 @@ export const authRoutes: Route[] = [
       if (still.kind !== allowed.kind || (still.kind === "self" && allowed.kind === "self" && still.userId !== allowed.userId)) {
         return fail(403, "パスキーを登録できませんでした。もう一度ログインしてから試してください");
       }
+      // ほかの人のパスキーと同じ ID は登録しない（招待のときは、使えないパスキーでメンバーが作られないよう、招待を使う前に確かめる）
+      if (state.credentials.some((c) => c.id === credential.id)) return fail(400, "このパスキーはすでに登録されています");
       let owner: string;
       if (allowed.kind === "self") owner = allowed.userId;
       else if (allowed.kind === "setup") owner = state.setupUserId;
@@ -159,6 +161,7 @@ export const authRoutes: Route[] = [
         name: providerName(aaguid) ?? device ?? "",
         aaguid,
         device,
+        discoverable: discoverableOf(body.response),
       });
       // ログイン中に足したパスキーは、セッションをそのまま使う
       if (allowed.kind === "self") return { ok: true };
@@ -175,7 +178,7 @@ export const authRoutes: Route[] = [
       return (await webauthn()).generateAuthenticationOptions({
         rpID: ctx.rpID,
         challenge: challenges.create("login"),
-        allowCredentials: state.credentials.map((c) => ({ id: c.id, transports: c.transports })),
+        allowCredentials: allowCredentialsFor(state.credentials),
         userVerification: "preferred",
       });
     },
@@ -205,8 +208,8 @@ export const authRoutes: Route[] = [
           requireUserVerification: false,
         }),
       );
-      await state.updateCounter(stored.id, result.authenticationInfo.newCounter);
       if (!stored.userId || !state.user(stored.userId)) return fail(400, "このパスキーのユーザーは削除されています");
+      await state.updateCounter(stored.id, stored.userId, result.authenticationInfo.newCounter);
       return login(ctx, stored.userId);
     },
   },

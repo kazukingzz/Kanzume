@@ -57,7 +57,7 @@ export const meRoutes: Route[] = [
       if (!name) return fail(400, "名前を入力してください");
       const id = String(body.id ?? "");
       if (!state.credentialsOf(userOf(ctx).id).some((c) => c.id === id)) return fail(404, "パスキーが見つかりません");
-      return (await state.renameCredential(id, name)) ? { name } : fail(404, "パスキーが見つかりません");
+      return (await state.renameCredential(id, userOf(ctx).id, name)) ? { name } : fail(404, "パスキーが見つかりません");
     },
   },
   {

@@ -6,9 +6,14 @@ const b64 = (data: Buffer) => data.toString("base64url");
 
 /** テスト用のパスキー（P-256 の鍵を持つ、ソフトウェアの認証器）。ブラウザの navigator.credentials の代わりに応答を作る */
 export class SoftAuthenticator {
-  readonly id = randomBytes(16);
+  readonly id: Buffer;
   #key = generateKeyPairSync("ec", { namedCurve: "P-256" });
   #counter = 0;
+
+  /** id を渡すと、その ID のパスキーを作る（ほかの人のパスキーと同じ ID を名乗る攻撃の再現） */
+  constructor(id: Buffer = randomBytes(16)) {
+    this.id = id;
+  }
 
   get credentialId(): string {
     return b64(this.id);

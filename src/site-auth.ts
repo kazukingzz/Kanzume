@@ -5,6 +5,7 @@
  */
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { allowCredentialsFor } from "./admin/passkeys.ts";
 import { Challenges } from "./admin/session.ts";
 import { readBody, requestOrigin, sendJson, sendText } from "./http.ts";
 import type { Sites } from "./sites.ts";
@@ -16,6 +17,8 @@ export interface SitePasskey {
   transports?: string[];
   createdAt: string;
   name: string;
+  /** ID を渡さなくても使えるパスキーか（登録したときの credProps）。ブラウザが答えなければ未設定 */
+  discoverable?: boolean;
 }
 
 export interface SiteAccess {
@@ -44,7 +47,11 @@ export function parseSiteAccess(raw: unknown): SiteAccess | undefined {
   );
   return {
     secret: typeof secret === "string" && secret ? secret : newSiteAccessSecret(),
-    passkeys: valid.map((p) => ({ ...p, name: typeof p.name === "string" ? p.name : "" })),
+    passkeys: valid.map((p) => ({
+      ...p,
+      name: typeof p.name === "string" ? p.name : "",
+      discoverable: typeof p.discoverable === "boolean" ? p.discoverable : undefined,
+    })),
   };
 }
 
@@ -166,7 +173,7 @@ export class SiteAuth {
       const options = (await webauthn()).generateAuthenticationOptions({
         rpID: rpId,
         challenge: this.#challenges.create("site-login"),
-        allowCredentials: access.passkeys.map((p) => ({ id: p.id, transports: p.transports as never })),
+        allowCredentials: allowCredentialsFor(access.passkeys),
         userVerification: "preferred",
       });
       sendJson(res, 200, await options);

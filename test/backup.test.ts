@@ -442,7 +442,7 @@ test("ログインやセッションの更新ではバックアップを予約�
   await app.state.addCredential({ ...fakeCredential, id: "c2" });
   assert.equal(calls, 1, "パスキーの登録は予約する");
   const id = await app.state.createSession();
-  await app.state.updateCounter("c2", 5);
+  await app.state.updateCounter("c2", app.state.setupUserId, 5);
   await app.state.removeSession(id);
   assert.equal(calls, 1);
 });

@@ -22,6 +22,29 @@ export function providerName(aaguid: string | undefined): string | undefined {
   return aaguid ? PROVIDERS[aaguid.toLowerCase()] : undefined;
 }
 
+/** 登録の応答の credProps から、ID を渡さなくても使えるパスキー（discoverable）か。ブラウザが答えなければ undefined */
+export function discoverableOf(response: unknown): boolean | undefined {
+  const rk = (response as { clientExtensionResults?: { credProps?: { rk?: unknown } } } | undefined)?.clientExtensionResults?.credProps?.rk;
+  return typeof rk === "boolean" ? rk : undefined;
+}
+
+interface ListedPasskey {
+  id: string;
+  transports?: string[];
+  discoverable?: boolean;
+}
+
+/**
+ * ログインの allowCredentials。認証なしで呼べるので、ふだんは空にしてパスキーの ID を見せない（ブラウザが discoverable なパスキーから選ばせる）。
+ * ID を渡さないと使えないパスキーがありそうなときだけ、すべての ID を渡す（一部だけ渡すと、渡していないパスキーが使えなくなる）。
+ * credProps が分からないパスキーは、端末内・スマホのパスキー（internal・hybrid）なら discoverable とみなす
+ */
+export function allowCredentialsFor(passkeys: readonly ListedPasskey[]): { id: string; transports?: never }[] {
+  const needsId = (p: ListedPasskey) =>
+    p.discoverable === false || (p.discoverable === undefined && !(p.transports ?? []).some((t) => t === "internal" || t === "hybrid"));
+  return passkeys.some(needsId) ? passkeys.map((p) => ({ id: p.id, transports: p.transports as never })) : [];
+}
+
 /** User-Agent から「Mac・Chrome」のような短い説明を作る */
 export function describeDevice(userAgent: string | undefined): string | undefined {
   if (!userAgent) return undefined;
