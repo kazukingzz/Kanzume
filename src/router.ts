@@ -11,7 +11,8 @@ import { matchHost, parentHost, type Sites } from "./sites.ts";
 import type { Release } from "./store.ts";
 import { DONE_TIMEOUT_MS } from "./runtime/protocol.ts";
 import { MANAGED_PATHS, resolveManagedFile } from "./managed-files.ts";
-import { type SiteAuth, siteRpId } from "./site-auth.ts";
+import { SITE_SESSION_COOKIE, type SiteAuth, siteRpId } from "./site-auth.ts";
+import { HOST_SESSION_COOKIE, SESSION_COOKIE } from "./admin/session.ts";
 
 interface Deps {
   config: Config;
@@ -52,6 +53,18 @@ export function runWorkerFirst(rule: boolean | string[], pathname: string): bool
   return matched;
 }
 
+const KANZUME_COOKIES = new Set([HOST_SESSION_COOKIE, SESSION_COOKIE, SITE_SESSION_COOKIE]);
+
+/** Kanzume のログインの Cookie（管理画面のセッション・サイトのログイン）を外した Cookie ヘッダー。何も残らなければ undefined */
+export function withoutKanzumeCookies(cookie: string | undefined): string | undefined {
+  if (!cookie) return cookie;
+  const kept = cookie.split(";").filter((part) => {
+    const eq = part.indexOf("=");
+    return !KANZUME_COOKIES.has((eq === -1 ? part : part.slice(0, eq)).trim());
+  });
+  return kept.length ? kept.join(";").trim() : undefined;
+}
+
 function workerFailure(release: Release, error: unknown): Response {
   console.error(`[${release.manifest.name}] Worker で例外:`, error);
   return new Response("Worker threw exception", { status: 500, headers: { "content-type": "text/plain; charset=utf-8" } });
@@ -59,6 +72,11 @@ function workerFailure(release: Release, error: unknown): Response {
 
 export function createRouter({ config, state, sites, runtime, handleAdmin, handleDeploy, handleReport, handleGit, handleHook, observability, siteAuth }: Deps) {
   async function handleSite(req: IncomingMessage, res: ServerResponse, release: Release, pathname: string, search: string) {
+    // 管理画面のセッション（https では Path=/ なので、ルートのサイトへのリクエストにも付く）とログインの Cookie は、サイトの Worker に見せない。
+    // toWebRequest の extraHeaders で上書きしないのは、Cookie が 1 つも残らないときにヘッダーごと消せないため（ログインの確認は済んでいる）
+    const cookie = withoutKanzumeCookies(req.headers.cookie);
+    if (cookie === undefined) delete req.headers.cookie;
+    else req.headers.cookie = cookie;
     // サイトの URL はリクエストされたホストのまま渡す（KANZUME_ORIGIN はルートドメインの URL なので使わない）
     const request = toWebRequest(req, `${requestOrigin(req)}${pathname}${search}`, { "cf-connecting-ip": clientIp(req) });
     const invocation = new Invocation(release.manifest.name, release.id, request, `${pathname}${search}`);

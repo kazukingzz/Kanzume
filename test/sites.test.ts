@@ -192,7 +192,8 @@ test("ログとデプロイ履歴はサイトごとに分かれ、サイトを�
 
 test("ルートドメインを管理画面で設定すると、サイトはそのサブドメインになり、管理画面はサイト以外のホストで開ける", async (t) => {
   const { base, deploy, site, state, sites } = await start(t);
-  const cookie = `kanzume_session=${await state.createSession()}`;
+  // https なので __Host- の Cookie（新しいセッションは前の名前では受け付けない）
+  const cookie = `__Host-kanzume_session=${await state.createSession()}`;
   // fa.tekitou.app で管理画面を開いている（Origin も fa.tekitou.app）
   const admin = (p: string, init: RequestInit = {}, host = "fa.tekitou.app") =>
     fetch(`${base}/_admin/kanzume/api${p}`, {

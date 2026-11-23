@@ -21,7 +21,7 @@ import { repoRoutes } from "./routes/repos.ts";
 import { siteAccessRoutes } from "./routes/site-access.ts";
 import { siteRoutes } from "./routes/sites.ts";
 import { userRoutes } from "./routes/users.ts";
-import { Challenges, readCookie, SESSION_COOKIE } from "./session.ts";
+import { Challenges, findSession } from "./session.ts";
 
 export { ADMIN_PATH } from "./context.ts";
 
@@ -98,8 +98,9 @@ export function createAdminHandler(deps: Omit<AdminDeps, "challenges">) {
       if (found === "methodMismatch") return sendJson(res, 405, { error: "このメソッドは使えません" });
       const { route, params } = found;
 
-      const sessionId = readCookie(req, SESSION_COOKIE);
-      const user = state.sessionUser(sessionId);
+      const session = findSession(req, origin, (id, legacy) => state.sessionUser(id, { legacy }));
+      const sessionId = session?.id ?? null;
+      const user = session?.value ?? null;
       if (route.auth !== "public" && !user) return sendJson(res, 401, { error: "ログインしてください" });
       const isAdmin = user?.role === "admin";
       const canSite = (name: string) => isAdmin || (user?.sites.includes(name) ?? false);

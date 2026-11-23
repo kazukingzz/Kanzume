@@ -99,6 +99,11 @@ interface StateFile {
 interface Session {
   lastSeen: number;
   userId: string;
+  /**
+   * __Host- の Cookie を入れたあとに作ったセッション。https では前の名前の Cookie（kanzume_session）では受け付けない
+   * （前の名前はほかのサブドメインからも置けるので、新しいセッションを置かれて別のユーザーとしてログインさせられないように）
+   */
+  hostCookie?: true;
 }
 
 interface StoredFile extends StateFile {
@@ -409,7 +414,7 @@ export class AdminState {
     const hash = hashSession(id);
     const now = Date.now();
     this.#prune(now);
-    this.#sessions.set(hash, { lastSeen: now, userId });
+    this.#sessions.set(hash, { lastSeen: now, userId, hostCookie: true });
     try {
       await this.#save({ backup: false });
     } catch (err) {
@@ -423,13 +428,16 @@ export class AdminState {
     return this.sessionUser(id) !== null;
   }
 
-  /** セッションのユーザー。期限切れや、消されたユーザーのセッションなら null */
-  sessionUser(id: string | null): User | null {
+  /**
+   * セッションのユーザー。期限切れや、消されたユーザーのセッションなら null。
+   * legacy は https で前の名前の Cookie から読んだとき（__Host- を入れる前からあるセッションだけ受け付ける）
+   */
+  sessionUser(id: string | null, { legacy = false }: { legacy?: boolean } = {}): User | null {
     if (!id) return null;
     const hash = hashSession(id);
     const session = this.#sessions.get(hash);
     const now = Date.now();
-    if (!session) return null;
+    if (!session || (legacy && session.hostCookie)) return null;
     const user = this.user(session.userId);
     if (!user || now - session.lastSeen > SESSION_IDLE_MS) {
       this.#sessions.delete(hash);

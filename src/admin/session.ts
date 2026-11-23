@@ -1,18 +1,57 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 
+/**
+ * 管理画面のセッションの Cookie。https では __Host- を付ける（Domain を付けられないので、兄弟のサブドメインの Worker が
+ * Domain=<ルートドメイン> で同じ名前の Cookie を置いて、管理者のセッションを差し替えられない）。
+ * __Host- は Secure が要るので、http（手元の開発）では付けない
+ */
 export const SESSION_COOKIE = "kanzume_session";
+export const HOST_SESSION_COOKIE = `__Host-${SESSION_COOKIE}`;
 // Cookie を無期限にしないのは、ブラウザが Max-Age を最長 400 日に切り詰めるため
 export const SESSION_COOKIE_MAX_AGE = 400 * 24 * 60 * 60;
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
 
-export function readCookie(req: IncomingMessage, name: string): string | null {
+export const sessionCookieName = (origin: string) => (origin.startsWith("https:") ? HOST_SESSION_COOKIE : SESSION_COOKIE);
+
+/** 同じ名前の Cookie の値をすべて（親ドメインに付けた同名の Cookie があっても、本物を見落とさない） */
+export function readCookies(req: IncomingMessage, name: string): string[] {
+  const out: string[] = [];
   for (const part of (req.headers.cookie ?? "").split(";")) {
     const eq = part.indexOf("=");
     if (eq === -1 || part.slice(0, eq).trim() !== name) continue;
     try {
-      return decodeURIComponent(part.slice(eq + 1).trim());
+      out.push(decodeURIComponent(part.slice(eq + 1).trim()));
     } catch {}
+  }
+  return out;
+}
+
+/**
+ * Cookie からセッションを探す。https では __Host- の Cookie を先に見て、なければ前の名前（kanzume_session）を legacy: true で引く。
+ * 同じ名前に有効なセッションが 2 つ以上あれば、どちらが本物か分からないので使わない
+ * （先頭のものを使うと、ほかのサブドメインから置かれた Cookie で別のユーザーとしてログインさせられる）
+ */
+export function findSession<T>(
+  req: IncomingMessage,
+  origin: string,
+  lookup: (id: string, legacy: boolean) => T | null,
+): { id: string; value: T; legacy: boolean } | null {
+  const names: [string, boolean][] = origin.startsWith("https:")
+    ? [
+        [HOST_SESSION_COOKIE, false],
+        [SESSION_COOKIE, true],
+      ]
+    : [[SESSION_COOKIE, false]];
+  for (const [name, legacy] of names) {
+    const found = new Map<string, T>();
+    for (const id of readCookies(req, name)) {
+      if (found.has(id)) continue;
+      const value = lookup(id, legacy);
+      if (value !== null) found.set(id, value);
+    }
+    if (found.size > 1) return null;
+    for (const [id, value] of found) return { id, value, legacy };
   }
   return null;
 }

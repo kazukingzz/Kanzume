@@ -1,8 +1,8 @@
 /** ログイン（パスキーの登録・サインイン）・ログアウト・招待リンクの確認 */
 import { randomBytes } from "node:crypto";
 import { ADMIN_PATH, type Ctx, fail, reply, type Route } from "../context.ts";
-import { type ChallengePurpose, SESSION_COOKIE_MAX_AGE, SESSION_COOKIE } from "../session.ts";
 import { allowCredentialsFor, describeDevice, discoverableOf, providerName } from "../passkeys.ts";
+import { type ChallengePurpose, SESSION_COOKIE, SESSION_COOKIE_MAX_AGE, sessionCookieName } from "../session.ts";
 import { normalizeName, safeEqual, type User } from "../state.ts";
 
 export const ROOT_SITE_MEMBERS = "ルートドメインで配信しているサイトには、メンバーを追加できません（管理画面と同じオリジンで動くため）";
@@ -14,8 +14,11 @@ const INVALID_INVITE = "招待リンクが無効です（使用済み・期限�
  */
 const webauthn = () => import("@simplewebauthn/server");
 
+// https の __Host- は Path=/ が必須。ルートのサイトの Worker にも送られるが、router.ts がサイトに渡す前に外す
 const sessionCookie = (origin: string, value: string, maxAge: number) =>
-  `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}${origin.startsWith("https:") ? "; Secure" : ""}`;
+  origin.startsWith("https:")
+    ? `${sessionCookieName(origin)}=${value}; Path=/; HttpOnly; SameSite=Strict; Secure; Max-Age=${maxAge}`
+    : `${SESSION_COOKIE}=${value}; Path=${ADMIN_PATH}; HttpOnly; SameSite=Strict; Max-Age=${maxAge}`;
 
 /** セッションを作り、Cookie を付けて返す。管理者なら、このホストを覚える（このホストのラベルをサイトに取らせない） */
 async function login(ctx: Ctx, userId: string) {
@@ -90,6 +93,7 @@ export const authRoutes: Route[] = [
     handle: (ctx) => {
       const { state, config } = ctx.deps;
       const authenticated = ctx.user !== null;
+      // 書き直すのは確かめたセッションの ID だけ（前の名前の Cookie から読んだセッションは、ここで __Host- の Cookie に移る）
       const renew: Record<string, string> = authenticated ? { "set-cookie": sessionCookie(ctx.origin, ctx.sessionId!, SESSION_COOKIE_MAX_AGE) } : {};
       return reply(200, { registered: state.credentials.length > 0, authenticated, domainFromEnv: !!config.origin }, renew);
     },

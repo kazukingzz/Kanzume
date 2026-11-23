@@ -8,8 +8,9 @@ import { AdminState } from "../src/admin/state.ts";
 import { EnvError, loadConfig } from "../src/config.ts";
 import { createServer } from "../src/server.ts";
 import { describeDevice, providerName } from "../src/admin/passkeys.ts";
-import { tmpDir } from "./helpers.ts";
 import http from "node:http";
+import { withoutKanzumeCookies } from "../src/router.ts";
+import { tarGz, tmpDir, toCjs } from "./helpers.ts";
 import { startApp } from "./fixtures.ts";
 import { SoftAuthenticator } from "./webauthn.ts";
 
@@ -450,3 +451,65 @@ test("ログインの選択肢にはパスキーの ID を出さず、ID を渡�
   assert.deepEqual(await allowed(), ["phone", "synced", "old-key"], "一部だけ渡すと、渡していないパスキーが使えなくなる");
 });
 
+test("https では __Host- の Cookie でセッションを持ち、ほかのサブドメインから置ける同名の Cookie ではログインさせられない", async (t) => {
+  const dataDir = tmpDir(t);
+  // __Host- を入れる前からあるセッション（前の名前の Cookie で持っている）
+  const before = new AdminState(dataDir);
+  await before.init();
+  const old = await before.createSession();
+  await before.flush();
+  const file = path.join(dataDir, "admin.json");
+  const stored = JSON.parse(fs.readFileSync(file, "utf8"));
+  for (const s of Object.values(stored.sessions) as { hostCookie?: true }[]) delete s.hostCookie;
+  fs.writeFileSync(file, JSON.stringify(stored));
+
+  const app = await start(t, dataDir);
+  const https = (cookie: string | null) => caller(app.base, cookie, { https: true });
+  const key = new SoftAuthenticator();
+  const options = await (await https(null)("/register/options", "POST", { setupToken: "setup" })).json();
+  const registered = await https(null)("/register/verify", "POST", {
+    setupToken: "setup",
+    response: key.create(options, app.base.replace("http:", "https:")),
+  });
+  assert.equal(registered.status, 200);
+  const setCookie = registered.headers.get("set-cookie") ?? "";
+  assert.match(setCookie, /^__Host-kanzume_session=[^;]+; Path=\/; HttpOnly; SameSite=Strict; Secure; Max-Age=34560000$/);
+  const mine = setCookie.split(";")[0];
+  const mineId = mine.slice(mine.indexOf("=") + 1);
+
+  const state = async (cookie: string) => {
+    const res = await https(cookie)("/state");
+    return { authenticated: ((await res.json()) as { authenticated: boolean }).authenticated, setCookie: res.headers.get("set-cookie") };
+  };
+  // 攻撃者のセッションを前の名前で置かれても、__Host- のセッションを使い、それを書き直す
+  const attacker = await app.state.createSession(app.state.setupUserId);
+  const withAttacker = await state(`kanzume_session=${attacker}; ${mine}`);
+  assert.equal(withAttacker.authenticated, true);
+  assert.ok(withAttacker.setCookie?.startsWith(`__Host-kanzume_session=${mineId};`));
+  assert.equal((await state(`kanzume_session=${attacker}`)).authenticated, false, "新しいセッションは前の名前では使えない");
+
+  // 前からあるセッションは前の名前でも使え、__Host- の Cookie に移す
+  const migrated = await state(`kanzume_session=${old}`);
+  assert.equal(migrated.authenticated, true);
+  assert.ok(migrated.setCookie?.startsWith(`__Host-kanzume_session=${old}; Path=/;`));
+  assert.equal((await state(`kanzume_session=${old}; kanzume_session=${old}`)).authenticated, true, "同じ値が重なっているだけなら使う");
+  // 有効なセッションが同じ名前に 2 つあれば、どちらも使わない（どちらが本物か分からない）
+  const ambiguous = await state(`__Host-kanzume_session=${attacker}; ${mine}`);
+  assert.equal(ambiguous.authenticated, false);
+  assert.equal(ambiguous.setCookie, null, "どちらかの値で Cookie を書き直さない");
+});
+
+test("サイトの Worker には、管理画面のセッションとサイトのログインの Cookie を渡さない", async (t) => {
+  assert.equal(withoutKanzumeCookies("a=1; kanzume_session=x; __Host-kanzume_session=y; kanzume_site_session=z; b=2"), "a=1; b=2");
+  assert.equal(withoutKanzumeCookies("kanzume_session=x"), undefined);
+  const app = await start(t);
+  const worker = tarGz(t, {
+    "wrangler.jsonc": JSON.stringify({ name: "home", main: "src/index.ts" }),
+    ...toCjs(t, { "worker/index.js": `export default { fetch(request) { return new Response(request.headers.get("cookie") ?? "none"); } };` }),
+  });
+  assert.equal((await app.deploy(worker, { site: "home" })).status, 200);
+  await app.sites.setRoot("home");
+  const page = async (cookie: string) => (await fetch(`${app.base}/`, { headers: { cookie } })).text();
+  assert.equal(await page("theme=dark; __Host-kanzume_session=secret; kanzume_session=old"), "theme=dark");
+  assert.equal(await page("__Host-kanzume_session=secret"), "none");
+});
