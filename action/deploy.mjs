@@ -174,6 +174,14 @@ const text = fs.readFileSync(configFile, "utf8");
 const config = configFile.endsWith(".toml") ? readToml(text) : JSON.parse(stripJsonc(text));
 const source = deploySource();
 
+const repoRoot = fs.realpathSync(process.cwd());
+/** シンボリックリンクをたどった先がリポジトリの中か。外を指すリンクの中身は送らない（ランナーの秘密やほかのファイルを公開しないため） */
+function insideRepo(p) {
+  const real = fs.realpathSync(p);
+  return real === repoRoot || real.startsWith(repoRoot + path.sep);
+}
+if (!insideRepo(configFile)) fail(`${configFile} がリポジトリの外を指すシンボリックリンクです`);
+
 const stage = fs.mkdtempSync(path.join(os.tmpdir(), "kanzume-"));
 fs.copyFileSync(configFile, path.join(stage, configFile));
 
@@ -216,15 +224,24 @@ try {
   if (assetsDir) {
     if (!fs.existsSync(assetsDir)) throw new BuildError(`assets.directory（${assetsDir}）がありません。先にビルドしてください`);
     // .assetsignore に書いたもの（_worker.js など）は配信しない（wrangler と同じ）。.assetsignore 自体も。
-    // シンボリックリンクは指す先の中身をコピーする（Kanzume はリンクを受け付けない）
+    // シンボリックリンクは指す先の中身をコピーする（Kanzume はリンクを受け付けない）。リポジトリの外を指すものは止める
     const ignoreFile = path.join(assetsDir, ".assetsignore");
-    const ignored = parseAssetsIgnore(fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, "utf8") : "");
+    let ignored;
+    try {
+      ignored = parseAssetsIgnore(fs.existsSync(ignoreFile) ? fs.readFileSync(ignoreFile, "utf8") : "");
+    } catch (err) {
+      throw new BuildError(err.message);
+    }
     fs.cpSync(assetsDir, path.join(stage, "assets"), {
       recursive: true,
       dereference: true,
       filter: (src) => {
         const rel = path.relative(assetsDir, src).split(path.sep).join("/");
-        return rel === "" || (rel !== ".assetsignore" && !ignored(rel));
+        if (!(rel === "" || (rel !== ".assetsignore" && !ignored(rel)))) return false;
+        // 飛ばすだけにしないのは、必要なファイルが黙って欠けたまま公開されないようにするため
+        if (!insideRepo(src))
+          throw new BuildError(`${path.join(assetsDir, rel)} がリポジトリの外を指しています。シンボリックリンクはリポジトリの中を指すものだけ使えます`);
+        return true;
       },
     });
   }

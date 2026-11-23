@@ -67,6 +67,33 @@ test("Action は .assetsignore に書いたファイルを送らず、シンボ�
   assert.equal((await get("/.assetsignore")).status, 404);
 });
 
+test("Action はリポジトリの外を指すシンボリックリンクがあると、何も送らずに止まる", async (t) => {
+  const app = await start(t);
+  await app.sites.ensure("docs");
+  const outside = tmpDir(t);
+  writeTree(outside, { id_rsa: "kz_runner_secret", "dir/token.txt": "kz_runner_secret" });
+  const project = () => {
+    const dir = tmpDir(t);
+    writeTree(dir, { "wrangler.jsonc": JSON.stringify({ assets: { directory: "./dist" } }), "dist/index.html": "top" });
+    return dir;
+  };
+  const file = project();
+  fs.symlinkSync(path.join(outside, "id_rsa"), path.join(file, "dist", "key.txt"));
+  const dir = project();
+  fs.symlinkSync(path.join(outside, "dir"), path.join(dir, "dist", "linked"));
+  const config = project();
+  fs.rmSync(path.join(config, "wrangler.jsonc"));
+  fs.writeFileSync(path.join(outside, "wrangler.jsonc"), JSON.stringify({ assets: { directory: "./dist" } }));
+  fs.symlinkSync(path.join(outside, "wrangler.jsonc"), path.join(config, "wrangler.jsonc"));
+
+  for (const project of [file, dir, config]) {
+    const result = await action(project, { KANZUME_URL: app.base, KANZUME_TOKEN: app.token, KANZUME_SITE: "docs" });
+    assert.notEqual(result.code, 0, result.output);
+    assert.match(result.output, /リポジトリの外を指/);
+  }
+  assert.equal(app.sites.get("docs")!.get(), undefined, "何もデプロイされない");
+});
+
 test("Action は wrangler.toml のインラインテーブル（assets = { directory = ... }）も読む", async (t) => {
   const app = await start(t);
   await app.sites.ensure("docs");
