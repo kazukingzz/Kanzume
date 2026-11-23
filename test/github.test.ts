@@ -246,6 +246,45 @@ test("変数入りの require・import でリポジトリの外のファイル�
   }
 });
 
+test("tsconfig.json の extends でリポジトリの外を読ませず、作業ディレクトリの親の package.json にも左右されない", async (t) => {
+  const app = await start(t);
+  const secretDir = tmpDir(t);
+  const secret = path.join(secretDir, "secret.txt");
+  fs.writeFileSync(secret, "kz_tsconfig_secret");
+  await app.sites.ensure("ts");
+  const { fetcher } = fakeGitHub(
+    repoTarball(t, {
+      "app/wrangler.jsonc": JSON.stringify({ main: "src/index.ts" }),
+      "app/tsconfig.json": JSON.stringify({ extends: `${"../".repeat(16)}${secret.slice(1)}`, compilerOptions: { target: "es2022" } }),
+      "app/src/index.ts": `const n: number = 1; export default { fetch() { return new Response(String(n)); } };`,
+    }),
+  );
+  // 誰でも書ける一時ディレクトリに壊れた package.json があっても、ビルドはそこを作業ディレクトリの親にしない
+  const shared = tmpDir(t);
+  fs.writeFileSync(path.join(shared, "package.json"), "{ broken");
+  const before = process.env.TMPDIR;
+  process.env.TMPDIR = shared;
+  let result: Awaited<ReturnType<typeof deployFromGitHub>>;
+  try {
+    result = await deployFromGitHub("https://github.com/kazukingzz/kanzume/tree/main/app", app.deployer, {
+      siteName: "ts",
+      fetch: fetcher,
+      apiBase: "https://api.test",
+      codeloadBase: "https://codeload.test",
+      maxBytes: 1024 * 1024,
+      byAdmin: true,
+    });
+  } finally {
+    process.env.TMPDIR = before;
+  }
+  assert.equal(result.ok, true, result.ok ? "" : result.error);
+  const full = app.history.get(app.history.list("ts")[0].id)!;
+  assert.match(full.buildLog, /tsconfig\.json の extends は使いません/);
+  assert.doesNotMatch(full.log + full.buildLog, /kz_tsconfig_secret/);
+  assert.ok(app.deployer.workRoot.startsWith(app.dataDir), "作業ディレクトリはデータのディレクトリの下に作る");
+  assert.equal(fs.statSync(app.deployer.workRoot).mode & 0o777, 0o700);
+});
+
 test("管理画面: URL を読み、サイト名・環境変数・シークレットを決めてデプロイし、デプロイ後も設定を変えられる", async (t) => {
   const worker = `export default { async fetch(request, env) { return Response.json({ GREETING: env.GREETING, API_KEY: env.API_KEY ?? null, LEVEL: env.LEVEL ?? null }); } };`;
   const { fetcher } = fakeGitHub(

@@ -3,14 +3,13 @@ import { randomBytes } from "node:crypto";
 import { existsSync } from "node:fs";
 import fs from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { safeEqual, type AdminState } from "../admin/state.ts";
 import type { Config } from "../config.ts";
-import { BuildError, deployFromDirectory } from "../deploy/build.ts";
 import { DeployLog, type Deployer } from "../deploy/deployer.ts";
 import { EXTRACT_RATIO } from "../deploy/tar.ts";
+import { BuildError, deployFromDirectory, makeWorkDir } from "../deploy/build.ts";
 import { findConfigFile } from "../deploy/wrangler.ts";
 import { mib, UserFacingError } from "../errors.ts";
 import { readJson, requestToken, rootOrigin, sendText } from "../http.ts";
@@ -248,7 +247,7 @@ export function createGitHandler({ config, state, repos, sites, deployer }: Deps
           const limit = config.maxUploadBytes * EXTRACT_RATIO;
           if (size > limit) throw new BuildError(`ファイルの合計（${mib(size)}）が上限（${mib(limit)}）を超えています`);
 
-          const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-push-")));
+          const work = await makeWorkDir(deployer, "kanzume-push-");
           try {
             await repos.checkout(name, head.sha, work);
             log.add(`取り出し: ${(size / 1024).toFixed(1)} KiB`);

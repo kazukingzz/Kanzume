@@ -22,7 +22,7 @@ import path from "node:path";
 import { isRoot, prepareSiteDir, siteUid } from "./runtime/process.ts";
 import { Backup, restoreOnBoot } from "./backup/backup.ts";
 import { BackupUrlError } from "./backup/url.ts";
-import { PRIVATE_DIRS, PRIVATE_FILES, sitesDir } from "./layout.ts";
+import { BUILD_DIR, PRIVATE_DIRS, PRIVATE_FILES, sitesDir } from "./layout.ts";
 import { ServerLog } from "./observability/server-log.ts";
 
 /** 本体が作るファイルを、ほかのユーザー（Worker の子プロセス）から見えないようにする（umask 007）。復元より前に呼ぶ */
@@ -98,6 +98,10 @@ export async function createServer(config: Config, options: { github?: Partial<G
 
   const deployer = new Deployer(sites, runtime, history);
   deployer.canBeRoot = (site) => !state.siteHasMembers(site);
+  // 前回の起動で残ったビルドの作業ディレクトリ（途中で止まったデプロイ）は消す
+  deployer.workRoot = path.join(config.dataDir, BUILD_DIR);
+  await fs.rm(deployer.workRoot, { recursive: true, force: true });
+  await fs.mkdir(deployer.workRoot, { mode: 0o700 });
   const repos = new Repos(config.dataDir, config.maxUploadBytes, config.repoQuotaBytes);
   repos.hasSite = (name) => sites.has(name);
   await repos.init();

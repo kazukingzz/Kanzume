@@ -4,7 +4,6 @@
  * （GitHub Actions は Action の中で wrangler がビルドする）
  */
 import fs from "node:fs/promises";
-import os from "node:os";
 import path from "node:path";
 import type { Plugin, TsconfigRaw } from "esbuild";
 import { UserFacingError } from "../errors.ts";
@@ -111,6 +110,12 @@ export interface BuildContext {
   siteName: string;
 }
 
+/** ビルドの作業ディレクトリ（本体だけが読み書きできる 0700）を deployer.workRoot の下に作る。後片付けは呼び出し側 */
+export async function makeWorkDir(deployer: Deployer, prefix: string): Promise<string> {
+  await fs.mkdir(deployer.workRoot, { recursive: true, mode: 0o700 });
+  return fs.realpath(await fs.mkdtemp(path.join(deployer.workRoot, prefix)));
+}
+
 /** ビルド・デプロイの失敗を履歴に残し、結果にする。UserFacingError 以外は作りの誤りとしてログにも出す */
 export function recordBuildFailure(deployer: Deployer, err: unknown, ctx: BuildContext, label: string): DeployResult {
   const known = err instanceof UserFacingError;
@@ -122,7 +127,7 @@ export function recordBuildFailure(deployer: Deployer, err: unknown, ctx: BuildC
 
 /** ファイルを作業ディレクトリに書き出してから、deployFromDirectory でビルドしてデプロイする */
 export async function deployFromFiles(files: UploadedFile[], deployer: Deployer, ctx: BuildContext): Promise<DeployResult> {
-  const work = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "kanzume-build-")));
+  const work = await makeWorkDir(deployer, "kanzume-build-");
   try {
     for (const f of files) {
       const dest = path.join(work, f.path);

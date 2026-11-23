@@ -1,3 +1,4 @@
+import os from "node:os";
 import { WorkerError } from "../runtime/loader.ts";
 import type { Runtime } from "../runtime/runtime.ts";
 import { SerialQueue } from "../serial.ts";
@@ -88,10 +89,12 @@ export class Deployer {
   onChange: (() => void) | null = null;
 
   /**
-   * そのサイトをルートドメインにしてよいか。ルートは管理画面と同じオリジンで動くので、メンバーのいるサイトはルートにしない。
-   * server.ts が管理画面の状態から決める
+   * ビルドの作業ディレクトリを作る場所。server.ts がデータのディレクトリの下にする。
+   * /tmp にしないのは、esbuild が作業ディレクトリの親をたどって package.json を読むため
+   * （誰でも書ける /tmp に置かれた package.json で、すべてのサイトのビルドを壊せてしまう）
    */
   canBeRoot: (site: string) => boolean = () => true;
+  workRoot: string = os.tmpdir();
 
   constructor(sites: Sites, runtime: Runtime, history: DeployHistory) {
     this.#sites = sites;

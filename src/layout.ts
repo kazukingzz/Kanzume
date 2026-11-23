@@ -9,9 +9,9 @@
  *   logs/server.log(.1)   本体のログ（バックアップする）
  *   repos/<site>.git      サイトのリポジトリ
  *   git-hooks/            git のフック（起動のたびに書き出す。バックアップしない）
+ *   build/                デプロイのビルドの作業ディレクトリ（起動のたびに空にする。バックアップしない）
  *   sites/_root           ルートドメインのサイト
  *   sites/_uids.json      サイトごとの uid（Worker の子プロセス用）
- *   sites/<site>/         サイト: releases/・current・settings.json（秘密）・data/（KV と R2。子が書ける）
  */
 import path from "node:path";
 
@@ -22,6 +22,7 @@ export const LOGS_DIR = "logs";
 export const SERVER_LOG = "server.log";
 export const REPOS_DIR = "repos";
 export const HOOKS_DIR = "git-hooks";
+export const BUILD_DIR = "build";
 export const SITES_DIR = "sites";
 export const ROOT_FILE = "_root";
 export const UIDS_FILE = "_uids.json";
@@ -40,10 +41,10 @@ export const PRIVATE_FILES = [
   `${SITES_DIR}/${UIDS_FILE}`,
 ];
 /** 本体だけが使うディレクトリ（0700） */
-export const PRIVATE_DIRS = [REPOS_DIR, HOOKS_DIR, LOGS_DIR];
+export const PRIVATE_DIRS = [REPOS_DIR, HOOKS_DIR, LOGS_DIR, BUILD_DIR];
 
-/** バックアップしないもの（トップレベル）: ログ（数日で消え、リクエストのたびに変わる）とフック（起動のたびに書き出す） */
-export const NOT_BACKED_UP = [HOOKS_DIR, ...withSqliteSidecars(EVENTS_DB)];
+/** バックアップしないもの（トップレベル）: ログ（数日で消え、リクエストのたびに変わる）・フック（起動のたびに書き出す）・ビルドの作業ディレクトリ */
+export const NOT_BACKED_UP = [HOOKS_DIR, BUILD_DIR, ...withSqliteSidecars(EVENTS_DB)];
 
 export const sitesDir = (dataDir: string) => path.join(dataDir, SITES_DIR);
 export const siteSettingsFile = (siteDir: string) => path.join(siteDir, SETTINGS_FILE);
