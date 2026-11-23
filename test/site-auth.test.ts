@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { checkSiteSession, createSiteSession, parseSiteAccess, safeNext, SITE_SESSION_MAX_AGE } from "../src/site-auth.ts";
+import fs from "node:fs";
+import path from "node:path";
+import { readSiteSettings } from "../src/sites.ts";
 import { type App, startApp } from "./fixtures.ts";
-import { tarGz } from "./helpers.ts";
+import { tarGz, tmpDir } from "./helpers.ts";
 import { SoftAuthenticator } from "./webauthn.ts";
 
 const access = { secret: "s", passkeys: [{ id: "cred", publicKey: "AAAA", counter: 0, createdAt: "", name: "" }] };
@@ -190,3 +193,57 @@ test("同じサイトに同じ ID のパスキーは登録できず、登録済�
   assert.equal((await register(admin, key, ROOT, "home")).status, 200);
 });
 
+test("メンバーをサイトから外す・削除すると、そのメンバーが登録したサイトのパスキーは消え、最後の 1 つが消えてもサイトは誰でも見られるようにならない", async (t) => {
+  const { app, admin, site } = await setup(t);
+  const member = await app.state.createUser("参加者", "member", ["blog"]);
+  const memberCookie = `kanzume_session=${await app.state.createSession(member.id)}`;
+  const memberAdmin = (p: string, method = "GET", body?: unknown) =>
+    fetch(`${app.base}/_admin/kanzume/api${p}`, {
+      method,
+      headers: { cookie: memberCookie, origin: `http://${ROOT}`, "x-forwarded-host": ROOT, "content-type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+  const mine = new SoftAuthenticator();
+  const kept = new SoftAuthenticator();
+  assert.equal((await register(memberAdmin, mine)).status, 200);
+  assert.equal((await register(admin, kept)).status, 200);
+  const session = (await login(app, mine)).headers.get("set-cookie")!.split(";")[0];
+
+  assert.equal((await admin(`/sites/blog/members/${member.id}`, "DELETE")).status, 200);
+  assert.deepEqual(
+    (await accessOf(admin)).passkeys.map((p) => p.id),
+    [kept.credentialId],
+    "管理者が登録したパスキーは残る",
+  );
+  assert.equal((await site(`blog.${ROOT}`, "/", { headers: { cookie: session } })).status, 401, "外したメンバーのパスキーでのログインは使えない");
+
+  // ユーザーを削除したときも。最後の 1 つが消えたら、誰も入れない状態にする
+  assert.equal((await admin(`/sites/blog/access/passkeys/${kept.credentialId}`, "DELETE")).status, 200);
+  await app.state.updateUser(member.id, { addSite: "blog" });
+  assert.equal((await register(memberAdmin, mine)).status, 200);
+  assert.equal((await admin(`/users/${member.id}`, "DELETE")).status, 200);
+  assert.deepEqual(await accessOf(admin), { enabled: true, passkeys: [] });
+  assert.equal((await site(`blog.${ROOT}`, "/")).status, 401);
+  assert.equal((await login(app, mine)).status, 400);
+});
+
+test("settings.json が壊れていたら、ログインを必須にしたまま誰も入れない状態にする（ファイルがなければ設定なし）", (t) => {
+  const dir = tmpDir(t);
+  assert.equal(readSiteSettings(dir).access, undefined);
+  for (const broken of ["{", "null", "[]"]) {
+    fs.writeFileSync(path.join(dir, "settings.json"), broken);
+    assert.deepEqual(readSiteSettings(dir).access?.passkeys, [], broken);
+  }
+});
+
+test("デプロイに失敗して戻すのは環境変数とシークレットだけで、その間に変えたサブドメインは戻さない", async (t) => {
+  const { app } = await setup(t);
+  await app.sites.updateSettings("blog", { vars: { A: "1" } });
+  const before = app.sites.settings("blog");
+  await app.sites.updateSettings("blog", { vars: { A: "2" }, secrets: { S: "x" } });
+  await app.sites.updateSettings("blog", { subdomain: "news" });
+  await app.sites.ensure("other");
+  await app.sites.restoreSettings("blog", before);
+  const after = app.sites.settings("blog");
+  assert.deepEqual({ vars: after.vars, secrets: after.secrets, subdomain: after.subdomain }, { vars: { A: "1" }, secrets: {}, subdomain: "news" });
+});

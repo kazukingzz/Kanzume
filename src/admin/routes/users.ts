@@ -1,6 +1,7 @@
 /** メンバーの管理（管理者） */
 import { fail, type Route, userOf } from "../context.ts";
 import { ROOT_SITE_MEMBERS } from "./auth.ts";
+import { removeSitePasskeysOf } from "./site-access.ts";
 
 export const userRoutes: Route[] = [
   {
@@ -50,6 +51,17 @@ export const userRoutes: Route[] = [
         removeSite: typeof body.removeSite === "string" ? body.removeSite : undefined,
         addSite: typeof body.addSite === "string" && sites.has(body.addSite) ? body.addSite : undefined,
       });
+      // 扱えなくなったサイト（外したサイト・管理者からメンバーにしたときの参加していないサイト）に登録したパスキーを消す
+      if (updated.role === "member") {
+        await removeSitePasskeysOf(
+          sites,
+          id,
+          sites
+            .list()
+            .map((s) => s.name)
+            .filter((name) => !updated.sites.includes(name)),
+        );
+      }
       return { user: updated };
     },
   },
@@ -59,7 +71,13 @@ export const userRoutes: Route[] = [
     auth: "admin",
     handle: async (ctx) => {
       if (ctx.params.id === userOf(ctx).id) return fail(400, "自分は削除できません");
-      await ctx.deps.state.removeUser(ctx.params.id);
+      const { state, sites } = ctx.deps;
+      await state.removeUser(ctx.params.id);
+      await removeSitePasskeysOf(
+        sites,
+        ctx.params.id,
+        sites.list().map((s) => s.name),
+      );
       return { ok: true };
     },
   },

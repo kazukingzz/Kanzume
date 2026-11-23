@@ -1,7 +1,8 @@
 /** サイトのログイン（パスキー）: パスキーの追加と削除。1 つでもあればログインが必須になり、すべて削除するとやめる */
 import { randomBytes } from "node:crypto";
 import { newSiteAccessSecret, siteRpId, usableOn } from "../../site-auth.ts";
-import { type Ctx, fail, type Route } from "../context.ts";
+import type { Sites } from "../../sites.ts";
+import { type Ctx, fail, type Route, userOf } from "../context.ts";
 import { describeDevice, discoverableOf, providerName } from "../passkeys.ts";
 
 const webauthn = () => import("@simplewebauthn/server");
@@ -13,6 +14,17 @@ function rpIdFor(ctx: Ctx): string {
     return fail(400, `サイトのログイン用のパスキーは ${rpId} に紐づけます。管理画面を ${rpId} かそのサブドメインで開いてから登録してください`);
   }
   return rpId;
+}
+
+/**
+ * ユーザーが登録したサイトのパスキーを消す（サイトから外したとき・ユーザーを削除したとき）。
+ * 最後の 1 つが消えてもログインはやめない（誰も入れない状態にする）。メンバーが抜けただけで、サイトが誰でも見られるようにならないように
+ */
+export async function removeSitePasskeysOf(sites: Sites, userId: string, siteNames: Iterable<string>): Promise<void> {
+  for (const name of siteNames) {
+    if (!sites.has(name) || !sites.settings(name).access?.passkeys.some((p) => p.registeredBy === userId)) continue;
+    await sites.updateAccess(name, (current) => current && { ...current, passkeys: current.passkeys.filter((p) => p.registeredBy !== userId) });
+  }
 }
 
 export const siteAccessRoutes: Route[] = [
@@ -87,6 +99,7 @@ export const siteAccessRoutes: Route[] = [
         createdAt: new Date().toISOString(),
         name: providerName(aaguid) ?? describeDevice(ctx.req.headers["user-agent"]) ?? "",
         discoverable: discoverableOf(body.response),
+        registeredBy: userOf(ctx).id,
       };
       // 同じ ID のパスキーは置き換えずに断る（置き換えると、ほかの人が登録したパスキーの公開鍵を差し替えられる）
       if (sites.settings(name).access?.passkeys.some((p) => p.id === passkey.id)) return fail(400, "このパスキーはすでに登録されています");

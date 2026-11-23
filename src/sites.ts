@@ -8,7 +8,7 @@ import { PROJECT_NAME, Store } from "./store.ts";
 import { UserFacingError } from "./errors.ts";
 import { MEMBER_DEPLOYED_FILE, ROOT_FILE, siteSettingsFile, sitesDir } from "./layout.ts";
 import { normalizeSiteManagedFiles, type SiteManagedFiles } from "./managed-files.ts";
-import { parseSiteAccess, type SiteAccess } from "./site-auth.ts";
+import { newSiteAccessSecret, parseSiteAccess, type SiteAccess } from "./site-auth.ts";
 
 const MAX_VALUE = 5 * 1024;
 const MAX_TOTAL = 64 * 1024;
@@ -51,21 +51,30 @@ export const RESERVED_SITE_NAMES: readonly string[] = ["invite", "repos"];
 
 const emptySettings = (): SiteSettings => ({ vars: {}, secrets: {} });
 
-/** Worker を読み込むときに使うので同期で読む（小さいファイル） */
+/**
+ * Worker を読み込むときに使うので同期で読む（小さいファイル）。
+ * ファイルがあるのに読めない・JSON として壊れているときは、ログインを必須にしたまま誰も入れない状態にする
+ * （設定なしとして扱うと、ログインを必須にしていたサイトが誰でも見られるようになる）
+ */
 export function readSiteSettings(siteDir: string): SiteSettings {
+  const file = siteSettingsFile(siteDir);
+  let raw: Record<string, unknown>;
   try {
-    const raw = JSON.parse(readFileSync(siteSettingsFile(siteDir), "utf8"));
-    return {
-      subdomain: typeof raw.subdomain === "string" ? raw.subdomain : undefined,
-      vars: { ...raw.vars },
-      secrets: { ...raw.secrets },
-      // 手で書き換えられて壊れていたら、上書きなし（全体の既定に従う）として扱う
-      managedFiles: raw.managedFiles ? safeSiteManagedFiles(raw.managedFiles) : undefined,
-      access: parseSiteAccess(raw.access),
-    };
-  } catch {
-    return emptySettings();
+    raw = JSON.parse(readFileSync(file, "utf8"));
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw new Error("JSON のオブジェクトではありません");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") return emptySettings();
+    console.error(`[kanzume] ${file} を読めないので、管理画面でパスキーを登録し直すまで誰もサイトを開けません:`, err);
+    return { ...emptySettings(), access: { secret: newSiteAccessSecret(), passkeys: [] } };
   }
+  return {
+    subdomain: typeof raw.subdomain === "string" ? raw.subdomain : undefined,
+    vars: { ...(raw.vars as Record<string, string>) },
+    secrets: { ...(raw.secrets as Record<string, string>) },
+    // 手で書き換えられて壊れていたら、上書きなし（全体の既定に従う）として扱う
+    managedFiles: raw.managedFiles ? safeSiteManagedFiles(raw.managedFiles) : undefined,
+    access: parseSiteAccess(raw.access),
+  };
 }
 
 function safeSiteManagedFiles(raw: unknown): SiteManagedFiles | undefined {
@@ -221,14 +230,15 @@ export class Sites {
     return this.#queue.run(id, () => this.#updateSettings(id, patch));
   }
 
-  /** 設定をまるごと前の状態に戻す（デプロイに失敗したときなど） */
-  restoreSettings(id: string, settings: SiteSettings): Promise<SiteSettings> {
+  /**
+   * 環境変数とシークレットを前の状態に戻す（デプロイと一緒に変えて、デプロイに失敗したとき）。
+   * サブドメインなどほかの設定は戻さない（戻すと、その間にほかのサイトが取ったサブドメインと重なったり、登録・削除したパスキーが元に戻ったりする）
+   */
+  restoreSettings(id: string, settings: Pick<SiteSettings, "vars" | "secrets">): Promise<SiteSettings> {
     return this.#queue.run(id, async () => {
       const store = this.#stores.get(id);
       if (!store) throw new SettingsError("サイトが見つかりません");
-      // ログインのパスキーは戻さない（戻すと、その間に登録・削除したパスキーが元に戻る）
-      const { access } = this.settings(id);
-      return this.#write(id, store.siteDir, { ...settings, vars: { ...settings.vars }, secrets: { ...settings.secrets }, access });
+      return this.#write(id, store.siteDir, { ...this.settings(id), vars: { ...settings.vars }, secrets: { ...settings.secrets } });
     });
   }
 

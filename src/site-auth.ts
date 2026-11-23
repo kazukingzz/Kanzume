@@ -19,6 +19,8 @@ export interface SitePasskey {
   name: string;
   /** ID を渡さなくても使えるパスキーか（登録したときの credProps）。ブラウザが答えなければ未設定 */
   discoverable?: boolean;
+  /** 登録した管理画面のユーザー。そのユーザーがサイトから外れたり削除されたりしたら、このパスキーも消す */
+  registeredBy?: string;
 }
 
 export interface SiteAccess {
@@ -51,6 +53,7 @@ export function parseSiteAccess(raw: unknown): SiteAccess | undefined {
       ...p,
       name: typeof p.name === "string" ? p.name : "",
       discoverable: typeof p.discoverable === "boolean" ? p.discoverable : undefined,
+      registeredBy: typeof p.registeredBy === "string" ? p.registeredBy : undefined,
     })),
   };
 }

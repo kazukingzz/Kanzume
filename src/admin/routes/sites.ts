@@ -5,6 +5,7 @@ import { PROJECT_NAME } from "../../store.ts";
 import { ADMIN_PATH, type Ctx, fail, forbidden, isRecord, type Route, userOf } from "../context.ts";
 import { INVITE_TTL_MS } from "../state.ts";
 import { ROOT_SITE_MEMBERS } from "./auth.ts";
+import { removeSitePasskeysOf } from "./site-access.ts";
 
 const siteUrls = (ctx: Ctx, name: string) => ctx.deps.sites.urls(ctx.siteRoot, name);
 
@@ -175,9 +176,12 @@ export const siteRoutes: Route[] = [
     path: "/api/sites/:site/members/:id",
     auth: "siteAdmin",
     handle: async (ctx) => {
-      const { state } = ctx.deps;
-      if (!state.user(ctx.params.id)) return fail(404, "ユーザーが見つかりません");
+      const { state, sites } = ctx.deps;
+      const user = state.user(ctx.params.id);
+      if (!user) return fail(404, "ユーザーが見つかりません");
       await state.updateUser(ctx.params.id, { removeSite: ctx.site.name });
+      // 管理者はどのサイトも扱えるので、サイトから外すのはメンバーのときだけ
+      if (user.role === "member") await removeSitePasskeysOf(sites, user.id, [ctx.site.name]);
       return { ok: true };
     },
   },
