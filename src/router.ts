@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { ADMIN_PATH } from "./admin/handler.ts";
-import { matchAsset, notFoundAsset, serveAssets } from "./bindings/assets.ts";
+import { assetPath, matchAsset, notFoundAsset, serveAssets } from "./bindings/assets.ts";
 import type { AdminState } from "./admin/state.ts";
 import type { Config } from "./config.ts";
 import { clientIp, configuredRootHost, requestOrigin, rootOrigin, sendText, sendWebResponse, toWebRequest } from "./http.ts";
@@ -52,6 +52,7 @@ export function globMatch(pattern: string, s: string): boolean {
   return true;
 }
 
+/** pathname は assetPath で作ったもの（アセットを探すのと同じパス）。作れないパスは呼ぶ側で Worker に回す */
 export function runWorkerFirst(rule: boolean | string[], pathname: string): boolean {
   if (typeof rule === "boolean") return rule;
   let matched = false;
@@ -111,7 +112,10 @@ export function createRouter({ config, state, sites, runtime, handleAdmin, handl
         if (text !== null) return new Response(text, { headers: { "content-type": "text/plain; charset=utf-8", "cache-control": "public, max-age=300" } });
       }
       if (!manifest.main) return serveAssets(release, request);
-      if (manifest.assets && !runWorkerFirst(manifest.assets.runWorkerFirst, pathname)) {
+      // run_worker_first は、アセットを探すのと同じパスで照らし合わせる（Worker が守るパスのファイルを、別の書き方で直接出させない）。
+      // パスを決められない（%2f などを含む）ときはアセットを出さず Worker に渡す
+      const assetPathname = assetPath(new URL(request.url).pathname);
+      if (manifest.assets && assetPathname !== null && !runWorkerFirst(manifest.assets.runWorkerFirst, assetPathname)) {
         const asset = await matchAsset(release, request);
         if (asset) return asset;
         if (manifest.assets.notFoundHandling === "single-page-application" && request.headers.get("sec-fetch-mode") === "navigate") {

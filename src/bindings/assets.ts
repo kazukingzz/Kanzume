@@ -40,15 +40,35 @@ export function assetsDir(release: Release): string {
   return path.join(release.dir, "assets");
 }
 
-function decodePath(pathname: string): string | null {
+/** これより長いパスはアセットとして扱わない（照らし合わせや 404.html を探す手間が、パスの長さに比例するため） */
+export const MAX_ASSET_PATH = 2048;
+
+/**
+ * アセットを探すパス（デコード済みで、/ が続くところは 1 つにまとめたもの）。pathname は URL で正規化したもの（. と .. と \ は解決済み）。
+ * run_worker_first の照らし合わせにも同じものを使う（別々に作ると、%61dmin や //admin で Worker を飛ばしてアセットを出せてしまう）。
+ * / や \ や NUL をエンコードしたもの・正しくないエンコード・長すぎるパスは、どのファイルとも決めないので null
+ */
+export function assetPath(pathname: string): string | null {
+  if (pathname.length > MAX_ASSET_PATH || !pathname.startsWith("/")) return null;
+  if (/%(?:2f|5c|00)/i.test(pathname)) return null;
   let decoded: string;
   try {
     decoded = decodeURIComponent(pathname);
   } catch {
     return null;
   }
-  if (decoded.includes("\0") || decoded.split("/").includes("..")) return null;
+  if (decoded.includes("\0") || decoded.includes("\\")) return null;
+  decoded = decoded.replace(/\/{2,}/g, "/");
+  if (decoded.split("/").some((s) => s === ".." || s === ".")) return null;
   return decoded;
+}
+
+function isDir(root: string, p: string): boolean {
+  try {
+    return fs.statSync(path.join(root, p)).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 function stat(root: string, p: string): fs.Stats | null {
@@ -60,9 +80,13 @@ function stat(root: string, p: string): fs.Stats | null {
   }
 }
 
-/** location はデコード済みのパス。日本語などはヘッダーに入れられないので、区切りごとにエンコードし直す */
+/**
+ * location はデコード済みのパス。日本語などはヘッダーに入れられないので、区切りごとにエンコードし直す。
+ * 「//」で始まると別のホストへのリダイレクトになる。assetPath で / はまとめてあるが、念のため先頭の / を 1 つにする
+ */
 function redirect(location: string, search: string): Response {
-  return new Response(null, { status: 307, headers: { location: location.split("/").map(encodeURIComponent).join("/") + search } });
+  const encoded = location.split("/").map(encodeURIComponent).join("/");
+  return new Response(null, { status: 307, headers: { location: `/${encoded.replace(/^\/+/, "")}${search}` } });
 }
 
 async function file(request: Request, root: string, p: string, s: fs.Stats, status = 200): Promise<Response> {
@@ -84,7 +108,7 @@ export async function matchAsset(release: Release, request: Request): Promise<Re
   const assets = release.manifest.assets;
   if (!assets) return null;
   const url = new URL(request.url);
-  const p = decodePath(url.pathname);
+  const p = assetPath(url.pathname);
   if (p === null) return null;
   const root = assetsDir(release);
   const found = (candidate: string) => stat(root, candidate);
@@ -129,14 +153,21 @@ export async function notFoundAsset(release: Release, request: Request): Promise
     return s ? file(request, root, "/index.html", s) : null;
   }
   if (assets.notFoundHandling === "404-page") {
-    let dir = path.posix.dirname(decodePath(new URL(request.url).pathname) ?? "/");
-    while (true) {
-      const candidate = path.posix.join(dir, "404.html");
+    // 訪問者のパスの祖先を下から順に調べると、存在しない深いパスほど stat が増える。
+    // 上から実在するディレクトリだけをたどり（stat の数はアセットの深さまで）、そこから上に 404.html を探す
+    const p = assetPath(new URL(request.url).pathname) ?? "/";
+    const dirs = ["/"];
+    for (const segment of path.posix.dirname(p).split("/").filter(Boolean)) {
+      const dir = `${dirs.length === 1 ? "" : dirs[dirs.length - 1]}/${segment}`;
+      if (!isDir(root, dir)) break;
+      dirs.push(dir);
+    }
+    for (let i = dirs.length - 1; i >= 0; i--) {
+      const candidate = path.posix.join(dirs[i], "404.html");
       const s = stat(root, candidate);
       if (s) return file(request, root, candidate, s, 404);
-      if (dir === "/" || dir === ".") return null;
-      dir = path.posix.dirname(dir);
     }
+    return null;
   }
   return null;
 }

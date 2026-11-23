@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { AssetsBinding, matchAsset, serveAssets } from "../src/bindings/assets.ts";
+import { AssetsBinding, assetPath, MAX_ASSET_PATH, matchAsset, serveAssets } from "../src/bindings/assets.ts";
 import type { Manifest } from "../src/store.ts";
 import { manifest, release } from "./helpers.ts";
 
@@ -57,6 +57,37 @@ test("パストラバーサルではアセットの外を読めない", async (t
   const { release: r } = await release(t, withAssets(), files);
   assert.equal(await matchAsset(r, req("/..%2f_manifest.json")), null);
   assert.equal(await matchAsset(r, req("/%2e%2e/_manifest.json")), null);
+});
+
+test("アセットのパスはデコードして / をまとめたもの。/ や \\ や NUL をエンコードしたもの・長すぎるものは決めない", () => {
+  assert.equal(assetPath("/%61bout"), "/about");
+  assert.equal(assetPath("//blog///a"), "/blog/a");
+  assert.equal(assetPath("/blog/"), "/blog/");
+  assert.equal(assetPath("/%E6%97%A5%E6%9C%AC%E8%AA%9E/"), "/日本語/");
+  for (const p of ["/a%2fb", "/a%2Fb", "/a%5cb", "/a%00b", "/%E0%A4%A", "/a/%2e%2e%5c", `/${"a".repeat(MAX_ASSET_PATH)}`]) assert.equal(assetPath(p), null, p);
+});
+
+test("「//」で始まるパスでも、ディレクトリへのリダイレクト先を別のホスト（//<名前>/）にしない", async (t) => {
+  const { release: r } = await release(t, withAssets(), files);
+  for (const p of ["//blog", "///blog", "//blog/index.html", "//about/"]) {
+    const location = (await matchAsset(r, req(p)))?.headers.get("location");
+    assert.ok(location, p);
+    assert.match(location, /^\/[^/\\]/, `${p} → ${location}`);
+  }
+  assert.equal((await matchAsset(r, req("//blog")))!.headers.get("location"), "/blog/");
+});
+
+test("not_found_handling: 404-page は深く長いパスでも、実在するディレクトリの分だけを調べてすぐに返す", async (t) => {
+  const { release: r } = await release(t, withAssets({ notFoundHandling: "404-page" }), files);
+  const started = performance.now();
+  for (let i = 0; i < 20; i++) {
+    const res = await serveAssets(r, req(`/blog/${"a/".repeat(1100)}x`));
+    assert.equal(res.status, 404);
+    assert.equal(await res.text(), "root 404", "長すぎるパスはルートの 404.html");
+    const deep = await serveAssets(r, req(`/blog/${"a/".repeat(500)}x`));
+    assert.equal(await deep.text(), "blog 404");
+  }
+  assert.ok(performance.now() - started < 2000, `${performance.now() - started}ms`);
 });
 
 test("not_found_handling: single-page-application は index.html を返す", async (t) => {

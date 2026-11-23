@@ -103,6 +103,45 @@ test("アセットがあればアセット、なければ Worker が応答する
   assert.equal(await (await fetch(`${base}/`)).text(), "index");
 });
 
+/** パスをそのまま送る（fetch は URL を正規化してから送るので、//admin や \admin を再現できない） */
+function rawGet(base: string, path: string): Promise<{ status: number; body: string }> {
+  return new Promise((resolve, reject) => {
+    const { hostname, port } = new URL(base);
+    http
+      .get({ hostname, port, path }, (res) => {
+        let body = "";
+        res.on("data", (c) => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode ?? 0, body }));
+      })
+      .on("error", reject);
+  });
+}
+
+test("run_worker_first で Worker が守るパスのアセットを、別の書き方のパスで直接読ませない", async (t) => {
+  const { base, deploy } = await start(t);
+  const source = `export default { fetch(request) { return new Response("worker"); } }`;
+  const assets = { "assets/index.html": "index", "assets/admin/secret.txt": "secret", "assets/public.txt": "public" };
+  await deploy(workerBundle(t, source, { assets: { directory: "public", run_worker_first: ["/admin/*"] } }, assets));
+  assert.equal((await rawGet(base, "/public.txt")).body, "public");
+  assert.equal((await rawGet(base, "/admin/secret.txt")).body, "worker");
+  for (const p of [
+    "/%61dmin/secret.txt",
+    "//admin/secret.txt",
+    "///admin//secret.txt",
+    "/admin%2fsecret.txt",
+    "/admin%2Fsecret.txt",
+    "/x/../admin/secret.txt",
+    "/x/%2e%2e/admin/secret.txt",
+    "/\\admin/secret.txt",
+    "/admin\\secret.txt",
+    "/admin%5csecret.txt",
+    "/./admin/secret.txt",
+  ]) {
+    const res = await rawGet(base, p);
+    assert.notEqual(res.body, "secret", p);
+  }
+});
+
 test("SPA 指定時はナビゲーションのリクエストだけ index.html を返し、それ以外は Worker に渡す", async (t) => {
   const { base, deploy } = await start(t);
   const source = `export default { fetch() { return new Response("worker"); } }`;
