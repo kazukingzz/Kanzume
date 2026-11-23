@@ -82,12 +82,16 @@ export function createDeployHandler({ config, state, sites, deployer }: Deps) {
 
   async function handleReport(req: IncomingMessage, res: ServerResponse): Promise<void> {
     if (req.method !== "POST") return sendJson(res, 405, { error: "POST で送ってください" }, { allow: "POST" });
-    const access = state.deployAccess(requestToken(req));
-    if (!access) return sendJson(res, 401, { error: "Token が違います" });
+    const token = requestToken(req);
+    if (!state.deployAccess(token)) return sendJson(res, 401, { error: "Token が違います" });
     const body = await readJson(req, 512 * 1024);
-    // メンバーのトークンでは、ほかのサイトの履歴に書かせない（以前の Action は name で送る）
-    const requested = normalizeSiteName(body?.site ?? body?.name) || null;
-    const name = access.sites === null || (requested && access.sites.includes(requested)) ? requested : null;
+    // 報告できるのは、そのトークンで今デプロイできるサイトだけ（以前の Action は name で送る）。
+    // サイトを決めない報告を受けないのは、どのサイトにも属さない失敗を、誰のトークンからでも履歴に足せてしまうため
+    const name = normalizeSiteName(body?.site ?? body?.name);
+    if (!name) return sendJson(res, 400, { error: "サイトを指定してください（Action の site）" });
+    if (!sites.has(name)) return sendJson(res, 404, { error: siteNotFound(name).message });
+    const access = deployer.checkAccess(tokenGuard(state, sites, token, name), name);
+    if (!access.ok) return sendJson(res, 403, { error: access.error });
     const error = typeof body?.error === "string" ? body.error.slice(0, 2000) : "ビルドに失敗しました";
     const log = new DeployLog("GitHub Actions でのビルドに失敗したため、アップロードされませんでした");
     deployer.recordFailure(name, error, {
