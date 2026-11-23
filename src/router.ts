@@ -32,12 +32,24 @@ const EMPTY = `<!doctype html><html lang="ja"><meta charset="utf-8"><meta name="
 <body style="font-family:system-ui,sans-serif;margin:0;min-height:100vh;display:grid;place-items:center;color:#1d1d1b;background:#f6f6f4">
 <main style="padding:16px;text-align:center"><h1 style="font-size:20px">Kanzume</h1><p>まだサイトがデプロイされていません。</p><p><a href="${ADMIN_PATH}" style="color:#c2410c">管理画面を開く</a></p></main></body></html>`;
 
-export function globToRegExp(pattern: string): RegExp {
-  const source = pattern
-    .split("*")
-    .map((part) => part.replace(/[.+?^${}()|[\]\\]/g, "\\$&"))
-    .join(".*");
-  return new RegExp(`^${source}$`);
+/**
+ * run_worker_first のパターン（* は / を含む 0 文字以上）に合うか。正規表現（.*）にすると * が並ぶパターンで後戻りが
+ * 指数的に増え、本体のイベントループが止まるので、* で区切った部分を左から順に一番手前で探す（* だけのパターンはこれで正しく決まる）
+ */
+export function globMatch(pattern: string, s: string): boolean {
+  const parts = pattern.split("*");
+  if (parts.length === 1) return pattern === s;
+  const first = parts[0];
+  const last = parts[parts.length - 1];
+  if (s.length < first.length + last.length || !s.startsWith(first) || !s.endsWith(last)) return false;
+  const end = s.length - last.length;
+  let pos = first.length;
+  for (let i = 1; i < parts.length - 1; i++) {
+    const at = s.indexOf(parts[i], pos);
+    if (at === -1 || at + parts[i].length > end) return false;
+    pos = at + parts[i].length;
+  }
+  return true;
 }
 
 export function runWorkerFirst(rule: boolean | string[], pathname: string): boolean {
@@ -45,8 +57,8 @@ export function runWorkerFirst(rule: boolean | string[], pathname: string): bool
   let matched = false;
   for (const pattern of rule) {
     if (pattern.startsWith("!")) {
-      if (globToRegExp(pattern.slice(1)).test(pathname)) return false;
-    } else if (globToRegExp(pattern).test(pathname)) {
+      if (globMatch(pattern.slice(1), pathname)) return false;
+    } else if (globMatch(pattern, pathname)) {
       matched = true;
     }
   }

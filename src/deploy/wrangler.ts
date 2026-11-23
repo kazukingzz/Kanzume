@@ -68,6 +68,10 @@ export function parseWranglerConfig(filename: string, text: string): Record<stri
 
 const HTML_HANDLING: HtmlHandling[] = ["auto-trailing-slash", "force-trailing-slash", "drop-trailing-slash", "none"];
 const NOT_FOUND_HANDLING: NotFoundHandling[] = ["none", "single-page-application", "404-page"];
+/** run_worker_first はリクエストのたびに本体で照らし合わせるので、数と長さに上限を設ける */
+const MAX_RUN_WORKER_FIRST = 100;
+const MAX_RUN_WORKER_FIRST_PATTERN = 256;
+
 export const BINDING_NAME = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 
 function asObject(value: unknown, field: string): Record<string, unknown> {
@@ -122,6 +126,13 @@ export function toManifest(raw: Record<string, unknown>, hasWorker: boolean): Ma
     const runWorkerFirst = a.run_worker_first ?? false;
     if (typeof runWorkerFirst !== "boolean" && !(Array.isArray(runWorkerFirst) && runWorkerFirst.every((p) => typeof p === "string"))) {
       throw new ConfigError("assets.run_worker_first は真偽値か文字列の配列で指定してください");
+    }
+    if (Array.isArray(runWorkerFirst)) {
+      if (runWorkerFirst.length > MAX_RUN_WORKER_FIRST)
+        throw new ConfigError(`assets.run_worker_first のパターンは ${MAX_RUN_WORKER_FIRST} 個以内にしてください`);
+      if (runWorkerFirst.some((p) => p.length > MAX_RUN_WORKER_FIRST_PATTERN)) {
+        throw new ConfigError(`assets.run_worker_first のパターンは 1 つ ${MAX_RUN_WORKER_FIRST_PATTERN} 文字以内にしてください`);
+      }
     }
     assets = {
       binding: a.binding === undefined ? null : binding(a.binding, "assets.binding"),

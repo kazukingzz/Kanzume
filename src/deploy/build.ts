@@ -232,7 +232,12 @@ export async function deployFromDirectory(work: string, deployer: Deployer, ctx:
         throw new BuildError(`assets.directory（${assets.directory}）がリポジトリにありません。ビルドが必要なサイトは GitHub Actions でデプロイしてください`);
       // .assetsignore に書いたもの（_worker.js など）は配信しない。.assetsignore 自体も
       const ignoreFile = await fs.readFile(path.join(assetsRoot, ".assetsignore"), "utf8").catch(() => "");
-      const ignored = parseAssetsIgnore(ignoreFile);
+      let ignored: (rel: string) => boolean;
+      try {
+        ignored = parseAssetsIgnore(ignoreFile);
+      } catch (err) {
+        throw new BuildError((err as Error).message);
+      }
       const list = (await collect(assetsRoot)).filter((p) => p !== ".assetsignore" && !ignored(p));
       for (const p of list) out.push({ path: `assets/${p}`, data: await fs.readFile(path.join(assetsRoot, p)) });
       buildLog.push(`アセット: ${assets.directory}（${list.length} ファイル）`);

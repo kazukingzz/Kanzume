@@ -42,3 +42,27 @@ test("Action の .assetsignore の読み方は、サーバーと同じ", () => {
   for (const [p] of CASES) assert.equal(b(p), a(p), p);
   assert.equal(parseAssetsIgnore("")("anything"), false);
 });
+
+test(".assetsignore の * が並ぶパターンや長い空白でも、すぐに終わる", () => {
+  const started = performance.now();
+  const ignored = parseAssetsIgnore(`${"*a".repeat(60)}b\n**/${"*x".repeat(60)}y/**\nz${" ".repeat(200_000)}\n`);
+  for (let i = 0; i < 200; i++) assert.equal(ignored(`${"a".repeat(250)}/${"x".repeat(250)}/f${i}`), false);
+  assert.equal(ignored("z"), true);
+  assert.throws(() => parseAssetsIgnore(`${" ".repeat(200_000)}x`), /256 文字以内/);
+  assert.ok(performance.now() - started < 2000, `${performance.now() - started}ms`);
+});
+
+test(".assetsignore のパターンが多すぎる・長すぎるときはエラーにする（サーバーと Action で同じ）", () => {
+  for (const parse of [parseAssetsIgnore, fromAction]) {
+    assert.doesNotThrow(() => parse(Array.from({ length: 200 }, (_, i) => `f${i}`).join("\n")));
+    assert.throws(() => parse(Array.from({ length: 201 }, (_, i) => `f${i}`).join("\n")), /200 個以内/);
+    assert.throws(() => parse("a".repeat(257)), /256 文字以内/);
+    assert.doesNotThrow(() => parse(`# ${"a".repeat(1000)}\n`), "コメントは数えない");
+  }
+});
+
+test(".assetsignore の \\ のあとの空白は残し、ほかの末尾の空白は消す", () => {
+  assert.equal(parseAssetsIgnore("a.txt   \t")("a.txt"), true);
+  assert.equal(parseAssetsIgnore("a\\ \n")("a "), true);
+  assert.equal(parseAssetsIgnore("a\\ \n")("a"), false);
+});

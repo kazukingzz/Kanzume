@@ -68,3 +68,10 @@ test("不正な設定は ConfigError になる", () => {
   assert.throws(() => toManifest({ name: "a", assets: { not_found_handling: "nope" } }, false), ConfigError);
   assert.throws(() => parseWranglerConfig("wrangler.json", "{"), ConfigError);
 });
+
+test("run_worker_first のパターンが多すぎる・長すぎる設定は ConfigError になる", () => {
+  const config = (runWorkerFirst: unknown) => ({ name: "a", main: "a.ts", assets: { directory: "public", run_worker_first: runWorkerFirst } });
+  assert.doesNotThrow(() => toManifest(config(Array.from({ length: 100 }, (_, i) => `/p${i}/*`)), true));
+  assert.throws(() => toManifest(config(Array.from({ length: 101 }, (_, i) => `/p${i}/*`)), true), /100 個以内/);
+  assert.throws(() => toManifest(config([`/${"*a".repeat(200)}`]), true), /256 文字以内/);
+});
